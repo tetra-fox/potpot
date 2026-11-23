@@ -13,8 +13,62 @@ pub const KNOB_SWEEP: f32 = 1.5 * PI;
 const CREASE: f32 = 0.82;
 /// the rings a shaped top is cut into from its rim to its middle
 const TOP_RINGS: usize = 14;
-/// how far up a knob its top's chamfer begins, as a share of its height
-const SHOULDER: f32 = 0.88;
+/// how far up a knob its side ends and rolls over to the top, as a share of its height
+const SHOULDER: f32 = 0.86;
+/// the rings the roll from the side to the top is cut into
+const ROLL: usize = 6;
+/// how far paint and inlays stand off the surface they are on
+const PAINT: f32 = 0.25;
+
+/// one ring of a knob's surface
+#[derive(Clone, Copy)]
+struct Ring {
+  radius: f32,
+  /// none for a ring that lies on the top's face, wherever that is
+  height: Option<f32>,
+  /// how much of the grip's shape the ring takes, down to none for a plain circle
+  shaped: f32,
+  /// how far up the grip it is, for the grips that change on the way
+  level: f32,
+  /// how far the ring has rounded off toward the largest circle inside the grip's outline,
+  /// which a scooped or ridged grip's top does on its way to the middle
+  rounded: f32,
+}
+
+/// a flat strip `half_width` to each side of a path of points, each given as how far out
+/// toward negative y and how high, standing just off the surface the path follows
+fn ribbon(path: &[Vec2], half_width: f32) -> Mesh {
+  // the way out of the surface at each point: its two neighbors' direction turned a quarter
+  let facing = |index: usize| {
+    let before = path[index.saturating_sub(1)];
+    let after = path[(index + 1).min(path.len() - 1)];
+    let along = (after - before).normalize_or_zero();
+    Vec2::new(along.y, -along.x)
+  };
+  let mut ribbon = Mesh::default();
+  for index in 0..path.len().saturating_sub(1) {
+    let corner = |index: usize, side: f32| {
+      let (point, facing) = (path[index], facing(index));
+      let normal = Vec3::new(0.0, -facing.x, facing.y);
+      // twice as far off as an inlay, to lie over one
+      (
+        Vec3::new(side * half_width, -point.x, point.y) + normal * PAINT * 2.0,
+        normal,
+      )
+    };
+    let corners = [
+      corner(index, -1.0),
+      corner(index, 1.0),
+      corner(index + 1, 1.0),
+      corner(index + 1, -1.0),
+    ];
+    ribbon.quad_with_normals(
+      corners.map(|(position, _)| position),
+      corners.map(|(_, normal)| normal),
+    );
+  }
+  ribbon
+}
 
 /// a knob, described by its parts. the named ones, like [`Knob::fluted`], are starting
 /// points whose fields can be set to anything else.
@@ -118,7 +172,8 @@ impl Knob {
       height,
       skirt: 0.2,
       grip: Grip::Smooth,
-      top: Top::Flat,
+      // barely crowned, which is what lets a polished top catch the light unevenly
+      top: Top::Domed { rise: 0.05 },
     }
   }
 
@@ -142,6 +197,7 @@ impl Knob {
         flutes: 9,
         depth: 0.1,
       },
+      top: Top::Flat,
       ..Self::round(radius, height)
     }
   }
@@ -179,6 +235,7 @@ impl Knob {
     Self {
       skirt: 0.0,
       grip: Grip::Faceted(9),
+      top: Top::Flat,
       ..Self::round(radius, height)
     }
   }
@@ -187,7 +244,7 @@ impl Knob {
   pub fn chicken_head(radius: f32, height: f32) -> Self {
     Self {
       skirt: 0.0,
-      grip: Grip::Pointed { reach: 0.75 },
+      grip: Grip::Pointed { reach: 1.1 },
       ..Self::round(radius, height)
     }
   }
@@ -217,7 +274,7 @@ impl Knob {
   pub fn ridge(radius: f32, height: f32) -> Self {
     Self {
       skirt: 0.0,
-      grip: Grip::Ridge { width: 0.8 },
+      grip: Grip::Ridge { width: 0.9 },
       ..Self::round(radius, height)
     }
   }
@@ -235,7 +292,9 @@ impl Knob {
 
   /// the radius where the top's chamfer ends and its face begins
   fn face_radius(&self) -> f32 {
-    self.grip_radius() - self.height * (1.0 - SHOULDER)
+    // the roll is as wide as it is tall, but never so wide that it eats a small face
+    let grip = self.grip_radius();
+    grip - (self.height * (1.0 - SHOULDER)).min(grip * 0.2)
   }
 
   /// how far out the grip is at an angle, against its plain radius. `level` is how far up the
@@ -246,12 +305,17 @@ impl Knob {
       Grip::Fluted { flutes, depth } => {
         // a scoop takes up most of its share of the turn, and between two scoops a strip
         // of the round side is left standing
-        let across = ((angle * flutes as f32).cos() - 0.2).max(0.0) / 0.8;
+        // turned so that the middle of a strip is where the knob points, for its line
+        let turned = (angle + FRAC_PI_2) * flutes as f32 + PI;
+        let across = (turned.cos() - 0.2).max(0.0) / 0.8;
         1.0 - depth * (1.0 - (1.0 - across) * (1.0 - across))
       }
       Grip::Pointed { reach } => {
-        let toward = (angle + FRAC_PI_2).cos().max(0.0);
-        1.0 + reach * toward.powi(10)
+        // a round body, and a beak whose straight sides leave it without a corner and run
+        // in to a point
+        let nose = 1.0 + reach;
+        let half = nose / (nose * nose - 1.0).sqrt();
+        blade_at(angle + FRAC_PI_2, nose, 1.0, half).max(1.0)
       }
       // the angle from the way the knob points, which is up the panel
       Grip::Bar { width } => {
@@ -264,9 +328,9 @@ impl Knob {
         let between = |foot: f32, crest: f32| foot + (crest - foot) * level;
         blade_at(
           angle + FRAC_PI_2,
-          between(1.0, 0.5),
-          between(0.7, 0.5),
-          between(width / 2.0, 0.09),
+          between(1.0, 0.6),
+          between(0.75, 0.55),
+          between(width / 2.0, 0.17),
         )
       }
     }
@@ -274,8 +338,12 @@ impl Knob {
 
   /// the height of the top's face at a point of the knob, for laying markers on it
   pub fn top_at(&self, at: Vec2) -> f32 {
-    let face = self.face_radius();
-    let out = (at.length() / face).min(1.0);
+    self.top_height(at, (at.length() / self.face_radius()).min(1.0))
+  }
+
+  /// the height of the top's face at a point that is `out` of the way from its middle to
+  /// its rim, which on a grip that is not round is not a matter of distance
+  fn top_height(&self, at: Vec2, out: f32) -> f32 {
     match self.top {
       Top::Flat => self.height,
       Top::Dished { depth } => self.height * (1.0 - depth * (1.0 - out * out)),
@@ -303,106 +371,167 @@ impl Knob {
       // a ridge is one point out and one point in
       Grip::Knurled(ridges) => ridges.max(3) * 2,
       Grip::Fluted { flutes, .. } => (flutes * 12).max(48),
-      Grip::Smooth | Grip::Pointed { .. } => 72,
+      Grip::Smooth => 72,
+      // enough to keep a beak's sides straight and its point sharp
+      Grip::Pointed { .. } => 180,
       // enough to keep a handle's long sides straight
       Grip::Bar { .. } | Grip::Lever { .. } | Grip::Ridge { .. } => 180,
     }
   }
 
-  /// the knob itself, without a marker
-  pub fn body(&self) -> Mesh {
+  /// the rings of the knob's surface from the panel up and in to the middle of its top, and
+  /// which of them is the foot of the grip
+  fn rings(&self) -> (Vec<Ring>, usize) {
     let (grip, face) = (self.grip_radius(), self.face_radius());
     let shoulder = self.height * SHOULDER;
-    // each ring is its radius, its height, how much of the grip's shape it takes, and how
-    // far up the grip it is
+    let round = |radius: f32, height: f32| Ring {
+      radius,
+      height: Some(height),
+      shaped: 0.0,
+      level: 0.0,
+      rounded: 0.0,
+    };
     let mut rings = Vec::new();
     let skirtless = matches!(self.grip, Grip::Pointed { .. } | Grip::Lever { .. });
     let waist = if self.skirt > 0.0 && !skirtless {
-      rings.push((self.radius, 0.0, 0.0, 0.0));
-      rings.push((self.radius, self.height * 0.16, 0.0, 0.0));
-      // the skirt slopes up to a round collar that the grip's shape then rises out of
-      rings.push((grip, self.height * 0.28, 0.0, 0.0));
-      self.height * 0.32
+      rings.push(round(self.radius, 0.0));
+      rings.push(round(self.radius, self.height * 0.13));
+      // a rolled lip, then the skirt slopes up to a round collar that the grip's shape
+      // rises out of
+      rings.push(round(self.radius * 0.985, self.height * 0.165));
+      rings.push(round(self.radius * 0.95, self.height * 0.185));
+      rings.push(round(grip * 1.03, self.height * 0.29));
+      rings.push(round(grip, self.height * 0.31));
+      self.height * 0.33
     } else if matches!(self.grip, Grip::Ridge { .. }) {
       // the blade stands on a round base narrower than itself
-      let base = self.radius * 0.5;
-      rings.push((base, 0.0, 0.0, 0.0));
-      rings.push((base, self.height * 0.14, 0.0, 0.0));
+      let base = self.radius * 0.6;
+      rings.push(round(base, 0.0));
+      rings.push(round(base, self.height * 0.14));
       self.height * 0.14
     } else {
       0.0
     };
-    rings.push((grip, waist, 1.0, 0.0));
-    rings.push((grip, shoulder, 1.0, 1.0));
-    let shaped_top = self.top != Top::Flat;
-    let top_rings = if shaped_top { TOP_RINGS } else { 1 };
-    for ring in 0..=top_rings {
-      // the face's rim follows the grip, so that flutes cut into the top and a point carries
-      // out along it, and the shape fades toward the middle
-      let inward = ring as f32 / top_rings as f32;
-      rings.push((face * (1.0 - inward), f32::NAN, 1.0 - inward, 1.0));
+    let foot = rings.len();
+    let shaped = |radius: f32, height: f32, level: f32| Ring {
+      radius,
+      height: Some(height),
+      shaped: 1.0,
+      level,
+      rounded: 0.0,
+    };
+    rings.push(shaped(grip, waist, 0.0));
+    rings.push(shaped(grip, shoulder, 1.0));
+    // the shoulder rolls over to the face in a quarter turn
+    for step in 1..ROLL {
+      let (up, inward) = (step as f32 / ROLL as f32 * FRAC_PI_2).sin_cos();
+      rings.push(shaped(
+        face + (grip - face) * inward,
+        shoulder + (self.height - shoulder) * up,
+        1.0,
+      ));
     }
+    let top_rings = if self.top == Top::Flat { 1 } else { TOP_RINGS };
+    for ring in 0..=top_rings {
+      // the face's rim has the grip's outline, so that flutes cut into the top and a
+      // handle's top is a handle
+      let inward = ring as f32 / top_rings as f32;
+      rings.push(Ring {
+        radius: face * (1.0 - inward),
+        height: None,
+        shaped: 1.0,
+        level: 1.0,
+        rounded: inward,
+      });
+    }
+    (rings, foot)
+  }
 
-    let knurled = matches!(self.grip, Grip::Knurled(_));
-    let segments = self.segments();
+  /// the point of a ring at an angle around the knob. `crests` leaves out a knurled grip's
+  /// grooves, for what lies over them
+  fn surface(&self, ring: Ring, angle: f32, crests: bool) -> Vec3 {
+    let mut out = 1.0 + (self.grip_at(angle, ring.level) - 1.0) * ring.shaped;
+    match self.grip {
+      // scoops die out toward the middle of the top, which is a plain round face
+      // and do so quickly, so that most of the face is plain and round
+      Grip::Fluted { depth, .. } => {
+        out += (1.0 - depth - out) * (1.0 - (1.0 - ring.rounded).powi(4));
+      }
+      Grip::Knurled(_) if !crests && ring.shaped > 0.0 => {
+        // every other point around sits in a groove, and the grooves die out the same way
+        let step = (angle / TAU * self.segments() as f32).round() as u32;
+        out -= 0.045 * (step % 2) as f32 * ring.shaped * (1.0 - ring.rounded);
+      }
+      _ => {}
+    }
+    let at = Vec2::from_angle(angle) * ring.radius * out;
+    let height = ring
+      .height
+      .unwrap_or_else(|| self.top_height(at, ring.radius / self.face_radius()));
+    at.extend(height)
+  }
+
+  /// the knob itself, without a marker
+  pub fn body(&self) -> Mesh {
+    let (rings, _) = self.rings();
     // a faceted knob keeps every edge between its sides hard, however many it has
     let crease = if matches!(self.grip, Grip::Faceted(_)) {
       0.999
     } else {
       CREASE
     };
-    Mesh::rings(rings.len(), segments, crease, |ring, angle| {
-      let (radius, height, shaped, level) = rings[ring];
-      let mut out = 1.0 + (self.grip_at(angle, level) - 1.0) * shaped;
-      if knurled && shaped > 0.0 {
-        // every other point around sits in a groove
-        let step = (angle / TAU * segments as f32).round() as u32;
-        out -= 0.05 * (step % 2) as f32;
-      }
-      let at = Vec2::from_angle(angle) * radius * out;
-      // a ring without a height of its own lies on the top's face
-      let height = if height.is_nan() {
-        self.top_at(at)
-      } else {
-        height
-      };
-      at.extend(height)
+    Mesh::rings(rings.len(), self.segments(), crease, |ring, angle| {
+      self.surface(rings[ring], angle, false)
     })
   }
 
-  /// a raised line on the top from near the middle to near the rim, following the face
+  /// a line painted on the knob where it points: across the top from partway out, over the
+  /// shoulder and down the side
   pub fn line(&self) -> Mesh {
+    let (rings, foot) = self.rings();
     let face = self.face_radius();
-    let (from, to) = match self.grip {
-      // a pointed knob's line runs out along its point
-      Grip::Pointed { .. } => (-face * 0.5, self.radius * 0.8),
-      Grip::Lever { .. } => (0.0, face * 0.9),
-      // along the crest, which ends well short of the nose's point
-      Grip::Ridge { .. } => (-face * 0.2, face * 0.3),
-      _ => (face * 0.3, face * 0.9),
+    // a handle's line runs its whole length, any other stops short of the middle
+    let (from, half_width) = match self.grip {
+      Grip::Pointed { .. } | Grip::Lever { .. } | Grip::Bar { .. } => (0.0, self.radius * 0.045),
+      // a blade's crest has room only for a hairline
+      Grip::Ridge { .. } => (0.0, self.radius * 0.03),
+      _ => (face * 0.4, self.radius * 0.045),
     };
-    // a blade's crest has room only for a hairline
-    let thin = matches!(self.grip, Grip::Ridge { .. });
-    let half_width = self.radius * if thin { 0.022 } else { 0.05 };
-    let raised = self.height * 0.03;
-    // in short pieces, each at the height of the face under it
-    const PIECES: usize = 6;
-    let mut line = Mesh::default();
-    for piece in 0..PIECES {
-      let start = from + (to - from) * piece as f32 / PIECES as f32;
-      let end = from + (to - from) * (piece + 1) as f32 / PIECES as f32;
-      let under = self
-        .top_at(Vec2::new(0.0, -start))
-        .min(self.top_at(Vec2::new(0.0, -end)));
-      let over = self
-        .top_at(Vec2::new(0.0, -start))
-        .max(self.top_at(Vec2::new(0.0, -end)));
-      line = line.merged(&Mesh::cuboid(
-        Vec3::new(-half_width, -end, under - raised),
-        Vec3::new(half_width, -start, over + raised),
-      ));
+    // the way from the grip's foot up the side and in across the top, as how far out from
+    // the middle and how high
+    let mut path: Vec<Vec2> = Vec::new();
+    for ring in &rings[foot..] {
+      let point = self.surface(*ring, 1.5 * PI, true);
+      let next = Vec2::new(-point.y, point.z);
+      if ring.height.is_none() && next.x < from {
+        if let Some(&last) = path.last()
+          && last.x > from
+        {
+          path.push(last.lerp(next, (last.x - from) / (last.x - next.x)));
+        }
+        break;
+      }
+      path.push(next);
     }
-    line
+    ribbon(&path, half_width)
+  }
+
+  /// a thin disc lying in the top's face and following its shape, for a face of another
+  /// material than the body, like an aluminum insert. `inset` is how much of the face it
+  /// covers, by radius
+  pub fn cap(&self, inset: f32) -> Mesh {
+    let face = self.face_radius();
+    Mesh::rings(TOP_RINGS + 1, self.segments(), CREASE, |ring, angle| {
+      let inward = ring as f32 / TOP_RINGS as f32;
+      let ring = Ring {
+        radius: face * inset * (1.0 - inward),
+        height: None,
+        shaped: 1.0,
+        level: 1.0,
+        rounded: 1.0 - inset * (1.0 - inward),
+      };
+      self.surface(ring, angle, true) + Vec3::Z * PAINT
+    })
   }
 
   /// a small raised dot on the top near the rim
@@ -520,17 +649,73 @@ mod tests {
   }
 
   #[test]
-  fn markers_lie_on_the_top_they_mark() {
+  fn a_dot_lies_on_the_top_it_marks() {
     for knob in all(40.0, 30.0) {
-      for marker in [knob.line(), knob.dot()] {
-        for vertex in &marker.vertices {
-          let position = Vec3::from(vertex.position);
-          let face = knob.top_at(position.truncate());
-          assert!(
-            (position.z - face).abs() < 30.0 * 0.25,
-            "{knob:?} marker at {position}"
-          );
-        }
+      for vertex in &knob.dot().vertices {
+        let position = Vec3::from(vertex.position);
+        let face = knob.top_at(position.truncate());
+        assert!(
+          (position.z - face).abs() < 30.0 * 0.25,
+          "{knob:?} dot at {position}"
+        );
+      }
+    }
+  }
+
+  #[test]
+  fn a_line_runs_from_the_top_down_the_side_the_knob_points_at() {
+    for knob in all(40.0, 30.0) {
+      let line = knob.line();
+      let positions: Vec<Vec3> = (line.vertices.iter())
+        .map(|vertex| vertex.position.into())
+        .collect();
+      assert!(!positions.is_empty(), "{knob:?} has no line");
+      for position in &positions {
+        // it is a narrow strip up the panel from the middle, no further out than the knob
+        assert!(
+          position.x.abs() < 40.0 * 0.05,
+          "{knob:?} line at {position}"
+        );
+        assert!(
+          (-41.0..=0.5).contains(&position.y),
+          "{knob:?} line at {position}"
+        );
+        assert!(Vec3::from(line.vertices[0].normal).is_normalized());
+      }
+      // from the height of the top to well down the side
+      let highest = positions
+        .iter()
+        .map(|position| position.z)
+        .fold(f32::MIN, f32::max);
+      let lowest = positions
+        .iter()
+        .map(|position| position.z)
+        .fold(f32::MAX, f32::min);
+      assert!(
+        highest > 30.0 * 0.95 && lowest < 30.0 * 0.5,
+        "{knob:?}: {lowest} to {highest}"
+      );
+    }
+  }
+
+  #[test]
+  fn a_cap_lies_just_over_the_face_and_inside_it() {
+    for knob in all(40.0, 30.0) {
+      for vertex in &knob.cap(0.85).vertices {
+        let position = Vec3::from(vertex.position);
+        let over = position.z - knob.top_at(position.truncate());
+        // a grip that is not round shapes its top by rings and not by distance, which
+        // `top_at` only comes near
+        let near = if knob.grip == Grip::Smooth {
+          0.0..0.5
+        } else {
+          -2.0..2.0
+        };
+        assert!(
+          near.contains(&over),
+          "{knob:?} cap at {position} is {over} over"
+        );
+        assert!(position.truncate().length() <= knob.radius * 0.851);
       }
     }
   }

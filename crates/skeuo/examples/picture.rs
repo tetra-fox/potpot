@@ -5,10 +5,10 @@
 use std::sync::Arc;
 
 use skeuo::glam::{Mat4, Vec2, Vec3};
-use skeuo::parts::{self, Knob};
+use skeuo::parts::{self, Knob, Top};
 use skeuo::{Light, Look, Material, Object, Place, Renderer, Scene, wgpu};
 
-const SIZE: [u32; 2] = [768, 320];
+const SIZE: [u32; 2] = [1024, 448];
 
 /// how a knob of the gallery is marked
 #[derive(Clone, Copy)]
@@ -19,103 +19,145 @@ enum Marker {
   None,
 }
 
+/// a knob of the gallery: its shape, what it is made of, what marks it and in which color,
+/// and what its face is inlaid with if anything
+struct Shown {
+  knob: Knob,
+  material: Material,
+  marker: Marker,
+  mark: Vec3,
+  cap: Option<Material>,
+}
+
 /// every knob style in two rows, each over a scale
 fn scene(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
-  let (radius, tall) = (44.0, 32.0);
-  let dark = Vec3::new(0.09, 0.09, 0.10);
+  let (radius, tall) = (58.0, 42.0);
+  let black = Vec3::new(0.035, 0.035, 0.04);
+  let white = Vec3::splat(0.93);
+  let aluminum = Material::spun(Vec3::new(0.78, 0.79, 0.81));
+  let shown = |knob, material, marker| Shown {
+    knob,
+    material,
+    marker,
+    mark: white,
+    cap: None,
+  };
   let knobs = [
-    (Knob::round(radius, tall), Marker::Line, dark),
-    (
+    shown(
+      Knob::round(radius, tall),
+      Material::glossy(black),
+      Marker::Line,
+    ),
+    shown(
       Knob::fluted(radius, tall),
+      Material::glossy(black),
       Marker::Line,
-      Vec3::new(0.16, 0.17, 0.19),
     ),
-    (Knob::skirted(radius, tall), Marker::Dot, dark),
-    (
-      Knob::knurled(radius, tall),
-      Marker::Line,
-      Vec3::new(0.62, 0.63, 0.66),
-    ),
-    (
+    Shown {
+      cap: Some(aluminum),
+      mark: black,
+      ..shown(
+        Knob::skirted(radius, tall),
+        Material::glossy(black),
+        Marker::Line,
+      )
+    },
+    Shown {
+      mark: black,
+      ..shown(Knob::knurled(radius * 0.85, tall), aluminum, Marker::Line)
+    },
+    shown(
       Knob::dished(radius, tall),
+      Material::satin(Vec3::new(0.50, 0.08, 0.07)),
       Marker::Dot,
-      Vec3::new(0.55, 0.12, 0.10),
     ),
-    (
-      Knob::dimpled(radius, tall * 0.6),
+    shown(
+      Knob::dimpled(radius, tall * 0.55),
+      Material::satin(Vec3::new(0.74, 0.72, 0.66)),
       Marker::None,
-      Vec3::new(0.70, 0.68, 0.62),
     ),
-    (
+    shown(
       Knob::faceted(radius, tall),
+      Material::glossy(Vec3::new(0.06, 0.13, 0.26)),
       Marker::Line,
-      Vec3::new(0.12, 0.25, 0.42),
     ),
-    (Knob::chicken_head(radius, tall), Marker::Line, dark),
-    (
-      Knob::bar(radius, tall * 1.3),
+    shown(
+      Knob::chicken_head(radius, tall),
+      Material::glossy(black),
       Marker::Line,
-      Vec3::new(0.20, 0.21, 0.23),
     ),
-    (
+    shown(
+      Knob::bar(radius, tall * 1.2),
+      Material::glossy(black),
+      Marker::Line,
+    ),
+    shown(
       Knob::lever(radius, tall * 0.8),
+      Material::glossy(Vec3::new(0.70, 0.36, 0.04)),
       Marker::Line,
-      Vec3::new(0.78, 0.45, 0.08),
     ),
-    (
+    shown(
       Knob::ridge(radius, tall * 1.25),
+      Material::glossy(black),
       Marker::Line,
-      Vec3::new(0.22, 0.23, 0.26),
     ),
+    Shown {
+      cap: Some(aluminum),
+      mark: black,
+      ..shown(
+        Knob {
+          skirt: 0.0,
+          top: Top::Flat,
+          ..Knob::knurled(radius * 0.8, tall * 1.1)
+        },
+        Material::glossy(black),
+        Marker::Line,
+      )
+    },
   ];
 
   let mut meshes = vec![
     parts::plate(width, height, 6.0),
-    parts::screw(7.0),
-    parts::ticks(11, parts::KNOB_SWEEP, radius + 5.0, radius + 11.0, 5),
+    parts::screw(8.0),
+    parts::ticks(11, parts::KNOB_SWEEP, radius + 6.0, radius + 13.0, 5),
   ];
   let mut objects = vec![Object {
     mesh: 0,
     transform: Mat4::IDENTITY,
-    material: Material {
-      specular: 0.15,
-      shininess: 20.0,
-      ..Material::matte(Vec3::new(0.30, 0.33, 0.38))
-    },
+    material: Material::satin(Vec3::new(0.27, 0.29, 0.33)),
   }];
-  for (index, (knob, marker, color)) in knobs.into_iter().enumerate() {
+  for (index, shown) in knobs.into_iter().enumerate() {
     let (x, y) = (
-      72.0 + 125.0 * (index % 6) as f32,
-      88.0 + 148.0 * (index / 6) as f32,
+      90.0 + 169.0 * (index % 6) as f32,
+      112.0 + 216.0 * (index / 6) as f32,
     );
-    let turn = 0.15 + 0.08 * index as f32;
+    let turn = 0.12 + 0.07 * index as f32;
     let transform = parts::knob_transform(x, y, turn, parts::KNOB_SWEEP);
     objects.push(Object {
       mesh: 2,
       transform: Mat4::from_translation(Vec3::new(x, y, 0.0)),
       material: Material::matte(Vec3::splat(0.85)),
     });
-    objects.push(Object {
-      mesh: meshes.len(),
-      transform,
-      material: Material::glossy(color),
-    });
-    meshes.push(knob.body());
-    let marker = match marker {
-      Marker::Line => knob.line(),
-      Marker::Dot => knob.dot(),
-      Marker::None => continue,
+    let mut part = |mesh: skeuo::Mesh, material: Material| {
+      objects.push(Object {
+        mesh: meshes.len(),
+        transform,
+        material,
+      });
+      meshes.push(mesh);
     };
-    let white = Material::matte(Vec3::splat(0.95));
-    objects.push(Object {
-      mesh: meshes.len(),
-      transform,
-      material: white,
-    });
-    meshes.push(marker);
+    part(shown.knob.body(), shown.material);
+    if let Some(cap) = shown.cap {
+      part(shown.knob.cap(0.86), cap);
+    }
+    match shown.marker {
+      Marker::Line => part(shown.knob.line(), Material::matte(shown.mark)),
+      Marker::Dot => part(shown.knob.dot(), Material::matte(shown.mark)),
+      Marker::None => {}
+    }
   }
-  let inset = 16.0;
+  let inset = 18.0;
   for (x, y) in [
     (inset, inset),
     (width - inset, inset),
@@ -125,13 +167,13 @@ fn scene(look: Look) -> Scene {
     objects.push(Object {
       mesh: 1,
       transform: Mat4::from_translation(Vec3::new(x, y, 0.0)) * Mat4::from_rotation_z(x * 0.3 + y),
-      material: Material::glossy(Vec3::splat(0.6)),
+      material: Material::chrome(Vec3::splat(0.75)),
     });
   }
 
   Scene {
     size: Vec2::new(width, height),
-    heights: [-8.0, 48.0],
+    heights: [-8.0, 64.0],
     lean: Vec2::new(0.0, -0.25),
     light: Light::default(),
     look,
@@ -193,7 +235,7 @@ fn main() {
     [0, 0, SIZE[0], SIZE[1]],
   );
 
-  // a row of 768 rgba pixels is already a multiple of the 256 bytes wgpu copies rows by
+  // a row of 1024 rgba pixels is already a multiple of the 256 bytes wgpu copies rows by
   let row = SIZE[0] * 4;
   let read = device.create_buffer(&wgpu::BufferDescriptor {
     label: None,

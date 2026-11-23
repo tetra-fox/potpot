@@ -29,7 +29,8 @@ pub struct Place {
 /// [`Renderer::render`] draws the one last prepared
 pub struct Renderer {
   shadow_pipeline: wgpu::RenderPipeline,
-  scene_pipeline: wgpu::RenderPipeline,
+  /// for one sample a pixel, and for [`SAMPLES`]
+  scene_pipelines: [wgpu::RenderPipeline; 2],
   present_pipeline: wgpu::RenderPipeline,
   globals: wgpu::Buffer,
   globals_group: wgpu::BindGroup,
@@ -51,6 +52,8 @@ pub struct Renderer {
 /// the picture's textures at one size
 struct Picture {
   size: [u32; 2],
+  /// what the scene is drawn into when edges are smoothed, to be resolved into `color`
+  smoothed: Option<wgpu::TextureView>,
   color: wgpu::TextureView,
   depth: wgpu::TextureView,
   group: wgpu::BindGroup,
@@ -87,7 +90,11 @@ struct Placed {
   model: [[f32; 4]; 4],
   color: [f32; 4],
   highlight: [f32; 4],
+  finish: [f32; 4],
 }
+
+/// the samples of each pixel when edges are smoothed
+const SAMPLES: u32 = 4;
 
 impl Renderer {
   /// `target` is the format of the textures [`Renderer::render`] will draw onto
@@ -170,7 +177,7 @@ impl Renderer {
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &wgpu::vertex_attr_array![
           2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4,
-          6 => Float32x4, 7 => Float32x4
+          6 => Float32x4, 7 => Float32x4, 8 => Float32x4
         ],
       },
     ];
@@ -207,32 +214,37 @@ impl Renderer {
       multiview: None,
       cache: None,
     });
-    let scene_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let scene_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
       label: Some("skeuo scene"),
-      layout: Some(
-        &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-          label: Some("skeuo scene"),
-          bind_group_layouts: &[&globals_layout, &shadow_layout],
-          push_constant_ranges: &[],
+      bind_group_layouts: &[&globals_layout, &shadow_layout],
+      push_constant_ranges: &[],
+    });
+    // one for each count of samples, since a pipeline draws at only one
+    let scene_pipelines = [1, SAMPLES].map(|count| {
+      device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("skeuo scene"),
+        layout: Some(&scene_layout),
+        vertex: wgpu::VertexState {
+          module: &scene_shader,
+          entry_point: Some("vertex"),
+          compilation_options: wgpu::PipelineCompilationOptions::default(),
+          buffers: &vertex_buffers,
+        },
+        fragment: Some(wgpu::FragmentState {
+          module: &scene_shader,
+          entry_point: Some("fragment"),
+          compilation_options: wgpu::PipelineCompilationOptions::default(),
+          targets: &[Some(PICTURE.into())],
         }),
-      ),
-      vertex: wgpu::VertexState {
-        module: &scene_shader,
-        entry_point: Some("vertex"),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-        buffers: &vertex_buffers,
-      },
-      fragment: Some(wgpu::FragmentState {
-        module: &scene_shader,
-        entry_point: Some("fragment"),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-        targets: &[Some(PICTURE.into())],
-      }),
-      primitive,
-      depth_stencil: Some(depth(wgpu::DepthBiasState::default())),
-      multisample: wgpu::MultisampleState::default(),
-      multiview: None,
-      cache: None,
+        primitive,
+        depth_stencil: Some(depth(wgpu::DepthBiasState::default())),
+        multisample: wgpu::MultisampleState {
+          count,
+          ..Default::default()
+        },
+        multiview: None,
+        cache: None,
+      })
     });
     let present_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
       label: Some("skeuo present"),
@@ -324,7 +336,7 @@ impl Renderer {
 
     Self {
       shadow_pipeline,
-      scene_pipeline,
+      scene_pipelines,
       present_pipeline,
       globals,
       globals_group,
@@ -352,12 +364,10 @@ impl Renderer {
     let look = scene.look;
     let picture_size =
       size.map(|side| ((side as f32 / look.pixel_size.max(1.0)).ceil() as u32).max(1));
-    if self
-      .picture
-      .as_ref()
-      .is_none_or(|picture| picture.size != picture_size)
-    {
-      self.picture = Some(self.picture_of(device, picture_size));
+    if self.picture.as_ref().is_none_or(|picture| {
+      picture.size != picture_size || picture.smoothed.is_some() != look.antialias
+    }) {
+      self.picture = Some(self.picture_of(device, picture_size, look.antialias));
     }
     if self
       .meshes
@@ -410,6 +420,12 @@ impl Renderer {
           0.0,
           0.0,
         ],
+        finish: [
+          object.material.reflect,
+          object.material.metal,
+          object.material.spun,
+          0.0,
+        ],
       })
       .collect();
     if placed.len() > self.placed_room {
@@ -453,9 +469,9 @@ impl Renderer {
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("skeuo scene"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-          view: &picture.color,
+          view: picture.smoothed.as_ref().unwrap_or(&picture.color),
           depth_slice: None,
-          resolve_target: None,
+          resolve_target: picture.smoothed.as_ref().map(|_| &picture.color),
           ops: wgpu::Operations {
             load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
             store: wgpu::StoreOp::Store,
@@ -465,7 +481,7 @@ impl Renderer {
         timestamp_writes: None,
         occlusion_query_set: None,
       });
-      pass.set_pipeline(&self.scene_pipeline);
+      pass.set_pipeline(&self.scene_pipelines[usize::from(picture.smoothed.is_some())]);
       pass.set_bind_group(0, &self.globals_group, &[]);
       pass.set_bind_group(1, &self.shadow_group, &[]);
       self.draw_objects(&mut pass, loaded);
@@ -507,8 +523,8 @@ impl Renderer {
     }
   }
 
-  fn picture_of(&self, device: &wgpu::Device, size: [u32; 2]) -> Picture {
-    let texture = |label, format, usage| {
+  fn picture_of(&self, device: &wgpu::Device, size: [u32; 2], smooth: bool) -> Picture {
+    let texture = |label, format, usage, sample_count| {
       device
         .create_texture(&wgpu::TextureDescriptor {
           label: Some(label),
@@ -518,7 +534,7 @@ impl Renderer {
             depth_or_array_layers: 1,
           },
           mip_level_count: 1,
-          sample_count: 1,
+          sample_count,
           dimension: wgpu::TextureDimension::D2,
           format,
           usage,
@@ -530,11 +546,22 @@ impl Renderer {
       "skeuo picture",
       PICTURE,
       wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+      1,
     );
+    let samples = if smooth { SAMPLES } else { 1 };
+    let smoothed = smooth.then(|| {
+      texture(
+        "skeuo picture samples",
+        PICTURE,
+        wgpu::TextureUsages::RENDER_ATTACHMENT,
+        samples,
+      )
+    });
     let depth = texture(
       "skeuo picture depth",
       DEPTH,
       wgpu::TextureUsages::RENDER_ATTACHMENT,
+      samples,
     );
     // each rendered pixel lands on the window as a hard-edged block
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -563,6 +590,7 @@ impl Renderer {
     });
     Picture {
       size,
+      smoothed,
       color,
       depth,
       group,

@@ -57,6 +57,8 @@ pub struct Look {
   pub color_steps: u32,
   /// whether shadow edges are softened
   pub soft_shadows: bool,
+  /// whether the edges of shapes are smoothed. an old render's are not
+  pub antialias: bool,
 }
 
 impl Default for Look {
@@ -65,6 +67,7 @@ impl Default for Look {
       pixel_size: 1.0,
       color_steps: 0,
       soft_shadows: true,
+      antialias: true,
     }
   }
 }
@@ -87,33 +90,81 @@ pub struct Material {
   pub shininess: f32,
   /// how much of the color shows without any light on it, for lamps and displays
   pub glow: f32,
+  /// how much of the room around the panel the surface mirrors: a soft window where the
+  /// light is and a pale band at the horizon
+  pub reflect: f32,
+  /// how far the surface is metal, which mirrors in its own color and has little color
+  /// under the light otherwise
+  pub metal: f32,
+  /// how far the highlight is drawn out into the bright wedges of metal turned on a lathe,
+  /// around the object's own z axis
+  pub spun: f32,
 }
 
 impl Material {
+  /// paint, print and anything else without a shine
   pub fn matte(color: Vec3) -> Self {
     Self {
       color,
       specular: 0.05,
       shininess: 8.0,
       glow: 0.0,
+      reflect: 0.0,
+      metal: 0.0,
+      spun: 0.0,
     }
   }
 
+  /// polished plastic, like bakelite
   pub fn glossy(color: Vec3) -> Self {
     Self {
-      color,
-      specular: 0.8,
-      shininess: 60.0,
-      glow: 0.0,
+      specular: 0.7,
+      shininess: 90.0,
+      reflect: 0.6,
+      ..Self::matte(color)
     }
   }
 
+  /// plastic with a soft sheen, like a rubbery coating
+  pub fn satin(color: Vec3) -> Self {
+    Self {
+      specular: 0.16,
+      shininess: 24.0,
+      reflect: 0.1,
+      ..Self::matte(color)
+    }
+  }
+
+  /// polished metal, which is mostly what it mirrors
+  pub fn chrome(color: Vec3) -> Self {
+    Self {
+      specular: 1.0,
+      shininess: 200.0,
+      reflect: 1.0,
+      metal: 1.0,
+      ..Self::matte(color)
+    }
+  }
+
+  /// metal turned on a lathe, like the aluminum face of a knob
+  pub fn spun(color: Vec3) -> Self {
+    Self {
+      specular: 0.55,
+      shininess: 70.0,
+      reflect: 0.12,
+      metal: 0.85,
+      spun: 1.0,
+      ..Self::matte(color)
+    }
+  }
+
+  /// something that lights itself
   pub fn lamp(color: Vec3) -> Self {
     Self {
-      color,
       specular: 0.0,
       shininess: 1.0,
       glow: 1.0,
+      ..Self::matte(color)
     }
   }
 }

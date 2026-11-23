@@ -189,7 +189,7 @@ impl Mesh {
     self.quad_with_normals(corners, [normal; 4]);
   }
 
-  fn quad_with_normals(&mut self, corners: [Vec3; 4], normals: [Vec3; 4]) {
+  pub(crate) fn quad_with_normals(&mut self, corners: [Vec3; 4], normals: [Vec3; 4]) {
     let base = self.vertices.len() as u32;
     for (position, normal) in corners.into_iter().zip(normals) {
       self.vertices.push(Vertex {
