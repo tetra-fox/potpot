@@ -1,0 +1,25 @@
+[package]
+name = "skeuo"
+version = "0.1.0"
+edition = "2024"
+description = "a small lit 3d scene renderer on wgpu, for skeuomorphic plugin panels"
+license = "GPL-3.0-or-later"
+publish = false
+
+[features]
+# the scene as an iced shader widget, for editors on iced_baseview
+iced = ["dep:iced_widget"]
+
+[dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+glam = { version = "0.30", features = ["bytemuck"] }
+# the same major version iced_wgpu draws with, so the two share their types
+wgpu = { version = "27", default-features = false, features = ["std", "wgsl"] }
+# an editor on iced_baseview gets its widgets from here too, and this feature is the one
+# that builds the shader widget, which iced_baseview leaves out
+iced_widget = { version = "0.14", optional = true, features = ["wgpu"] }
+
+[dev-dependencies]
+png = "0.18"
+pollster = "0.4"
+wgpu = { version = "27", default-features = false, features = ["vulkan", "gles"] }
