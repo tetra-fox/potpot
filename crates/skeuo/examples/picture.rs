@@ -8,7 +8,7 @@ use skeuo::glam::{Mat4, Vec2, Vec3};
 use skeuo::parts::{self, Knob, Top};
 use skeuo::{Light, Look, Material, Object, Place, Renderer, Scene, wgpu};
 
-const SIZE: [u32; 2] = [1024, 448];
+const SIZE: [u32; 2] = [1024, 640];
 
 /// how a knob of the gallery is marked
 #[derive(Clone, Copy)]
@@ -29,7 +29,7 @@ struct Shown {
   cap: Option<Material>,
 }
 
-/// every knob style in two rows, each over a scale
+/// every knob style in rows of five, each over a scale
 fn scene(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let (radius, tall) = (58.0, 42.0);
@@ -115,6 +115,29 @@ fn scene(look: Look) -> Scene {
         Marker::Line,
       )
     },
+    shown(
+      Knob::hex(radius, tall * 1.1),
+      Material::glossy(black),
+      Marker::Line,
+    ),
+    Shown {
+      cap: Some(aluminum),
+      mark: black,
+      ..shown(
+        Knob::ribbed(radius * 0.8, tall * 1.1),
+        Material::satin(black),
+        Marker::Line,
+      )
+    },
+    Shown {
+      cap: Some(Material::spun(Vec3::new(0.80, 0.66, 0.36))),
+      mark: black,
+      ..shown(
+        Knob::conical(radius, tall),
+        Material::glossy(black),
+        Marker::Line,
+      )
+    },
   ];
 
   let mut meshes = vec![
@@ -129,10 +152,10 @@ fn scene(look: Look) -> Scene {
   }];
   for (index, shown) in knobs.into_iter().enumerate() {
     let (x, y) = (
-      90.0 + 169.0 * (index % 6) as f32,
-      112.0 + 216.0 * (index / 6) as f32,
+      112.0 + 200.0 * (index % 5) as f32,
+      112.0 + 208.0 * (index / 5) as f32,
     );
-    let turn = 0.12 + 0.07 * index as f32;
+    let turn = 0.12 + 0.055 * index as f32;
     let transform = parts::knob_transform(x, y, turn, parts::KNOB_SWEEP);
     objects.push(Object {
       mesh: 2,

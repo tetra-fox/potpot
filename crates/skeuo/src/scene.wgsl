@@ -104,16 +104,18 @@ fn decode(encoded: vec3<f32>) -> vec3<f32> {
 
 // the room around the panel as a mirror would show it, by the way a reflection leaves: a
 // soft window around the light, a dimmer one across from it, a pale band where the walls
-// meet the eye, and a dark floor under that
-fn room(leaving: vec3<f32>) -> f32 {
+// meet the eye, and under that the lit panel itself. `normal` is the mirror's own facing,
+// which says what side of the room it looks at when the reflection runs straight down
+fn room(leaving: vec3<f32>, normal: vec3<f32>) -> f32 {
   let window = smoothstep(0.72, 0.9, dot(leaving, globals.toward_light.xyz));
   let across = vec3<f32>(-globals.toward_light.xy, globals.toward_light.z);
   let second = smoothstep(0.8, 0.95, dot(leaving, normalize(across))) * 0.25;
   let band = smoothstep(-0.25, 0.1, leaving.z) * (1.0 - smoothstep(0.1, 0.5, leaving.z));
   // the walls are brighter on the side the light is on
-  let side = 0.5 + 0.5 * dot(normalize(leaving.xy + vec2<f32>(0.0001)), normalize(globals.toward_light.xy));
+  let side = 0.5 + 0.5 * dot(normalize(normal.xy + vec2<f32>(0.0001)), normalize(globals.toward_light.xy));
   let ceiling = smoothstep(0.3, 1.0, leaving.z) * 0.12;
-  return window + second + band * mix(0.12, 0.5, side) + ceiling + 0.02;
+  let panel = (1.0 - smoothstep(-0.35, 0.0, leaving.z)) * mix(0.03, 0.2, side * side);
+  return window + second + band * mix(0.12, 0.5, side) + ceiling + panel + 0.02;
 }
 
 // the highlight of a surface brushed in circles around an axis: bright where the brushing
@@ -169,7 +171,7 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
   // a mirror shows more the more it is seen edge-on, and metal shows it from any side
   let edge_on = pow(1.0 - seen, 5.0);
   let base = mix(0.05, 0.75, metal);
-  let mirrored = room(reflect(-toward_viewer, normal)) * (base + (1.0 - base) * edge_on);
+  let mirrored = room(reflect(-toward_viewer, normal), normal) * (base + (1.0 - base) * edge_on);
   color += tint * mirrored * mirrors * mix(0.6, 1.0, share);
 
   return vec4<f32>(encode(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0))), 1.0);

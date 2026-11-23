@@ -13,8 +13,8 @@ pub const KNOB_SWEEP: f32 = 1.5 * PI;
 const CREASE: f32 = 0.82;
 /// the rings a shaped top is cut into from its rim to its middle
 const TOP_RINGS: usize = 14;
-/// how far up a knob its side ends and rolls over to the top, as a share of its height
-const SHOULDER: f32 = 0.86;
+/// the levels a grip that changes on its way up is cut into
+const LEVELS: usize = 10;
 /// the rings the roll from the side to the top is cut into
 const ROLL: usize = 6;
 /// how far paint and inlays stand off the surface they are on
@@ -84,6 +84,22 @@ pub struct Knob {
   pub skirt: f32,
   pub grip: Grip,
   pub top: Top,
+  /// how much narrower the grip is at its top than at its foot, as a share of its radius,
+  /// for a knob that is a cone
+  pub taper: f32,
+  /// how the side meets the top
+  pub edge: Edge,
+}
+
+/// the edge between a knob's side and its top
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Edge {
+  /// a hard corner
+  Sharp,
+  /// one flat cut across the corner, this share of the height tall and as wide
+  Chamfered(f32),
+  /// a quarter round of this share of the height
+  Rolled(f32),
 }
 
 /// the side of a knob, where fingers hold it
@@ -97,6 +113,8 @@ pub enum Grip {
   Fluted { flutes: u32, depth: f32 },
   /// this many fine sharp ridges
   Knurled(u32),
+  /// this many round ribs with round grooves between them, each `depth` of the radius deep
+  Ribbed { ribs: u32, depth: f32 },
   /// drawn out to a point on the side it points at, `reach` of the radius further than the
   /// rest, like a chicken head knob
   Pointed { reach: f32 },
@@ -174,6 +192,8 @@ impl Knob {
       grip: Grip::Smooth,
       // barely crowned, which is what lets a polished top catch the light unevenly
       top: Top::Domed { rise: 0.05 },
+      taper: 0.0,
+      edge: Edge::Rolled(0.14),
     }
   }
 
@@ -236,6 +256,7 @@ impl Knob {
       skirt: 0.0,
       grip: Grip::Faceted(9),
       top: Top::Flat,
+      edge: Edge::Chamfered(0.1),
       ..Self::round(radius, height)
     }
   }
@@ -274,7 +295,54 @@ impl Knob {
   pub fn ridge(radius: f32, height: f32) -> Self {
     Self {
       skirt: 0.0,
-      grip: Grip::Ridge { width: 0.9 },
+      grip: Grip::Ridge { width: 1.0 },
+      top: Top::Flat,
+      // the crest is too thin to carry an edge of its own
+      edge: Edge::Sharp,
+      ..Self::round(radius, height)
+    }
+  }
+
+  /// six deep scoops on a cone with a cut edge, the pedal knob with a hexagon's outline
+  pub fn hex(radius: f32, height: f32) -> Self {
+    Self {
+      skirt: 0.0,
+      grip: Grip::Fluted {
+        flutes: 6,
+        depth: 0.16,
+      },
+      top: Top::Flat,
+      taper: 0.16,
+      edge: Edge::Chamfered(0.12),
+      ..Self::round(radius, height)
+    }
+  }
+
+  /// a straight cylinder with round ribs and a cut edge, made for a face of another material
+  pub fn ribbed(radius: f32, height: f32) -> Self {
+    Self {
+      skirt: 0.0,
+      grip: Grip::Ribbed {
+        ribs: 24,
+        depth: 0.05,
+      },
+      top: Top::Flat,
+      edge: Edge::Chamfered(0.07),
+      ..Self::round(radius, height)
+    }
+  }
+
+  /// a ribbed cone widening down to the panel, like an amplifier's
+  pub fn conical(radius: f32, height: f32) -> Self {
+    Self {
+      skirt: 0.0,
+      grip: Grip::Ribbed {
+        ribs: 30,
+        depth: 0.035,
+      },
+      top: Top::Flat,
+      taper: 0.34,
+      edge: Edge::Chamfered(0.05),
       ..Self::round(radius, height)
     }
   }
@@ -290,11 +358,25 @@ impl Knob {
     }
   }
 
-  /// the radius where the top's chamfer ends and its face begins
+  /// the radius of the grip's round parts at its top
+  fn crown_radius(&self) -> f32 {
+    self.grip_radius() * (1.0 - self.taper)
+  }
+
+  /// how tall and how wide the cut or roll between the side and the top is
+  fn edge_size(&self) -> f32 {
+    match self.edge {
+      Edge::Sharp => 0.0,
+      // never so wide that it eats a small face
+      Edge::Chamfered(share) | Edge::Rolled(share) => {
+        (self.height * share).min(self.crown_radius() * 0.2)
+      }
+    }
+  }
+
+  /// the radius where the edge ends and the top's face begins
   fn face_radius(&self) -> f32 {
-    // the roll is as wide as it is tall, but never so wide that it eats a small face
-    let grip = self.grip_radius();
-    grip - (self.height * (1.0 - SHOULDER)).min(grip * 0.2)
+    self.crown_radius() - self.edge_size()
   }
 
   /// how far out the grip is at an angle, against its plain radius. `level` is how far up the
@@ -302,6 +384,11 @@ impl Knob {
   fn grip_at(&self, angle: f32, level: f32) -> f32 {
     match self.grip {
       Grip::Smooth | Grip::Faceted(_) | Grip::Knurled(_) => 1.0,
+      Grip::Ribbed { ribs, depth } => {
+        // turned so that a rib is where the knob points
+        let turned = (angle + FRAC_PI_2) * ribs as f32;
+        1.0 - depth * (0.5 - 0.5 * turned.cos())
+      }
       Grip::Fluted { flutes, depth } => {
         // a scoop takes up most of its share of the turn, and between two scoops a strip
         // of the round side is left standing
@@ -324,13 +411,15 @@ impl Knob {
       }
       Grip::Lever { width, body } => handle_at(angle + FRAC_PI_2, width).max(body),
       Grip::Ridge { width } => {
-        // the foot is wide and reaches the full radius, the crest a sliver half as long
-        let between = |foot: f32, crest: f32| foot + (crest - foot) * level;
+        // the flanks sweep in from a wide foot to a thin crest, hollow like a tent's, and
+        // the nose sweeps up from its point at the foot to where the crest ends
+        let up = 1.0 - level;
+        let between = |foot: f32, crest: f32, sweep: f32| crest + (foot - crest) * up.powf(sweep);
         blade_at(
           angle + FRAC_PI_2,
-          between(1.0, 0.6),
-          between(0.75, 0.55),
-          between(width / 2.0, 0.17),
+          between(1.0, 0.34, 1.5),
+          between(0.72, 0.52, 1.5),
+          between(width / 2.0, 0.085, 2.4),
         )
       }
     }
@@ -371,6 +460,7 @@ impl Knob {
       // a ridge is one point out and one point in
       Grip::Knurled(ridges) => ridges.max(3) * 2,
       Grip::Fluted { flutes, .. } => (flutes * 12).max(48),
+      Grip::Ribbed { ribs, .. } => ribs.max(3) * 8,
       Grip::Smooth => 72,
       // enough to keep a beak's sides straight and its point sharp
       Grip::Pointed { .. } => 180,
@@ -382,8 +472,8 @@ impl Knob {
   /// the rings of the knob's surface from the panel up and in to the middle of its top, and
   /// which of them is the foot of the grip
   fn rings(&self) -> (Vec<Ring>, usize) {
-    let (grip, face) = (self.grip_radius(), self.face_radius());
-    let shoulder = self.height * SHOULDER;
+    let (grip, crown, face) = (self.grip_radius(), self.crown_radius(), self.face_radius());
+    let shoulder = self.height - self.edge_size();
     let round = |radius: f32, height: f32| Ring {
       radius,
       height: Some(height),
@@ -405,10 +495,11 @@ impl Knob {
       self.height * 0.33
     } else if matches!(self.grip, Grip::Ridge { .. }) {
       // the blade stands on a round base narrower than itself
-      let base = self.radius * 0.6;
+      let base = self.radius * 0.56;
       rings.push(round(base, 0.0));
-      rings.push(round(base, self.height * 0.14));
-      self.height * 0.14
+      rings.push(round(base, self.height * 0.11));
+      rings.push(round(base * 0.93, self.height * 0.15));
+      self.height * 0.15
     } else {
       0.0
     };
@@ -420,16 +511,32 @@ impl Knob {
       level,
       rounded: 0.0,
     };
-    rings.push(shaped(grip, waist, 0.0));
-    rings.push(shaped(grip, shoulder, 1.0));
-    // the shoulder rolls over to the face in a quarter turn
-    for step in 1..ROLL {
-      let (up, inward) = (step as f32 / ROLL as f32 * FRAC_PI_2).sin_cos();
+    // a grip whose outline changes on the way up takes a ring at every level, any other
+    // only its foot and its top
+    let levels = if matches!(self.grip, Grip::Ridge { .. }) {
+      LEVELS
+    } else {
+      1
+    };
+    for step in 0..=levels {
+      let level = step as f32 / levels as f32;
       rings.push(shaped(
-        face + (grip - face) * inward,
-        shoulder + (self.height - shoulder) * up,
-        1.0,
+        grip + (crown - grip) * level,
+        waist + (shoulder - waist) * level,
+        level,
       ));
+    }
+    // a roll takes the shoulder over to the face in a quarter turn. a chamfer is the one
+    // flat band from the shoulder to the face's rim, and a sharp edge is no band at all
+    if let Edge::Rolled(_) = self.edge {
+      for step in 1..ROLL {
+        let (up, inward) = (step as f32 / ROLL as f32 * FRAC_PI_2).sin_cos();
+        rings.push(shaped(
+          face + (crown - face) * inward,
+          shoulder + (self.height - shoulder) * up,
+          1.0,
+        ));
+      }
     }
     let top_rings = if self.top == Top::Flat { 1 } else { TOP_RINGS };
     for ring in 0..=top_rings {
@@ -454,7 +561,7 @@ impl Knob {
     match self.grip {
       // scoops die out toward the middle of the top, which is a plain round face
       // and do so quickly, so that most of the face is plain and round
-      Grip::Fluted { depth, .. } => {
+      Grip::Fluted { depth, .. } | Grip::Ribbed { depth, .. } => {
         out += (1.0 - depth - out) * (1.0 - (1.0 - ring.rounded).powi(4));
       }
       Grip::Knurled(_) if !crests && ring.shaped > 0.0 => {
@@ -494,7 +601,7 @@ impl Knob {
     let (from, half_width) = match self.grip {
       Grip::Pointed { .. } | Grip::Lever { .. } | Grip::Bar { .. } => (0.0, self.radius * 0.045),
       // a blade's crest has room only for a hairline
-      Grip::Ridge { .. } => (0.0, self.radius * 0.03),
+      Grip::Ridge { .. } => (0.0, self.radius * 0.04),
       _ => (face * 0.4, self.radius * 0.045),
     };
     // the way from the grip's foot up the side and in across the top, as how far out from
@@ -611,7 +718,7 @@ pub fn screw(radius: f32) -> Mesh {
 mod tests {
   use super::*;
 
-  fn all(radius: f32, height: f32) -> [Knob; 11] {
+  fn all(radius: f32, height: f32) -> [Knob; 14] {
     [
       Knob::round(radius, height),
       Knob::fluted(radius, height),
@@ -624,6 +731,9 @@ mod tests {
       Knob::bar(radius, height),
       Knob::lever(radius, height),
       Knob::ridge(radius, height),
+      Knob::hex(radius, height),
+      Knob::ribbed(radius, height),
+      Knob::conical(radius, height),
     ]
   }
 
