@@ -710,7 +710,8 @@ pub enum Cap {
   /// hollowed along its length for a fingertip, the mixing console's cap. with `terraces`
   /// the hollow is cut in that many flat steps down each side instead of one curve
   Saddle { terraces: u32 },
-  /// a tall block with slanted ends and a flat top, the dj mixer's cap
+  /// a block with slanted ends and a flat top, the dj mixer's cap, which is made much wider
+  /// across than it is long
   Block,
   /// round over the top like half a barrel
   Barrel,
@@ -742,7 +743,7 @@ impl Fader {
     }
   }
 
-  /// the tall slanted block of a dj mixer
+  /// the slanted block of a dj mixer, to be made about twice as wide as it is long
   pub fn block(width: f32, length: f32, height: f32) -> Self {
     Self {
       cap: Cap::Block,

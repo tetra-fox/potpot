@@ -211,7 +211,8 @@ fn faders(look: Look) -> Scene {
   let black = Vec3::new(0.035, 0.035, 0.04);
   let (white, dark) = (Vec3::splat(0.93), Vec3::splat(0.05));
   let (wide, long, tall) = (34.0, 62.0, 26.0);
-  let block = Fader::block(30.0, 46.0, 44.0);
+  // a dj mixer's cap is much wider across than it is long
+  let block = Fader::block(50.0, 24.0, 22.0);
   let caps = [
     (
       Fader::console(wide, long, tall),
