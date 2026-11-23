@@ -392,7 +392,7 @@ impl Renderer {
 
     let present_options = device.create_buffer(&wgpu::BufferDescriptor {
       label: Some("skeuo present"),
-      size: size_of::<[f32; 4]>() as u64,
+      size: size_of::<[f32; 8]>() as u64,
       usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false,
     });
@@ -448,7 +448,9 @@ impl Renderer {
     let globals = Globals {
       view: scene.view().to_cols_array_2d(),
       light_view: scene.light_view().to_cols_array_2d(),
-      toward_light: scene.light.toward.normalize().extend(0.0).into(),
+      toward_light: (scene.light.toward.normalize())
+        .extend(scene.light.softness)
+        .into(),
       toward_viewer: scene.toward_viewer().extend(0.0).into(),
       light_color: scene.light.color.extend(scene.light.falloff).into(),
       ambient: scene.light.ambient.extend(0.0).into(),
@@ -480,6 +482,10 @@ impl Renderer {
       f32::from(u8::from(self.target_encodes)),
       look.bloom,
       look.vignette,
+      look.soften,
+      0.0,
+      0.0,
+      0.0,
     ];
     queue.write_buffer(&self.present_options, 0, bytemuck::bytes_of(&options));
 

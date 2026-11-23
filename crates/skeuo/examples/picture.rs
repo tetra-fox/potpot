@@ -1,13 +1,14 @@
-//! renders a panel of every knob style, of every fader, or of lit buttons and meters, to a
-//! png without a window: `cargo run --example picture -- out.png`, `... -- out.png faders`
-//! and `... -- out.png lights`. after those, one number is the pixel size and a second the
-//! color steps, for the crude looks
+//! renders a panel to a png without a window: `cargo run --example picture -- out.png`
+//! draws every knob style, and `faders`, `lights` or `synth` after the file's name draws
+//! every fader, lit buttons and meters, or a whole soft synth's front in an old manner.
+//! after those, one number is the pixel size and a second the color steps, for the crude
+//! looks
 
 use std::f32::consts::FRAC_PI_2;
 use std::sync::Arc;
 
 use skeuo::glam::{Mat4, Vec2, Vec3};
-use skeuo::parts::{self, Button, Fader, Knob, Meter, Push, PushSwitch, Top};
+use skeuo::parts::{self, Button, Edge, Fader, Grip, Knob, Meter, Push, PushSwitch, Top};
 use skeuo::{Light, Look, Material, Object, Place, Renderer, Scene, wgpu};
 
 const SIZE: [u32; 2] = [1024, 640];
@@ -548,6 +549,221 @@ fn lights(look: Look) -> Scene {
   }
 }
 
+/// a soft synth's front in the manner of the mid 2000s: a saturated plastic panel with raised
+/// sections, soft-touch knobs in dashed rings seen from in front, small round lights, and a
+/// wide soft light on all of it
+fn synth(look: Look) -> Scene {
+  let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
+  let blue = Vec3::new(0.13, 0.4, 0.74);
+  let knob = Knob {
+    skirt: 0.0,
+    grip: Grip::Ribbed {
+      ribs: 26,
+      depth: 0.03,
+    },
+    top: Top::Domed { rise: 0.04 },
+    taper: 0.1,
+    edge: Edge::Rolled(0.2),
+    ..Knob::round(25.0, 30.0)
+  };
+  let button = Button::key(40.0, 40.0, 5.0);
+  let dots = Meter::dots(8, 10.0, 104.0);
+  let meshes = vec![
+    parts::plate(width, height, 6.0),
+    parts::slab(300.0, 330.0, 3.0, 12.0),
+    parts::slab(300.0, 200.0, 3.0, 12.0),
+    parts::slab(330.0, 330.0, 9.0, 14.0),
+    parts::slab(270.0, 250.0, 1.5, 4.0),
+    knob.body(),
+    knob.line(),
+    parts::dashes(17, parts::KNOB_SWEEP, 33.0, 3.4, 0.62),
+    button.body(),
+    button.seat(2.0),
+    parts::led(12.0),
+    parts::led_seat(12.0),
+    dots.segment(),
+    dots.seat(),
+    parts::screw(9.0),
+  ];
+  let mut objects = vec![Object {
+    mesh: 0,
+    transform: Mat4::IDENTITY,
+    material: Material {
+      grain: 0.25,
+      ..Material::satin(blue * 0.8)
+    },
+  }];
+  let at = |x: f32, y: f32| Mat4::from_translation(Vec3::new(x, y, 0.0));
+  // everything on a section stands on its top
+  let raise = |x: f32, y: f32| Mat4::from_translation(Vec3::new(x, y, 3.0));
+  let section = Material {
+    grain: 0.2,
+    ..Material::satin(blue)
+  };
+  // the raised sections, and the screen standing higher in the middle with its glass lit
+  for (mesh, x, y) in [
+    (1, 170.0, 190.0),
+    (1, 854.0, 190.0),
+    (2, 170.0, 500.0),
+    (2, 512.0, 500.0),
+    (2, 854.0, 500.0),
+  ] {
+    objects.push(Object {
+      mesh,
+      transform: at(x, y),
+      material: section,
+    });
+  }
+  objects.push(Object {
+    mesh: 3,
+    transform: at(512.0, 190.0),
+    material: Material::satin(blue * 0.45),
+  });
+  objects.push(Object {
+    mesh: 4,
+    transform: Mat4::from_translation(Vec3::new(512.0, 196.0, 9.0)),
+    material: Material::pane(Vec3::new(0.05, 0.12, 0.25), 270.0).lit(
+      Vec3::new(0.35, 0.62, 0.95),
+      0.3,
+      0.0,
+    ),
+  });
+
+  let soft = Material::satin(Vec3::splat(0.3));
+  let white = Material::matte(Vec3::splat(0.9));
+  let green = Vec3::new(0.55, 1.0, 0.2);
+  let mut lamps = Vec::new();
+  let mut dial = |x: f32, y: f32, turn: f32| {
+    let transform = raise(0.0, 0.0) * parts::knob_transform(x, y, turn, parts::KNOB_SWEEP);
+    objects.push(Object {
+      mesh: 7,
+      transform: raise(x, y),
+      material: white,
+    });
+    objects.push(Object {
+      mesh: 5,
+      transform,
+      material: soft,
+    });
+    objects.push(Object {
+      mesh: 6,
+      transform,
+      material: white,
+    });
+  };
+  // two tall sections of knobs, each with a switch in its first place
+  for (section, left) in [(0, 115.0), (1, 799.0)] {
+    for place in 1..8 {
+      let (x, y) = (
+        left + 110.0 * (place % 2) as f32,
+        78.0 + 76.0 * (place / 2) as f32,
+      );
+      dial(x, y, 0.12 + 0.11 * ((place * 3 + section * 2) % 8) as f32);
+    }
+  }
+  // and three low ones
+  for (section, left, count) in [(0, 150.0, 2), (1, 398.0, 4), (2, 780.0, 2)] {
+    for place in 0..count * 2 {
+      if section == 1 && place % count == 0 {
+        continue;
+      }
+      let (x, y) = (
+        left + 76.0 * (place % count) as f32,
+        462.0 + 82.0 * (place / count) as f32,
+      );
+      dial(x, y, 0.2 + 0.09 * ((place * 5 + section) % 8) as f32);
+    }
+  }
+  // the switches, each with its light over it
+  let switches = [
+    (115.0, 84.0, true),
+    (799.0, 84.0, true),
+    (80.0, 462.0, false),
+    (398.0, 462.0, true),
+    (398.0, 544.0, false),
+  ];
+  for (x, y, on) in switches {
+    objects.push(Object {
+      mesh: 9,
+      transform: raise(x, y),
+      material: Material::matte(Vec3::splat(0.01)),
+    });
+    objects.push(Object {
+      mesh: 8,
+      transform: raise(x, y),
+      material: Material::satin(Vec3::splat(0.22)),
+    });
+    let level = if on { 1.0 } else { 0.0 };
+    objects.push(Object {
+      mesh: 11,
+      transform: raise(x, y - 36.0),
+      material: Material::matte(Vec3::splat(0.01)),
+    });
+    objects.push(Object {
+      mesh: 10,
+      transform: raise(x, y - 36.0),
+      material: parts::led_material(green, level, 12.0),
+    });
+    if on {
+      lamps.push(skeuo::Lamp {
+        at: Vec3::new(x, y - 36.0, 12.0),
+        color: green * 2.5,
+        reach: 42.0,
+      });
+    }
+  }
+  // the output's two columns of lights
+  for (x, level) in [(928.0, 0.42), (942.0, 0.5)] {
+    let raised = |object: Object| Object {
+      transform: raise(0.0, 0.0) * object.transform,
+      ..object
+    };
+    objects.extend(dots.seats(13, x, 590.0).into_iter().map(raised));
+    objects.extend(
+      dots
+        .lights(12, x, 590.0, level, None)
+        .into_iter()
+        .map(raised),
+    );
+    lamps.extend(dots.lamp(x, 590.0, level));
+  }
+  // screws sunk in the panel's sides
+  for (x, y) in [
+    (16.0, 130.0),
+    (16.0, 470.0),
+    (width - 16.0, 130.0),
+    (width - 16.0, 470.0),
+  ] {
+    objects.push(Object {
+      mesh: 14,
+      transform: at(x, y) * Mat4::from_rotation_z(x + y),
+      material: Material::satin(Vec3::splat(0.12)),
+    });
+  }
+
+  Scene {
+    size: Vec2::new(width, height),
+    heights: [-8.0, 64.0],
+    lean: Vec2::new(0.0, -0.5),
+    light: Light {
+      toward: Vec3::new(-0.3, -0.5, 1.0),
+      color: Vec3::splat(0.8),
+      ambient: Vec3::splat(0.42),
+      falloff: 0.35,
+      softness: 7.0,
+      ..Light::default()
+    },
+    look: Look {
+      soften: 0.6,
+      bloom: 1.1,
+      ..look
+    },
+    meshes: Arc::from(meshes),
+    objects,
+    lamps,
+  }
+}
+
 fn main() {
   let mut arguments = std::env::args().skip(1).peekable();
   let path = arguments.next().unwrap_or_else(|| "picture.png".to_owned());
@@ -556,7 +772,8 @@ fn main() {
     Some(panel) if panel == "knobs" => knobs,
     Some(panel) if panel == "faders" => faders,
     Some(panel) if panel == "lights" => lights,
-    Some(panel) => panic!("no panel called {panel}, only knobs, faders and lights"),
+    Some(panel) if panel == "synth" => synth,
+    Some(panel) => panic!("no panel called {panel}, only knobs, faders, lights and synth"),
   };
   let look = Look {
     pixel_size: arguments

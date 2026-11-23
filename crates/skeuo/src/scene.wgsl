@@ -108,7 +108,7 @@ fn lit_share(world: vec3<f32>, facing: f32) -> f32 {
   var share = 0.0;
   for (var x = -2; x <= 2; x++) {
     for (var y = -2; y <= 2; y++) {
-      let aside = vec2<f32>(f32(x), f32(y)) * globals.shadows.y * 2.5;
+      let aside = vec2<f32>(f32(x), f32(y)) * globals.shadows.y * globals.toward_light.w;
       share += textureSampleCompareLevel(shadow_map, shadow_sampler, at + aside, depth);
     }
   }
@@ -314,5 +314,7 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
     color += vec3<f32>(sheen) * max(normalize(lit.normal).z, 0.0);
   }
 
-  return vec4<f32>(encode(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0))), 1.0);
+  // the picture's fourth channel says how far a spot lights itself, which is what spills
+  // a haze later: paint under a bright light is as bright, and spills none
+  return vec4<f32>(encode(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0))), clamp(glow, 0.0, 1.0));
 }

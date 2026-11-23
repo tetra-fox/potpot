@@ -1295,6 +1295,8 @@ pub struct Meter {
   pub pitch: f32,
   /// how wide the dark gap around each window is
   pub margin: f32,
+  /// how round each light is, from zero for square corners to one for round
+  pub corner: f32,
   /// the share of the lights, from the bottom, where they turn yellow and then red
   pub yellow_from: f32,
   pub red_from: f32,
@@ -1310,8 +1312,18 @@ impl Meter {
       length: pitch * 0.72,
       pitch,
       margin: 0.8,
+      corner: 0.16,
       yellow_from: 0.6,
       red_from: 0.85,
+    }
+  }
+
+  /// a ladder of `segments` round lights, each `diameter` across, filling `length`
+  pub fn dots(segments: u32, diameter: f32, length: f32) -> Self {
+    Self {
+      length: diameter,
+      corner: 1.0,
+      ..Self::ladder(segments, diameter, length)
     }
   }
 
@@ -1324,9 +1336,9 @@ impl Meter {
   /// tight rolled edge, which is what catches a glint and where its light comes out
   fn lens(&self) -> Button {
     Button {
-      corner: 0.16,
-      roll: 0.5,
-      crown: 0.03,
+      corner: self.corner,
+      roll: 0.5 + 0.4 * self.corner,
+      crown: 0.03 + 0.2 * self.corner,
       ..Button::key(self.width, self.length, self.length.min(self.width) * 0.22)
     }
   }
@@ -1418,6 +1430,65 @@ impl Meter {
       reach: self.width * 3.0,
     })
   }
+}
+
+/// the dashed ring around a knob that old soft synths draw: `count` short bars lying on the
+/// panel end to end around the origin at `radius`, over `sweep` radians the way
+/// [`knob_transform`] turns. each is `width` across, and `fill` is how much of its share of
+/// the ring a bar takes, the rest being the gap to the next
+pub fn dashes(count: u32, sweep: f32, radius: f32, width: f32, fill: f32) -> Mesh {
+  let mut ring = Mesh::default();
+  let share = sweep / count.max(1) as f32;
+  let half_length = radius * (share * fill.clamp(0.0, 1.0) / 2.0).tan();
+  for dash in 0..count {
+    let turn = (dash as f32 + 0.5) * share - sweep / 2.0;
+    let bar = Mesh::cuboid(
+      Vec3::new(-half_length, -radius - width / 2.0, 0.0),
+      Vec3::new(half_length, -radius + width / 2.0, 0.3),
+    );
+    ring = ring.merged(&bar.transformed(Mat4::from_rotation_z(turn)));
+  }
+  ring
+}
+
+/// a small round light with a domed top, like the indicator beside a switch
+pub fn led(diameter: f32) -> Mesh {
+  Button {
+    roll: 0.9,
+    crown: 0.25,
+    ..Button::round(diameter, diameter * 0.32)
+  }
+  .body()
+}
+
+/// the dark ring a small round light sits in, lying on the panel
+pub fn led_seat(diameter: f32) -> Mesh {
+  Button::round(diameter, 1.0).seat(diameter * 0.12)
+}
+
+/// what a small light of a color is made of at a level from zero for dark to one for lit:
+/// dark tinted plastic that glows from its middle
+pub fn led_material(color: Vec3, level: f32, diameter: f32) -> crate::Material {
+  let dark = crate::Material::pipe();
+  crate::Material {
+    color: dark.color * 0.6 + color * 0.07,
+    ..dark
+  }
+  .lit(color, level, diameter * 0.45)
+}
+
+/// a low raised plate with round corners and a soft edge, centered on the origin, for a
+/// section of a panel standing a little proud of the rest
+pub fn slab(width: f32, length: f32, height: f32, corner: f32) -> Mesh {
+  Button {
+    width,
+    length,
+    height,
+    corner: (corner / (width.min(length) / 2.0)).clamp(0.0, 1.0),
+    roll: 1.0,
+    crown: 0.0,
+  }
+  .body()
 }
 
 /// a flat plate with its top at height zero, the panel everything stands on

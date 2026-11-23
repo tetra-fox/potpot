@@ -4,6 +4,8 @@ struct Present {
   // x the steps each channel is cut to or zero, y one when the target encodes srgb itself,
   // z how much the bright parts spill over, w how much the corners darken
   options: vec4<f32>,
+  // x how far the picture is blurred
+  more: vec4<f32>,
 }
 
 @group(0) @binding(0) var picture: texture_2d<f32>;
@@ -39,9 +41,24 @@ fn threshold(pixel: vec2<u32>) -> f32 {
 @fragment
 fn fragment(spread: Spread) -> @location(0) vec4<f32> {
   var color = textureSampleLevel(picture, picture_sampler, spread.at, 0.0).rgb;
+  if present.more.x > 0.0 {
+    // toward the mean of the pixel and the eight around it, the nearer ones counting more
+    let one = 1.0 / vec2<f32>(textureDimensions(picture));
+    var around = color * 4.0;
+    for (var x = -1; x <= 1; x++) {
+      for (var y = -1; y <= 1; y++) {
+        if x != 0 || y != 0 {
+          let weight = select(1.0, 2.0, x == 0 || y == 0);
+          let aside = vec2<f32>(f32(x), f32(y)) * one;
+          around += textureSampleLevel(picture, picture_sampler, spread.at + aside, 0.0).rgb * weight;
+        }
+      }
+    }
+    color = mix(color, around / 16.0, present.more.x);
+  }
   if present.options.z > 0.0 {
-    // what is as bright as a color gets, gathered from a spiral of places around the
-    // pixel, so that the haze has no shape of its own
+    // what lights itself, gathered from a spiral of places around the pixel, so that the
+    // haze has no shape of its own
     let pixel = 1.0 / vec2<f32>(textureDimensions(picture));
     var haze = vec3<f32>(0.0);
     const PLACES: i32 = 40;
@@ -49,11 +66,9 @@ fn fragment(spread: Spread) -> @location(0) vec4<f32> {
       let out = sqrt((f32(step) + 0.5) / f32(PLACES));
       let turn = f32(step) * 2.3999632;
       let aside = vec2<f32>(cos(turn), sin(turn)) * out * 13.0 * pixel;
-      let near = textureSampleLevel(picture, picture_sampler, spread.at + aside, 0.0).rgb;
-      // by how bright it is at its brightest, so that a strong color spills as itself,
-      // and less the further it has to come
-      let bright = max(max(near.r, near.g), near.b);
-      haze += near * smoothstep(0.965, 1.0, bright) * (1.0 - 0.6 * out);
+      let near = textureSampleLevel(picture, picture_sampler, spread.at + aside, 0.0);
+      // less the further it has to come
+      haze += near.rgb * near.a * (1.0 - 0.6 * out);
     }
     color += haze / f32(PLACES) * 1.6 * present.options.z;
   }
