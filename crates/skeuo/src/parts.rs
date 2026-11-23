@@ -52,6 +52,23 @@ pub enum Grip {
   /// a round body with one long handle out to the side it points at, for turning with a
   /// foot. the body is `body` of the radius and the handle `width` of it wide
   Lever { width: f32, body: f32 },
+  /// a tall blade that narrows from `width` of the radius at its foot to a thin crest, with
+  /// a long nose sloping down to a point on the side it points at and a short round tail,
+  /// standing on a small round base
+  Ridge { width: f32 },
+}
+
+/// how far out a blade's outline reaches at `angle` from its nose: straight edges running
+/// in to a point `nose` ahead, a round back `tail` behind, and `half` wide to each side of
+/// the center
+fn blade_at(angle: f32, nose: f32, tail: f32, half: f32) -> f32 {
+  let (across, along) = (angle.sin().abs(), angle.cos());
+  if along >= 0.0 {
+    half / (across + half * along / nose)
+  } else {
+    // half an ellipse
+    1.0 / (along / tail).hypot(across / half)
+  }
 }
 
 /// how far out a handle reaches at `angle` from the way it runs: a strip `width` wide with
@@ -196,13 +213,22 @@ impl Knob {
     }
   }
 
+  /// a tall pointer blade on a small base, like a DM-2300
+  pub fn ridge(radius: f32, height: f32) -> Self {
+    Self {
+      skirt: 0.0,
+      grip: Grip::Ridge { width: 0.8 },
+      ..Self::round(radius, height)
+    }
+  }
+
   /// the radius of the grip's round parts
   fn grip_radius(&self) -> f32 {
     match self.grip {
       // the point reaches the full radius and the rest stays inside it
       Grip::Pointed { reach } => self.radius / (1.0 + reach),
       // the handle's end reaches the full radius
-      Grip::Lever { .. } => self.radius,
+      Grip::Lever { .. } | Grip::Ridge { .. } => self.radius,
       _ => self.radius * (1.0 - self.skirt),
     }
   }
@@ -212,8 +238,9 @@ impl Knob {
     self.grip_radius() - self.height * (1.0 - SHOULDER)
   }
 
-  /// how far out the grip is at an angle, against its plain radius
-  fn grip_at(&self, angle: f32) -> f32 {
+  /// how far out the grip is at an angle, against its plain radius. `level` is how far up the
+  /// grip, from zero at its foot to one at its top, for the grips that change on the way
+  fn grip_at(&self, angle: f32, level: f32) -> f32 {
     match self.grip {
       Grip::Smooth | Grip::Faceted(_) | Grip::Knurled(_) => 1.0,
       Grip::Fluted { flutes, depth } => {
@@ -232,6 +259,16 @@ impl Knob {
         handle_at(from, width).max(handle_at(from + PI, width))
       }
       Grip::Lever { width, body } => handle_at(angle + FRAC_PI_2, width).max(body),
+      Grip::Ridge { width } => {
+        // the foot is wide and reaches the full radius, the crest a sliver half as long
+        let between = |foot: f32, crest: f32| foot + (crest - foot) * level;
+        blade_at(
+          angle + FRAC_PI_2,
+          between(1.0, 0.5),
+          between(0.7, 0.5),
+          between(width / 2.0, 0.09),
+        )
+      }
     }
   }
 
@@ -268,7 +305,7 @@ impl Knob {
       Grip::Fluted { flutes, .. } => (flutes * 12).max(48),
       Grip::Smooth | Grip::Pointed { .. } => 72,
       // enough to keep a handle's long sides straight
-      Grip::Bar { .. } | Grip::Lever { .. } => 180,
+      Grip::Bar { .. } | Grip::Lever { .. } | Grip::Ridge { .. } => 180,
     }
   }
 
@@ -276,27 +313,34 @@ impl Knob {
   pub fn body(&self) -> Mesh {
     let (grip, face) = (self.grip_radius(), self.face_radius());
     let shoulder = self.height * SHOULDER;
-    // each ring is its radius, its height, and how much of the grip's shape it takes
+    // each ring is its radius, its height, how much of the grip's shape it takes, and how
+    // far up the grip it is
     let mut rings = Vec::new();
     let skirtless = matches!(self.grip, Grip::Pointed { .. } | Grip::Lever { .. });
     let waist = if self.skirt > 0.0 && !skirtless {
-      rings.push((self.radius, 0.0, 0.0));
-      rings.push((self.radius, self.height * 0.16, 0.0));
+      rings.push((self.radius, 0.0, 0.0, 0.0));
+      rings.push((self.radius, self.height * 0.16, 0.0, 0.0));
       // the skirt slopes up to a round collar that the grip's shape then rises out of
-      rings.push((grip, self.height * 0.28, 0.0));
+      rings.push((grip, self.height * 0.28, 0.0, 0.0));
       self.height * 0.32
+    } else if matches!(self.grip, Grip::Ridge { .. }) {
+      // the blade stands on a round base narrower than itself
+      let base = self.radius * 0.5;
+      rings.push((base, 0.0, 0.0, 0.0));
+      rings.push((base, self.height * 0.14, 0.0, 0.0));
+      self.height * 0.14
     } else {
       0.0
     };
-    rings.push((grip, waist, 1.0));
-    rings.push((grip, shoulder, 1.0));
+    rings.push((grip, waist, 1.0, 0.0));
+    rings.push((grip, shoulder, 1.0, 1.0));
     let shaped_top = self.top != Top::Flat;
     let top_rings = if shaped_top { TOP_RINGS } else { 1 };
     for ring in 0..=top_rings {
       // the face's rim follows the grip, so that flutes cut into the top and a point carries
       // out along it, and the shape fades toward the middle
       let inward = ring as f32 / top_rings as f32;
-      rings.push((face * (1.0 - inward), f32::NAN, 1.0 - inward));
+      rings.push((face * (1.0 - inward), f32::NAN, 1.0 - inward, 1.0));
     }
 
     let knurled = matches!(self.grip, Grip::Knurled(_));
@@ -308,8 +352,8 @@ impl Knob {
       CREASE
     };
     Mesh::rings(rings.len(), segments, crease, |ring, angle| {
-      let (radius, height, shaped) = rings[ring];
-      let mut out = 1.0 + (self.grip_at(angle) - 1.0) * shaped;
+      let (radius, height, shaped, level) = rings[ring];
+      let mut out = 1.0 + (self.grip_at(angle, level) - 1.0) * shaped;
       if knurled && shaped > 0.0 {
         // every other point around sits in a groove
         let step = (angle / TAU * segments as f32).round() as u32;
@@ -333,9 +377,14 @@ impl Knob {
       // a pointed knob's line runs out along its point
       Grip::Pointed { .. } => (-face * 0.5, self.radius * 0.8),
       Grip::Lever { .. } => (0.0, face * 0.9),
+      // along the crest, which ends well short of the nose's point
+      Grip::Ridge { .. } => (-face * 0.2, face * 0.3),
       _ => (face * 0.3, face * 0.9),
     };
-    let (half_width, raised) = (self.radius * 0.05, self.height * 0.03);
+    // a blade's crest has room only for a hairline
+    let thin = matches!(self.grip, Grip::Ridge { .. });
+    let half_width = self.radius * if thin { 0.022 } else { 0.05 };
+    let raised = self.height * 0.03;
     // in short pieces, each at the height of the face under it
     const PIECES: usize = 6;
     let mut line = Mesh::default();
@@ -433,7 +482,7 @@ pub fn screw(radius: f32) -> Mesh {
 mod tests {
   use super::*;
 
-  fn all(radius: f32, height: f32) -> [Knob; 10] {
+  fn all(radius: f32, height: f32) -> [Knob; 11] {
     [
       Knob::round(radius, height),
       Knob::fluted(radius, height),
@@ -445,6 +494,7 @@ mod tests {
       Knob::chicken_head(radius, height),
       Knob::bar(radius, height),
       Knob::lever(radius, height),
+      Knob::ridge(radius, height),
     ]
   }
 
@@ -502,6 +552,15 @@ mod tests {
         "{angle}: {out}"
       );
     }
+  }
+
+  #[test]
+  fn a_blade_reaches_its_nose_tail_and_sides() {
+    let (nose, tail, half) = (1.0, 0.6, 0.3);
+    assert!((blade_at(0.0, nose, tail, half) - nose).abs() < 1e-6);
+    assert!((blade_at(PI, nose, tail, half) - tail).abs() < 1e-5);
+    assert!((blade_at(FRAC_PI_2, nose, tail, half) - half).abs() < 1e-6);
+    assert!((blade_at(-FRAC_PI_2, nose, tail, half) - half).abs() < 1e-6);
   }
 
   #[test]

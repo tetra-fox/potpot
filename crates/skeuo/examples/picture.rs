@@ -8,7 +8,7 @@ use skeuo::glam::{Mat4, Vec2, Vec3};
 use skeuo::parts::{self, Knob};
 use skeuo::{Light, Look, Material, Object, Place, Renderer, Scene, wgpu};
 
-const SIZE: [u32; 2] = [704, 320];
+const SIZE: [u32; 2] = [768, 320];
 
 /// how a knob of the gallery is marked
 #[derive(Clone, Copy)]
@@ -19,7 +19,7 @@ enum Marker {
   None,
 }
 
-/// every knob style in two rows of five, each over a scale
+/// every knob style in two rows, each over a scale
 fn scene(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let (radius, tall) = (44.0, 32.0);
@@ -56,12 +56,17 @@ fn scene(look: Look) -> Scene {
     (
       Knob::bar(radius, tall * 1.3),
       Marker::Line,
-      Vec3::new(0.80, 0.78, 0.70),
+      Vec3::new(0.20, 0.21, 0.23),
     ),
     (
       Knob::lever(radius, tall * 0.8),
       Marker::Line,
       Vec3::new(0.78, 0.45, 0.08),
+    ),
+    (
+      Knob::ridge(radius, tall * 1.25),
+      Marker::Line,
+      Vec3::new(0.22, 0.23, 0.26),
     ),
   ];
 
@@ -81,8 +86,8 @@ fn scene(look: Look) -> Scene {
   }];
   for (index, (knob, marker, color)) in knobs.into_iter().enumerate() {
     let (x, y) = (
-      80.0 + 136.0 * (index % 5) as f32,
-      88.0 + 148.0 * (index / 5) as f32,
+      72.0 + 125.0 * (index % 6) as f32,
+      88.0 + 148.0 * (index / 6) as f32,
     );
     let turn = 0.15 + 0.08 * index as f32;
     let transform = parts::knob_transform(x, y, turn, parts::KNOB_SWEEP);
@@ -188,7 +193,7 @@ fn main() {
     [0, 0, SIZE[0], SIZE[1]],
   );
 
-  // a row of 704 rgba pixels is already a multiple of the 256 bytes wgpu copies rows by
+  // a row of 768 rgba pixels is already a multiple of the 256 bytes wgpu copies rows by
   let row = SIZE[0] * 4;
   let read = device.create_buffer(&wgpu::BufferDescriptor {
     label: None,
