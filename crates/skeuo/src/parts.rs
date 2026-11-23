@@ -46,6 +46,34 @@ pub enum Grip {
   /// drawn out to a point on the side it points at, `reach` of the radius further than the
   /// rest, like a chicken head knob
   Pointed { reach: f32 },
+  /// a handle standing across the whole knob like a stove dial's, `width` of the radius
+  /// wide, with round ends
+  Bar { width: f32 },
+  /// a round body with one long handle out to the side it points at, for turning with a
+  /// foot. the body is `body` of the radius and the handle `width` of it wide
+  Lever { width: f32, body: f32 },
+}
+
+/// how far out a handle reaches at `angle` from the way it runs: a strip `width` wide with
+/// round ends, from the center out to one
+fn handle_at(angle: f32, width: f32) -> f32 {
+  let half = (width / 2.0).min(1.0);
+  let (across, along) = (angle.sin().abs(), angle.cos());
+  // the middle of the round end
+  let end = 1.0 - half;
+  if along <= 0.0 {
+    return 0.0;
+  }
+  let side = if across > f32::EPSILON {
+    half / across
+  } else {
+    f32::MAX
+  };
+  if side * along <= end {
+    side
+  } else {
+    end * along + (half * half - end * end * across * across).max(0.0).sqrt()
+  }
 }
 
 /// the face of a knob
@@ -147,11 +175,34 @@ impl Knob {
     }
   }
 
+  /// a tall handle across a low round base, the kind a toe can nudge
+  pub fn bar(radius: f32, height: f32) -> Self {
+    Self {
+      skirt: 0.12,
+      grip: Grip::Bar { width: 0.42 },
+      ..Self::round(radius, height)
+    }
+  }
+
+  /// a small round knob with a long handle sticking out of it
+  pub fn lever(radius: f32, height: f32) -> Self {
+    Self {
+      skirt: 0.0,
+      grip: Grip::Lever {
+        width: 0.3,
+        body: 0.5,
+      },
+      ..Self::round(radius, height)
+    }
+  }
+
   /// the radius of the grip's round parts
   fn grip_radius(&self) -> f32 {
     match self.grip {
       // the point reaches the full radius and the rest stays inside it
       Grip::Pointed { reach } => self.radius / (1.0 + reach),
+      // the handle's end reaches the full radius
+      Grip::Lever { .. } => self.radius,
       _ => self.radius * (1.0 - self.skirt),
     }
   }
@@ -175,6 +226,12 @@ impl Knob {
         let toward = (angle + FRAC_PI_2).cos().max(0.0);
         1.0 + reach * toward.powi(10)
       }
+      // the angle from the way the knob points, which is up the panel
+      Grip::Bar { width } => {
+        let from = angle + FRAC_PI_2;
+        handle_at(from, width).max(handle_at(from + PI, width))
+      }
+      Grip::Lever { width, body } => handle_at(angle + FRAC_PI_2, width).max(body),
     }
   }
 
@@ -210,6 +267,8 @@ impl Knob {
       Grip::Knurled(ridges) => ridges.max(3) * 2,
       Grip::Fluted { flutes, .. } => (flutes * 12).max(48),
       Grip::Smooth | Grip::Pointed { .. } => 72,
+      // enough to keep a handle's long sides straight
+      Grip::Bar { .. } | Grip::Lever { .. } => 180,
     }
   }
 
@@ -219,7 +278,8 @@ impl Knob {
     let shoulder = self.height * SHOULDER;
     // each ring is its radius, its height, and how much of the grip's shape it takes
     let mut rings = Vec::new();
-    let waist = if self.skirt > 0.0 && !matches!(self.grip, Grip::Pointed { .. }) {
+    let skirtless = matches!(self.grip, Grip::Pointed { .. } | Grip::Lever { .. });
+    let waist = if self.skirt > 0.0 && !skirtless {
       rings.push((self.radius, 0.0, 0.0));
       rings.push((self.radius, self.height * 0.16, 0.0));
       // the skirt slopes up to a round collar that the grip's shape then rises out of
@@ -272,6 +332,7 @@ impl Knob {
     let (from, to) = match self.grip {
       // a pointed knob's line runs out along its point
       Grip::Pointed { .. } => (-face * 0.5, self.radius * 0.8),
+      Grip::Lever { .. } => (0.0, face * 0.9),
       _ => (face * 0.3, face * 0.9),
     };
     let (half_width, raised) = (self.radius * 0.05, self.height * 0.03);
@@ -372,7 +433,7 @@ pub fn screw(radius: f32) -> Mesh {
 mod tests {
   use super::*;
 
-  fn all(radius: f32, height: f32) -> [Knob; 8] {
+  fn all(radius: f32, height: f32) -> [Knob; 10] {
     [
       Knob::round(radius, height),
       Knob::fluted(radius, height),
@@ -382,6 +443,8 @@ mod tests {
       Knob::dimpled(radius, height),
       Knob::faceted(radius, height),
       Knob::chicken_head(radius, height),
+      Knob::bar(radius, height),
+      Knob::lever(radius, height),
     ]
   }
 
@@ -419,6 +482,25 @@ mod tests {
           );
         }
       }
+    }
+  }
+
+  #[test]
+  fn a_handle_is_a_strip_with_round_ends() {
+    // straight along it reaches all the way out, and behind it there is none
+    assert!((handle_at(0.0, 0.4) - 1.0).abs() < 1e-6);
+    assert_eq!(handle_at(PI, 0.4), 0.0);
+    // far enough to the side the ray leaves through the long edge, half the width away
+    let aside = 1.0_f32;
+    assert!((handle_at(aside, 0.4) * aside.sin() - 0.2).abs() < 1e-6);
+    // and near the end it leaves through the round one, which is nowhere wider
+    for step in 0..100 {
+      let angle = step as f32 / 100.0 * FRAC_PI_2;
+      let out = handle_at(angle, 0.4);
+      assert!(
+        out * angle.sin() <= 0.2 + 1e-5 && out <= 1.0 + 1e-5,
+        "{angle}: {out}"
+      );
     }
   }
 

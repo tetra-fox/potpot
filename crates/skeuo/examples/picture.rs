@@ -1,4 +1,5 @@
-//! renders a panel of every knob style to a png without a window: `cargo run --example picture -- out.png`.
+//! renders a panel of every knob style to a png without a window:
+//! `cargo run --example picture -- out.png`.
 //! a second argument is the pixel size and a third the color steps, for the crude looks
 
 use std::sync::Arc;
@@ -7,7 +8,7 @@ use skeuo::glam::{Mat4, Vec2, Vec3};
 use skeuo::parts::{self, Knob};
 use skeuo::{Light, Look, Material, Object, Place, Renderer, Scene, wgpu};
 
-const SIZE: [u32; 2] = [640, 320];
+const SIZE: [u32; 2] = [704, 320];
 
 /// how a knob of the gallery is marked
 #[derive(Clone, Copy)]
@@ -18,7 +19,7 @@ enum Marker {
   None,
 }
 
-/// every knob style in two rows, each over a scale
+/// every knob style in two rows of five, each over a scale
 fn scene(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let (radius, tall) = (44.0, 32.0);
@@ -52,6 +53,16 @@ fn scene(look: Look) -> Scene {
       Vec3::new(0.12, 0.25, 0.42),
     ),
     (Knob::chicken_head(radius, tall), Marker::Line, dark),
+    (
+      Knob::bar(radius, tall * 1.3),
+      Marker::Line,
+      Vec3::new(0.80, 0.78, 0.70),
+    ),
+    (
+      Knob::lever(radius, tall * 0.8),
+      Marker::Line,
+      Vec3::new(0.78, 0.45, 0.08),
+    ),
   ];
 
   let mut meshes = vec![
@@ -70,10 +81,10 @@ fn scene(look: Look) -> Scene {
   }];
   for (index, (knob, marker, color)) in knobs.into_iter().enumerate() {
     let (x, y) = (
-      95.0 + 150.0 * (index % 4) as f32,
-      88.0 + 148.0 * (index / 4) as f32,
+      80.0 + 136.0 * (index % 5) as f32,
+      88.0 + 148.0 * (index / 5) as f32,
     );
-    let turn = 0.15 + 0.1 * index as f32;
+    let turn = 0.15 + 0.08 * index as f32;
     let transform = parts::knob_transform(x, y, turn, parts::KNOB_SWEEP);
     objects.push(Object {
       mesh: 2,
@@ -177,7 +188,7 @@ fn main() {
     [0, 0, SIZE[0], SIZE[1]],
   );
 
-  // a row of 640 rgba pixels is already a multiple of the 256 bytes wgpu copies rows by
+  // a row of 704 rgba pixels is already a multiple of the 256 bytes wgpu copies rows by
   let row = SIZE[0] * 4;
   let read = device.create_buffer(&wgpu::BufferDescriptor {
     label: None,
