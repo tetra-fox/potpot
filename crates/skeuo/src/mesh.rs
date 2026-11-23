@@ -84,6 +84,83 @@ impl Mesh {
     mesh
   }
 
+  /// a closed band of surface through rings of points: `point(ring, angle)` places the point
+  /// of a ring at an angle around the z axis, for `rings` rings from the bottom outside up
+  /// and in, each of `segments` points. where neighboring faces turn from each other by less
+  /// than the angle whose cosine is `crease` the shading rounds over the edge between them,
+  /// and anything sharper stays a hard edge. this is [`Mesh::lathe`] for shapes that are not
+  /// the same all the way around
+  pub fn rings(
+    rings: usize,
+    segments: u32,
+    crease: f32,
+    point: impl Fn(usize, f32) -> Vec3,
+  ) -> Self {
+    let segments = segments as usize;
+    let grid: Vec<Vec<Vec3>> = (0..rings)
+      .map(|ring| {
+        (0..segments)
+          .map(|step| point(ring, step as f32 / segments as f32 * TAU))
+          .collect()
+      })
+      .collect();
+    let corners = |band: usize, step: usize| {
+      let next = (step + 1) % segments;
+      [
+        grid[band][step],
+        grid[band][next],
+        grid[band + 1][next],
+        grid[band + 1][step],
+      ]
+    };
+    let bands = rings.saturating_sub(1);
+    // across the diagonals, which still gives a face where a ring closes to a point
+    let faces: Vec<Vec<Vec3>> = (0..bands)
+      .map(|band| {
+        (0..segments)
+          .map(|step| {
+            let [a, b, c, d] = corners(band, step);
+            (c - a).cross(d - b).normalize_or_zero()
+          })
+          .collect()
+      })
+      .collect();
+
+    let mut mesh = Self::default();
+    for band in 0..bands {
+      for step in 0..segments {
+        let own = faces[band][step];
+        // the faces around one corner: this one, its neighbor around, and the two in the
+        // band past the corner's ring
+        let rounded = |ring: usize, around: usize| {
+          let mut sum = Vec3::ZERO;
+          for near_band in [ring.checked_sub(1), (ring < bands).then_some(ring)] {
+            let Some(near_band) = near_band else {
+              continue;
+            };
+            for near_step in [(around + segments - 1) % segments, around % segments] {
+              let face = faces[near_band][near_step];
+              if face.dot(own) >= crease {
+                sum += face;
+              }
+            }
+          }
+          sum.try_normalize().unwrap_or(own)
+        };
+        mesh.quad_with_normals(
+          corners(band, step),
+          [
+            rounded(band, step),
+            rounded(band, step + 1),
+            rounded(band + 1, step + 1),
+            rounded(band + 1, step),
+          ],
+        );
+      }
+    }
+    mesh
+  }
+
   /// the mesh moved by a transform, to bake a part into place before merging
   #[must_use]
   pub fn transformed(mut self, transform: Mat4) -> Self {
@@ -155,6 +232,32 @@ mod tests {
         assert!(outward.dot(normal) > 0.99, "{position} faces {normal}");
       }
     }
+  }
+
+  #[test]
+  fn rings_round_over_shallow_edges_and_keep_sharp_ones() {
+    // a cylinder of many sides: round around the wall, hard where the wall meets the top
+    let shape = [[1.0, 0.0], [1.0, 2.0], [0.0, 2.0]];
+    let point = |ring: usize, angle: f32| {
+      let [radius, height] = shape[ring];
+      Vec3::new(angle.cos() * radius, angle.sin() * radius, height)
+    };
+    let mesh = Mesh::rings(3, 32, 0.8, point);
+    assert_eq!(mesh.indices.len(), 2 * 32 * 6);
+    for vertex in &mesh.vertices {
+      let (position, normal) = (Vec3::from(vertex.position), Vec3::from(vertex.normal));
+      if normal.z > 0.5 {
+        assert!((normal.z - 1.0).abs() < 1e-4, "{position} faces {normal}");
+      } else {
+        // rounded, so a wall corner faces straight out from the axis and not along a face
+        let outward = Vec3::new(position.x, position.y, 0.0).normalize();
+        assert!(outward.dot(normal) > 0.9999, "{position} faces {normal}");
+      }
+    }
+    // with few sides every edge is sharper than the crease, and each face keeps its own
+    let faceted = Mesh::rings(3, 6, 0.8, point);
+    let wall = &faceted.vertices[..4];
+    assert!(wall.iter().all(|vertex| vertex.normal == wall[0].normal));
   }
 
   #[test]

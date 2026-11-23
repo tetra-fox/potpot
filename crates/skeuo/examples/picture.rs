@@ -1,25 +1,64 @@
-//! renders a small panel to a png without a window: `cargo run --example picture -- out.png`.
+//! renders a panel of every knob style to a png without a window: `cargo run --example picture -- out.png`.
 //! a second argument is the pixel size and a third the color steps, for the crude looks
 
 use std::sync::Arc;
 
 use skeuo::glam::{Mat4, Vec2, Vec3};
-use skeuo::{Light, Look, Material, Object, Place, Renderer, Scene, parts, wgpu};
+use skeuo::parts::{self, Knob};
+use skeuo::{Light, Look, Material, Object, Place, Renderer, Scene, wgpu};
 
 const SIZE: [u32; 2] = [640, 320];
 
+/// how a knob of the gallery is marked
+#[derive(Clone, Copy)]
+enum Marker {
+  Line,
+  Dot,
+  /// its own shape says where it points
+  None,
+}
+
+/// every knob style in two rows, each over a scale
 fn scene(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
-  let meshes = Arc::from([
-    parts::plate(width, height, 6.0),
-    parts::knob_body(44.0, 34.0, 48, true),
-    parts::knob_pointer(44.0, 34.0),
-    parts::knob_body(30.0, 26.0, 9, false),
-    parts::knob_pointer(30.0, 26.0),
-    parts::screw(7.0),
-    skeuo::Mesh::lathe(&[[9.0, 0.0], [9.0, 3.0], [6.0, 6.0], [0.0, 7.0]], 20, true),
-  ]);
+  let (radius, tall) = (44.0, 32.0);
+  let dark = Vec3::new(0.09, 0.09, 0.10);
+  let knobs = [
+    (Knob::round(radius, tall), Marker::Line, dark),
+    (
+      Knob::fluted(radius, tall),
+      Marker::Line,
+      Vec3::new(0.16, 0.17, 0.19),
+    ),
+    (Knob::skirted(radius, tall), Marker::Dot, dark),
+    (
+      Knob::knurled(radius, tall),
+      Marker::Line,
+      Vec3::new(0.62, 0.63, 0.66),
+    ),
+    (
+      Knob::dished(radius, tall),
+      Marker::Dot,
+      Vec3::new(0.55, 0.12, 0.10),
+    ),
+    (
+      Knob::dimpled(radius, tall * 0.6),
+      Marker::None,
+      Vec3::new(0.70, 0.68, 0.62),
+    ),
+    (
+      Knob::faceted(radius, tall),
+      Marker::Line,
+      Vec3::new(0.12, 0.25, 0.42),
+    ),
+    (Knob::chicken_head(radius, tall), Marker::Line, dark),
+  ];
 
+  let mut meshes = vec![
+    parts::plate(width, height, 6.0),
+    parts::screw(7.0),
+    parts::ticks(11, parts::KNOB_SWEEP, radius + 5.0, radius + 11.0, 5),
+  ];
   let mut objects = vec![Object {
     mesh: 0,
     transform: Mat4::IDENTITY,
@@ -29,45 +68,48 @@ fn scene(look: Look) -> Scene {
       ..Material::matte(Vec3::new(0.30, 0.33, 0.38))
     },
   }];
-  let mut knob = |body: usize, x: f32, y: f32, turn: f32, color: Vec3| {
+  for (index, (knob, marker, color)) in knobs.into_iter().enumerate() {
+    let (x, y) = (
+      95.0 + 150.0 * (index % 4) as f32,
+      88.0 + 148.0 * (index / 4) as f32,
+    );
+    let turn = 0.15 + 0.1 * index as f32;
     let transform = parts::knob_transform(x, y, turn, parts::KNOB_SWEEP);
     objects.push(Object {
-      mesh: body,
+      mesh: 2,
+      transform: Mat4::from_translation(Vec3::new(x, y, 0.0)),
+      material: Material::matte(Vec3::splat(0.85)),
+    });
+    objects.push(Object {
+      mesh: meshes.len(),
       transform,
       material: Material::glossy(color),
     });
+    meshes.push(knob.body());
+    let marker = match marker {
+      Marker::Line => knob.line(),
+      Marker::Dot => knob.dot(),
+      Marker::None => continue,
+    };
+    let white = Material::matte(Vec3::splat(0.95));
     objects.push(Object {
-      mesh: body + 1,
+      mesh: meshes.len(),
       transform,
-      material: Material::matte(Vec3::splat(0.95)),
+      material: white,
     });
-  };
-  knob(1, 130.0, 150.0, 0.2, Vec3::new(0.08, 0.08, 0.09));
-  knob(1, 300.0, 150.0, 0.65, Vec3::new(0.08, 0.08, 0.09));
-  knob(3, 440.0, 110.0, 0.5, Vec3::new(0.55, 0.12, 0.10));
-  knob(3, 540.0, 110.0, 0.9, Vec3::new(0.75, 0.72, 0.65));
+    meshes.push(marker);
+  }
+  let inset = 16.0;
   for (x, y) in [
-    (18.0, 18.0),
-    (width - 18.0, 18.0),
-    (18.0, height - 18.0),
-    (width - 18.0, height - 18.0),
+    (inset, inset),
+    (width - inset, inset),
+    (inset, height - inset),
+    (width - inset, height - inset),
   ] {
     objects.push(Object {
-      mesh: 5,
+      mesh: 1,
       transform: Mat4::from_translation(Vec3::new(x, y, 0.0)) * Mat4::from_rotation_z(x * 0.3 + y),
       material: Material::glossy(Vec3::splat(0.6)),
-    });
-  }
-  for (x, lit) in [(440.0, true), (490.0, false), (540.0, true)] {
-    let color = Vec3::new(1.0, 0.25, 0.1);
-    objects.push(Object {
-      mesh: 6,
-      transform: Mat4::from_translation(Vec3::new(x, 230.0, 0.0)),
-      material: if lit {
-        Material::lamp(color)
-      } else {
-        Material::glossy(color * 0.25)
-      },
     });
   }
 
@@ -77,7 +119,7 @@ fn scene(look: Look) -> Scene {
     lean: Vec2::new(0.0, -0.25),
     light: Light::default(),
     look,
-    meshes,
+    meshes: Arc::from(meshes),
     objects,
   }
 }
