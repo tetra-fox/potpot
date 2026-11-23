@@ -3,7 +3,7 @@
 use std::f32::consts::TAU;
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -165,6 +165,61 @@ impl Mesh {
     mesh
   }
 
+  /// an outline pulled sideways into a solid standing on z zero: `outline` is points of
+  /// (y, height) running from front to back without turning around, and the solid reaches
+  /// `half_width(height)` to each side of x zero, so that it can narrow on the way up.
+  /// edges of the outline that turn by less than the angle whose cosine is `crease` shade
+  /// as one curve
+  pub fn extruded(outline: &[Vec2], half_width: impl Fn(f32) -> f32, crease: f32) -> Self {
+    let mut mesh = Self::default();
+    let spans = outline.len().saturating_sub(1);
+    // the way each stretch of the outline faces: its direction turned a quarter, up and out
+    let facing = |span: usize| {
+      let along = outline[span + 1] - outline[span];
+      Vec3::new(0.0, -along.y, along.x).normalize_or_zero()
+    };
+    for span in 0..spans {
+      let (from, to) = (outline[span], outline[span + 1]);
+      let own = facing(span);
+      let rounded = |neighbor: Option<usize>| {
+        let near = neighbor.filter(|&near| near < spans).map(facing);
+        match near {
+          Some(near) if near.dot(own) >= crease => (near + own).normalize(),
+          _ => own,
+        }
+      };
+      let (before, after) = (rounded(span.checked_sub(1)), rounded(Some(span + 1)));
+      let (near, far) = (half_width(from.y), half_width(to.y));
+      mesh.quad_with_normals(
+        [
+          Vec3::new(-near, from.x, from.y),
+          Vec3::new(near, from.x, from.y),
+          Vec3::new(far, to.x, to.y),
+          Vec3::new(-far, to.x, to.y),
+        ],
+        [before, before, after, after],
+      );
+      // the two sides under this stretch, down to the floor. an upright stretch has none
+      if to.x - from.x <= f32::EPSILON {
+        continue;
+      }
+      let floor = half_width(0.0);
+      for side in [-1.0, 1.0] {
+        let corners = [
+          Vec3::new(side * floor, from.x, 0.0),
+          Vec3::new(side * near, from.x, from.y),
+          Vec3::new(side * far, to.x, to.y),
+          Vec3::new(side * floor, to.x, 0.0),
+        ];
+        // a side that narrows on the way up leans back, the more the taller it is
+        let tall = from.y.max(to.y).max(f32::EPSILON);
+        let lean = (floor - near.min(far)) / tall;
+        mesh.quad(corners, Vec3::new(side, 0.0, lean).normalize());
+      }
+    }
+    mesh
+  }
+
   /// the mesh moved by a transform, to bake a part into place before merging
   #[must_use]
   pub fn transformed(mut self, transform: Mat4) -> Self {
@@ -189,7 +244,7 @@ impl Mesh {
     self
   }
 
-  fn quad(&mut self, corners: [Vec3; 4], normal: Vec3) {
+  pub(crate) fn quad(&mut self, corners: [Vec3; 4], normal: Vec3) {
     self.quad_with_normals(corners, [normal; 4]);
   }
 
@@ -262,6 +317,29 @@ mod tests {
     let faceted = Mesh::rings(3, 6, 0.8, point);
     let wall = &faceted.vertices[..4];
     assert!(wall.iter().all(|vertex| vertex.normal == wall[0].normal));
+  }
+
+  #[test]
+  fn an_extruded_outline_is_a_solid_with_a_top_and_sides() {
+    // a box of a profile: up the front, across the top, down the back
+    let outline = [
+      Vec2::new(-2.0, 0.0),
+      Vec2::new(-2.0, 1.0),
+      Vec2::new(2.0, 1.0),
+      Vec2::new(2.0, 0.0),
+    ];
+    let mesh = Mesh::extruded(&outline, |_| 3.0, 0.9);
+    // three stretches, and two sides under the one that is not upright
+    assert_eq!(mesh.indices.len(), (3 + 2) * 6);
+    for vertex in &mesh.vertices {
+      let (position, normal) = (Vec3::from(vertex.position), Vec3::from(vertex.normal));
+      assert!(normal.is_normalized());
+      // every face looks away from the middle of the box
+      assert!(
+        (position - Vec3::new(0.0, 0.0, 0.5)).dot(normal) > 0.0,
+        "{position} faces {normal}"
+      );
+    }
   }
 
   #[test]

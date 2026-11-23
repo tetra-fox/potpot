@@ -1,11 +1,11 @@
-//! renders a panel of every knob style to a png without a window:
-//! `cargo run --example picture -- out.png`.
-//! a second argument is the pixel size and a third the color steps, for the crude looks
+//! renders a panel of every knob style, or of every fader, to a png without a window:
+//! `cargo run --example picture -- out.png` and `... -- out.png faders`. after those, one
+//! number is the pixel size and a second the color steps, for the crude looks
 
 use std::sync::Arc;
 
 use skeuo::glam::{Mat4, Vec2, Vec3};
-use skeuo::parts::{self, Knob, Top};
+use skeuo::parts::{self, Fader, Knob, Top};
 use skeuo::{Light, Look, Material, Object, Place, Renderer, Scene, wgpu};
 
 const SIZE: [u32; 2] = [1024, 640];
@@ -30,7 +30,7 @@ struct Shown {
 }
 
 /// every knob style in rows of five, each over a scale
-fn scene(look: Look) -> Scene {
+fn knobs(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let (radius, tall) = (58.0, 42.0);
   let black = Vec3::new(0.035, 0.035, 0.04);
@@ -205,9 +205,129 @@ fn scene(look: Look) -> Scene {
   }
 }
 
+/// every fader cap in its slot, the last few a dj mixer's in its colors
+fn faders(look: Look) -> Scene {
+  let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
+  let black = Vec3::new(0.035, 0.035, 0.04);
+  let (white, dark) = (Vec3::splat(0.93), Vec3::splat(0.05));
+  let (wide, long, tall) = (34.0, 62.0, 26.0);
+  let block = Fader::block(30.0, 46.0, 44.0);
+  let caps = [
+    (
+      Fader::console(wide, long, tall),
+      Material::glossy(black),
+      white,
+    ),
+    (
+      Fader::terraced(wide, long, tall),
+      Material::glossy(black),
+      white,
+    ),
+    (
+      Fader::terraced(wide, long, tall),
+      Material::spun(Vec3::new(0.78, 0.79, 0.81)),
+      dark,
+    ),
+    (
+      Fader::stepped(wide, long, tall),
+      Material::satin(Vec3::splat(0.2)),
+      white,
+    ),
+    (
+      Fader::wedge(wide, long, tall * 1.2),
+      Material::glossy(black),
+      white,
+    ),
+    (
+      Fader::barrel(wide * 0.8, long * 0.8, tall),
+      Material::satin(Vec3::new(0.74, 0.72, 0.66)),
+      dark,
+    ),
+    (
+      Fader::fin(wide * 0.8, long * 0.7, tall),
+      Material::satin(Vec3::new(0.62, 0.10, 0.08)),
+      white,
+    ),
+    (block, Material::glossy(Vec3::new(0.86, 0.72, 0.05)), dark),
+    (block, Material::glossy(Vec3::new(0.70, 0.06, 0.07)), white),
+    (block, Material::glossy(Vec3::new(0.10, 0.55, 0.62)), dark),
+  ];
+
+  let (travel, middle) = (380.0, height / 2.0);
+  let mut meshes = vec![
+    parts::plate(width, height, 6.0),
+    parts::screw(8.0),
+    parts::fader_slot(travel, 5.0),
+    parts::fader_ticks(11, travel, 26.0, 34.0, 5),
+  ];
+  let mut objects = vec![Object {
+    mesh: 0,
+    transform: Mat4::IDENTITY,
+    material: Material::satin(Vec3::new(0.27, 0.29, 0.33)),
+  }];
+  for (index, (fader, material, stripe)) in caps.into_iter().enumerate() {
+    let x = 62.0 + 100.0 * index as f32;
+    let track = Mat4::from_translation(Vec3::new(x, middle, 0.0));
+    objects.push(Object {
+      mesh: 2,
+      transform: track,
+      material: Material::matte(Vec3::splat(0.02)),
+    });
+    objects.push(Object {
+      mesh: 3,
+      transform: track,
+      material: Material::matte(Vec3::splat(0.85)),
+    });
+    // each a little higher than the last, and then around again
+    let value = (0.15 + 0.23 * index as f32) % 1.0;
+    let transform = parts::fader_transform(x, middle, travel, value);
+    objects.push(Object {
+      mesh: meshes.len(),
+      transform,
+      material,
+    });
+    meshes.push(fader.body());
+    objects.push(Object {
+      mesh: meshes.len(),
+      transform,
+      material: Material::matte(stripe),
+    });
+    meshes.push(fader.line());
+  }
+  let inset = 18.0;
+  for (x, y) in [
+    (inset, inset),
+    (width - inset, inset),
+    (inset, height - inset),
+    (width - inset, height - inset),
+  ] {
+    objects.push(Object {
+      mesh: 1,
+      transform: Mat4::from_translation(Vec3::new(x, y, 0.0)) * Mat4::from_rotation_z(x * 0.3 + y),
+      material: Material::chrome(Vec3::splat(0.75)),
+    });
+  }
+
+  Scene {
+    size: Vec2::new(width, height),
+    heights: [-8.0, 64.0],
+    lean: Vec2::new(0.0, -0.25),
+    light: Light::default(),
+    look,
+    meshes: Arc::from(meshes),
+    objects,
+  }
+}
+
 fn main() {
-  let mut arguments = std::env::args().skip(1);
+  let mut arguments = std::env::args().skip(1).peekable();
   let path = arguments.next().unwrap_or_else(|| "picture.png".to_owned());
+  let scene: fn(Look) -> Scene = match arguments.next_if(|panel| panel.parse::<f32>().is_err()) {
+    None => knobs,
+    Some(panel) if panel == "knobs" => knobs,
+    Some(panel) if panel == "faders" => faders,
+    Some(panel) => panic!("no panel called {panel}, only knobs and faders"),
+  };
   let look = Look {
     pixel_size: arguments
       .next()
