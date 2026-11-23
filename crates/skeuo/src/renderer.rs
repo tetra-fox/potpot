@@ -12,6 +12,8 @@ use crate::scene::{LAMPS, Scene};
 
 /// the shadow map's width and height
 const SHADOW_SIZE: u32 = 2048;
+/// the width and height of the map of how high everything on the panel is
+const HEIGHT_SIZE: u32 = 1024;
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// the picture holds srgb-encoded color in a format that does not encode, see scene.wgsl
 const PICTURE: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -35,6 +37,9 @@ pub struct Renderer {
   globals: wgpu::Buffer,
   globals_group: wgpu::BindGroup,
   shadow_map: wgpu::TextureView,
+  /// how high everything on the panel is, seen from straight above
+  height_map: wgpu::TextureView,
+  height_pipeline: wgpu::RenderPipeline,
   shadow_group: wgpu::BindGroup,
   present_layout: wgpu::BindGroupLayout,
   present_options: wgpu::Buffer,
@@ -81,6 +86,9 @@ struct Globals {
   light_color: [f32; 4],
   ambient: [f32; 4],
   shadows: [f32; 4],
+  overhead: [[f32; 4]; 4],
+  /// the panel's width and height, and the lowest and highest anything on it reaches
+  panel: [f32; 4],
   /// each lamp's place with its reach, and then its color
   lamps: [[[f32; 4]; 2]; LAMPS],
 }
@@ -142,6 +150,16 @@ impl Renderer {
           binding: 1,
           visibility: wgpu::ShaderStages::FRAGMENT,
           ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+          count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+          binding: 2,
+          visibility: wgpu::ShaderStages::FRAGMENT,
+          ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Depth,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+          },
           count: None,
         },
       ],
@@ -207,6 +225,28 @@ impl Renderer {
       vertex: wgpu::VertexState {
         module: &scene_shader,
         entry_point: Some("shadow_vertex"),
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+        buffers: &vertex_buffers,
+      },
+      fragment: None,
+      primitive,
+      depth_stencil: Some(depth(wgpu::DepthBiasState::default())),
+      multisample: wgpu::MultisampleState::default(),
+      multiview: None,
+      cache: None,
+    });
+    let height_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+      label: Some("skeuo heights"),
+      layout: Some(
+        &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+          label: Some("skeuo heights"),
+          bind_group_layouts: &[&globals_layout],
+          push_constant_ranges: &[],
+        }),
+      ),
+      vertex: wgpu::VertexState {
+        module: &scene_shader,
+        entry_point: Some("height_vertex"),
         compilation_options: wgpu::PipelineCompilationOptions::default(),
         buffers: &vertex_buffers,
       },
@@ -308,6 +348,22 @@ impl Renderer {
         view_formats: &[],
       })
       .create_view(&wgpu::TextureViewDescriptor::default());
+    let height_map = device
+      .create_texture(&wgpu::TextureDescriptor {
+        label: Some("skeuo heights"),
+        size: wgpu::Extent3d {
+          width: HEIGHT_SIZE,
+          height: HEIGHT_SIZE,
+          depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: DEPTH,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+      })
+      .create_view(&wgpu::TextureViewDescriptor::default());
     let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
       label: Some("skeuo shadow map"),
       mag_filter: wgpu::FilterMode::Linear,
@@ -327,6 +383,10 @@ impl Renderer {
           binding: 1,
           resource: wgpu::BindingResource::Sampler(&shadow_sampler),
         },
+        wgpu::BindGroupEntry {
+          binding: 2,
+          resource: wgpu::BindingResource::TextureView(&height_map),
+        },
       ],
     });
 
@@ -344,6 +404,8 @@ impl Renderer {
       globals,
       globals_group,
       shadow_map,
+      height_map,
+      height_pipeline,
       shadow_group,
       present_layout,
       present_options,
@@ -388,13 +450,20 @@ impl Renderer {
       light_view: scene.light_view().to_cols_array_2d(),
       toward_light: scene.light.toward.normalize().extend(0.0).into(),
       toward_viewer: scene.toward_viewer().extend(0.0).into(),
-      light_color: scene.light.color.extend(0.0).into(),
+      light_color: scene.light.color.extend(scene.light.falloff).into(),
       ambient: scene.light.ambient.extend(0.0).into(),
       shadows: [
         f32::from(u8::from(look.soft_shadows)),
         1.0 / SHADOW_SIZE as f32,
         scene.lamps.len().min(LAMPS) as f32,
-        0.0,
+        scene.light.occlusion,
+      ],
+      overhead: scene.overhead().to_cols_array_2d(),
+      panel: [
+        scene.size.x,
+        scene.size.y,
+        scene.heights[0],
+        scene.heights[1],
       ],
       lamps: std::array::from_fn(|index| {
         scene.lamps.get(index).map_or([[0.0; 4]; 2], |lamp| {
@@ -409,8 +478,8 @@ impl Renderer {
     let options = [
       look.color_steps as f32,
       f32::from(u8::from(self.target_encodes)),
-      0.0,
-      0.0,
+      look.bloom,
+      look.vignette,
     ];
     queue.write_buffer(&self.present_options, 0, bytemuck::bytes_of(&options));
 
@@ -474,6 +543,18 @@ impl Renderer {
         occlusion_query_set: None,
       });
       pass.set_pipeline(&self.shadow_pipeline);
+      pass.set_bind_group(0, &self.globals_group, &[]);
+      self.draw_objects(&mut pass, loaded);
+    }
+    {
+      let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("skeuo heights"),
+        color_attachments: &[],
+        depth_stencil_attachment: Some(depth_attachment(&self.height_map)),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+      });
+      pass.set_pipeline(&self.height_pipeline);
       pass.set_bind_group(0, &self.globals_group, &[]);
       self.draw_objects(&mut pass, loaded);
     }

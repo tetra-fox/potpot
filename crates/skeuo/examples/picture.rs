@@ -36,7 +36,7 @@ fn knobs(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let (radius, tall) = (58.0, 42.0);
   let black = Vec3::new(0.035, 0.035, 0.04);
-  let white = Vec3::splat(0.93);
+  let white = Vec3::splat(0.86);
   let aluminum = Material::spun(Vec3::new(0.78, 0.79, 0.81));
   let shown = |knob, material, marker| Shown {
     knob,
@@ -150,7 +150,7 @@ fn knobs(look: Look) -> Scene {
   let mut objects = vec![Object {
     mesh: 0,
     transform: Mat4::IDENTITY,
-    material: Material::satin(Vec3::new(0.27, 0.29, 0.33)),
+    material: Material::brushed(Vec3::new(0.30, 0.32, 0.36)),
   }];
   for (index, shown) in knobs.into_iter().enumerate() {
     let (x, y) = (
@@ -212,7 +212,7 @@ fn knobs(look: Look) -> Scene {
 fn faders(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let black = Vec3::new(0.035, 0.035, 0.04);
-  let (white, dark) = (Vec3::splat(0.93), Vec3::splat(0.05));
+  let (white, dark) = (Vec3::splat(0.86), Vec3::splat(0.05));
   let (wide, long, tall) = (34.0, 62.0, 26.0);
   // a dj mixer's cap is much wider across than it is long
   let block = Fader::block(50.0, 24.0, 22.0);
@@ -267,7 +267,7 @@ fn faders(look: Look) -> Scene {
   let mut objects = vec![Object {
     mesh: 0,
     transform: Mat4::IDENTITY,
-    material: Material::satin(Vec3::new(0.27, 0.29, 0.33)),
+    material: Material::textured(Vec3::new(0.16, 0.17, 0.19)),
   }];
   for (index, (fader, material, stripe)) in caps.into_iter().enumerate() {
     let x = 62.0 + 100.0 * index as f32;
@@ -370,7 +370,7 @@ fn lights(look: Look) -> Scene {
   let mut objects = vec![Object {
     mesh: 0,
     transform: Mat4::IDENTITY,
-    material: Material::satin(Vec3::new(0.085, 0.09, 0.10)),
+    material: Material::textured(Vec3::new(0.075, 0.08, 0.09)),
   }];
   let mut lamps = Vec::new();
   let seat = Material::matte(Vec3::splat(0.012));

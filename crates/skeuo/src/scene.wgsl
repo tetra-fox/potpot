@@ -9,7 +9,12 @@ struct Globals {
   ambient: vec4<f32>,
   // x is one when shadow edges are softened, y the size of a shadow map texel, z how many
   // of the lamps are lit
+  // and w how much the light all around is kept out of corners
   shadows: vec4<f32>,
+  // panel points to clip space from straight above
+  overhead: mat4x4<f32>,
+  // the panel's width and height, and the lowest and highest anything on it reaches
+  panel: vec4<f32>,
   lamps: array<Lamp, 32>,
 }
 
@@ -23,6 +28,7 @@ struct Lamp {
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(1) @binding(0) var shadow_map: texture_depth_2d;
 @group(1) @binding(1) var shadow_sampler: sampler_comparison;
+@group(1) @binding(2) var height_map: texture_depth_2d;
 
 struct Corner {
   @location(0) position: vec3<f32>,
@@ -65,6 +71,11 @@ fn model(placed: Placed) -> mat4x4<f32> {
 @vertex
 fn shadow_vertex(corner: Corner, placed: Placed) -> @builtin(position) vec4<f32> {
   return globals.light_view * model(placed) * vec4<f32>(corner.position, 1.0);
+}
+
+@vertex
+fn height_vertex(corner: Corner, placed: Placed) -> @builtin(position) vec4<f32> {
+  return globals.overhead * model(placed) * vec4<f32>(corner.position, 1.0);
 }
 
 @vertex
@@ -116,6 +127,35 @@ fn decode(encoded: vec3<f32>) -> vec3<f32> {
   return select(high, low, encoded <= vec3<f32>(0.04045));
 }
 
+// how high the highest thing over a point of the panel is
+fn height_over(at: vec2<f32>) -> f32 {
+  let size = vec2<f32>(textureDimensions(height_map));
+  let texel = clamp(at / globals.panel.xy * size, vec2<f32>(0.0), size - 1.0);
+  let depth = textureLoad(height_map, vec2<i32>(texel), 0);
+  return globals.panel.w - depth * (globals.panel.w - globals.panel.z);
+}
+
+// how much of the light all around reaches a point, from all of it in the open down to
+// little in a corner: less for everything near that stands higher than the point, and less
+// the nearer and higher it stands
+fn open_share(world: vec3<f32>) -> f32 {
+  var closed = 0.0;
+  var weight = 0.0;
+  for (var ring = 0; ring < 3; ring++) {
+    let reach = 3.0 + f32(ring * ring) * 5.5 + f32(ring) * 2.0;
+    for (var step = 0; step < 10; step++) {
+      // each ring turned against the last, so that their points do not line up
+      let turn = (f32(step) + f32(ring) * 0.37) * 0.6283185;
+      let over = height_over(world.xy + vec2<f32>(cos(turn), sin(turn)) * reach);
+      let rise = over - world.z - 0.6;
+      let near = 1.0 / (1.0 + reach * 0.12);
+      closed += clamp(rise / reach, 0.0, 1.0) * near;
+      weight += near;
+    }
+  }
+  return 1.0 - clamp(closed / weight * 2.3, 0.0, 0.92);
+}
+
 // a number from zero to one out of a place, the same every time for the same place
 fn scatter(at: vec2<f32>) -> f32 {
   var mixed = fract(vec3<f32>(at.xyx) * vec3<f32>(0.1031, 0.1030, 0.0973));
@@ -146,14 +186,14 @@ fn textured(normal: vec3<f32>, world: vec3<f32>, texture: vec4<f32>) -> vec4<f32
     let at = world.xy * 1.1 + world.z * 0.7;
     let fine = vec2<f32>(rolling(at), rolling(at + 37.0)) - 0.5;
     let coarse = vec2<f32>(rolling(at * 0.37 + 11.0), rolling(at * 0.37 + 71.0)) - 0.5;
-    bent += vec3<f32>(fine * 0.55 + coarse * 0.35, 0.0) * texture.x;
-    shade += (fine.x + coarse.y) * 0.1 * texture.x;
+    bent += vec3<f32>(fine * 0.16 + coarse * 0.1, 0.0) * texture.x;
+    shade += (fine.x + coarse.y) * 0.035 * texture.x;
   }
   if texture.y > 0.0 {
-    let streak = rolling(vec2<f32>(world.x * 0.012, world.y * 2.3)) - 0.5;
-    let hair = rolling(vec2<f32>(world.x * 0.05 + 9.0, world.y * 5.1)) - 0.5;
-    bent.y += (streak * 0.5 + hair * 0.3) * texture.y;
-    shade += (streak * 0.12 + hair * 0.08) * texture.y;
+    let streak = rolling(vec2<f32>(world.x * 0.01, world.y * 3.1)) - 0.5;
+    let hair = rolling(vec2<f32>(world.x * 0.04 + 9.0, world.y * 7.3)) - 0.5;
+    bent.y += (streak * 0.14 + hair * 0.1) * texture.y;
+    shade += (streak * 0.045 + hair * 0.035) * texture.y;
   }
   return vec4<f32>(normalize(bent), shade);
 }
@@ -206,7 +246,12 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
   let surface = decode(lit.color.rgb) * (1.0 + rough.w);
   // more of the room's own light comes from the side the light is on than from under
   let around = mix(0.55, 1.0, 0.5 + 0.5 * dot(normal, toward_light));
-  let lighting = globals.ambient.rgb * around + globals.light_color.rgb * facing * share;
+  let open = mix(1.0, open_share(lit.world), globals.shadows.w);
+  // the light is nearer one edge of the panel than the other
+  let from_middle = (lit.world.xy - globals.panel.xy * 0.5) / max(globals.panel.x, globals.panel.y);
+  let nearness = 1.0 + globals.light_color.w * 2.0 * dot(from_middle, normalize(toward_light.xy + vec2<f32>(0.0, 0.0001)));
+  let direct = globals.light_color.rgb * nearness;
+  let lighting = globals.ambient.rgb * around * open + direct * facing * share * mix(1.0, open, 0.35);
   var lighting_with_lamps = lighting;
   for (var index = 0; index < i32(globals.shadows.z); index++) {
     let lamp = globals.lamps[index];
@@ -248,13 +293,17 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
     color += surface * (key + fill) * 0.12 * spun;
   }
   let lit_side = step(0.0001, facing) * mix(0.35, 1.0, share);
-  color += globals.light_color.rgb * tint * shine * lit.highlight.x * lit_side;
+  color += direct * tint * shine * lit.highlight.x * lit_side;
 
   // a mirror shows more the more it is seen edge-on, and metal shows it from any side
   let edge_on = pow(1.0 - seen, 5.0);
   let base = mix(0.05, 0.75, metal);
-  let mirrored = room(reflect(-toward_viewer, normal), normal) * (base + (1.0 - base) * edge_on);
-  color += tint * mirrored * mirrors * mix(0.6, 1.0, share);
+  let leaving = reflect(-toward_viewer, normal);
+  let mirrored = room(leaving, normal) * (base + (1.0 - base) * edge_on);
+  // metal shows the room in its colors: a blue sky over a pale horizon over brown ground
+  let sky = mix(vec3<f32>(0.62, 0.48, 0.36), vec3<f32>(0.66, 0.8, 1.0), smoothstep(-0.2, 0.35, leaving.z));
+  let hue = mix(sky, vec3<f32>(1.0), smoothstep(0.75, 0.95, dot(leaving, toward_light)));
+  color += tint * mix(vec3<f32>(1.0), hue * 1.15, metal) * mirrored * mirrors * mix(0.6, 1.0, share) * mix(0.5, 1.0, open);
 
   // a pane shows a sheen over the corner of it nearest the light, cut off along a slant,
   // the look of a flat piece of glass with a window somewhere behind the viewer

@@ -50,6 +50,12 @@ pub struct Light {
   pub color: Vec3,
   /// the light that reaches every surface, shadowed or not
   pub ambient: Vec3,
+  /// how much brighter the panel is at the edge nearest the light than in its middle, and
+  /// as much dimmer at the far edge, the way a lamp close by lights unevenly
+  pub falloff: f32,
+  /// how much the light that reaches every surface is kept out of corners and from under
+  /// things, which grounds everything on the panel with a soft dark edge. zero is none
+  pub occlusion: f32,
 }
 
 impl Default for Light {
@@ -58,6 +64,8 @@ impl Default for Light {
       toward: Vec3::new(-0.45, -0.6, 1.0),
       color: Vec3::splat(1.0),
       ambient: Vec3::splat(0.25),
+      falloff: 0.22,
+      occlusion: 1.0,
     }
   }
 }
@@ -74,6 +82,10 @@ pub struct Look {
   pub soft_shadows: bool,
   /// whether the edges of shapes are smoothed. an old render's are not
   pub antialias: bool,
+  /// how much the brightest parts of the picture spill a haze over what is around them
+  pub bloom: f32,
+  /// how much darker the picture is toward its corners than in its middle
+  pub vignette: f32,
 }
 
 impl Default for Look {
@@ -83,6 +95,8 @@ impl Default for Look {
       color_steps: 0,
       soft_shadows: true,
       antialias: true,
+      bloom: 0.5,
+      vignette: 0.25,
     }
   }
 }
@@ -225,7 +239,7 @@ impl Material {
   /// paint with a fine rough texture, like a powder coat or a wrinkle finish
   pub fn textured(color: Vec3) -> Self {
     Self {
-      specular: 0.3,
+      specular: 0.14,
       shininess: 18.0,
       grain: 1.0,
       ..Self::matte(color)
@@ -238,7 +252,7 @@ impl Material {
       specular: 0.18,
       shininess: 12.0,
       reflect: 0.05,
-      grain: 0.35,
+      grain: 0.2,
       ..Self::matte(color)
     }
   }
@@ -285,6 +299,19 @@ impl Scene {
       [sx * self.lean.x, sy * self.lean.y, -1.0 / reach, 0.0],
       [-1.0, 1.0, high / reach, 1.0],
     ])
+  }
+
+  /// panel points to clip space as seen from straight above whatever the lean, for the map
+  /// of how high everything on the panel is
+  pub(crate) fn overhead(&self) -> Mat4 {
+    Self {
+      lean: Vec2::ZERO,
+      meshes: Arc::clone(&self.meshes),
+      objects: Vec::new(),
+      lamps: Vec::new(),
+      ..*self
+    }
+    .view()
   }
 
   /// panel points to the shadow map's clip space, as the light sees the whole panel

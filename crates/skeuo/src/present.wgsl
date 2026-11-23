@@ -1,7 +1,8 @@
 // the rendered picture stretched over its place in the window, as blocks, and cut to few colors
 
 struct Present {
-  // x the steps each channel is cut to or zero, y one when the target encodes srgb itself
+  // x the steps each channel is cut to or zero, y one when the target encodes srgb itself,
+  // z how much the bright parts spill over, w how much the corners darken
   options: vec4<f32>,
 }
 
@@ -38,6 +39,27 @@ fn threshold(pixel: vec2<u32>) -> f32 {
 @fragment
 fn fragment(spread: Spread) -> @location(0) vec4<f32> {
   var color = textureSampleLevel(picture, picture_sampler, spread.at, 0.0).rgb;
+  if present.options.z > 0.0 {
+    // what is as bright as a color gets, gathered from a spiral of places around the
+    // pixel, so that the haze has no shape of its own
+    let pixel = 1.0 / vec2<f32>(textureDimensions(picture));
+    var haze = vec3<f32>(0.0);
+    const PLACES: i32 = 40;
+    for (var step = 0; step < PLACES; step++) {
+      let out = sqrt((f32(step) + 0.5) / f32(PLACES));
+      let turn = f32(step) * 2.3999632;
+      let aside = vec2<f32>(cos(turn), sin(turn)) * out * 13.0 * pixel;
+      let near = textureSampleLevel(picture, picture_sampler, spread.at + aside, 0.0).rgb;
+      // by how bright it is at its brightest, so that a strong color spills as itself,
+      // and less the further it has to come
+      let bright = max(max(near.r, near.g), near.b);
+      haze += near * smoothstep(0.965, 1.0, bright) * (1.0 - 0.6 * out);
+    }
+    color += haze / f32(PLACES) * 1.6 * present.options.z;
+  }
+  // darker toward the corners, by how far out along the picture's own shape
+  let out = (spread.at - 0.5) * 2.0;
+  color *= 1.0 - present.options.w * dot(out, out) * 0.5;
   let steps = present.options.x;
   if steps > 0.0 {
     // the dither follows the picture's own pixels, so its pattern is as blocky as they are
