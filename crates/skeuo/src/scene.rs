@@ -26,6 +26,21 @@ pub struct Scene {
   /// this is a different allocation
   pub meshes: Arc<[Mesh]>,
   pub objects: Vec<Object>,
+  /// small lights on the panel itself, like what a lit button throws on what is around it.
+  /// only the first [`LAMPS`] shine
+  pub lamps: Vec<Lamp>,
+}
+
+/// how many lamps a scene can have lit at once
+pub const LAMPS: usize = 32;
+
+/// a small light at a point, which shines on what is near it and casts no shadows
+#[derive(Clone, Copy, Debug)]
+pub struct Lamp {
+  pub at: Vec3,
+  pub color: Vec3,
+  /// how far its light gets before it has faded to nothing
+  pub reach: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -90,6 +105,9 @@ pub struct Material {
   pub shininess: f32,
   /// how much of the color shows without any light on it, for lamps and displays
   pub glow: f32,
+  /// how far from the object's own z axis the glow has faded to about a third, for
+  /// something lit from inside by one small light under its middle. zero glows evenly
+  pub glow_radius: f32,
   /// how much of the room around the panel the surface mirrors: a soft window where the
   /// light is and a pale band at the horizon
   pub reflect: f32,
@@ -99,6 +117,14 @@ pub struct Material {
   /// how far the highlight is drawn out into the bright wedges of metal turned on a lathe,
   /// around the object's own z axis
   pub spun: f32,
+  /// the size of the object if it is a pane of glass or clear plastic, which shows a
+  /// slanted sheen across the corner of it nearest the light. zero is no pane
+  pub glaze: f32,
+  /// how rough the surface is with fine grain, like cast metal, powder coat or rubber. it
+  /// is made up on the spot and bends the light, so it shows most where the light glances
+  pub grain: f32,
+  /// how deeply the surface is brushed in straight lines along x, like a sheet of aluminum
+  pub brushed: f32,
 }
 
 impl Material {
@@ -109,9 +135,13 @@ impl Material {
       specular: 0.05,
       shininess: 8.0,
       glow: 0.0,
+      glow_radius: 0.0,
       reflect: 0.0,
       metal: 0.0,
       spun: 0.0,
+      glaze: 0.0,
+      grain: 0.0,
+      brushed: 0.0,
     }
   }
 
@@ -155,6 +185,75 @@ impl Material {
       metal: 0.85,
       spun: 1.0,
       ..Self::matte(color)
+    }
+  }
+
+  /// a clear glossy pane `size` across, over whatever color is under it
+  pub fn pane(color: Vec3, size: f32) -> Self {
+    Self {
+      specular: 0.9,
+      shininess: 140.0,
+      reflect: 0.7,
+      glaze: size,
+      ..Self::matte(color)
+    }
+  }
+
+  /// the end of a clear plastic rod that carries a light up to the panel from under it,
+  /// dark and smoky until [`Material::lit`]
+  pub fn pipe() -> Self {
+    Self {
+      specular: 0.8,
+      shininess: 120.0,
+      reflect: 0.45,
+      ..Self::matte(Vec3::splat(0.045))
+    }
+  }
+
+  /// a sheet of metal brushed in straight lines
+  pub fn brushed(color: Vec3) -> Self {
+    Self {
+      specular: 0.45,
+      shininess: 30.0,
+      reflect: 0.2,
+      metal: 0.6,
+      brushed: 1.0,
+      ..Self::matte(color)
+    }
+  }
+
+  /// paint with a fine rough texture, like a powder coat or a wrinkle finish
+  pub fn textured(color: Vec3) -> Self {
+    Self {
+      specular: 0.3,
+      shininess: 18.0,
+      grain: 1.0,
+      ..Self::matte(color)
+    }
+  }
+
+  /// soft cloudy rubber, like a controller's pads
+  pub fn silicone(color: Vec3) -> Self {
+    Self {
+      specular: 0.18,
+      shininess: 12.0,
+      reflect: 0.05,
+      grain: 0.35,
+      ..Self::matte(color)
+    }
+  }
+
+  /// the material lit from inside in a color, by a light under its middle that fades toward
+  /// `radius` away. `level` runs from zero for off to one for fully on, and takes the
+  /// material's own color over to the light's on the way
+  #[must_use]
+  pub fn lit(self, color: Vec3, level: f32, radius: f32) -> Self {
+    let level = level.clamp(0.0, 1.0);
+    Self {
+      color: self.color.lerp(color, level),
+      glow: level,
+      glow_radius: radius,
+      ..self
     }
   }
 
@@ -243,6 +342,7 @@ mod tests {
       look: Look::default(),
       meshes: Arc::from([]),
       objects: Vec::new(),
+      lamps: Vec::new(),
     }
   }
 

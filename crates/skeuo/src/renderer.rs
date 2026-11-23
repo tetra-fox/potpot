@@ -8,7 +8,7 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use crate::mesh::{Mesh, Vertex};
-use crate::scene::Scene;
+use crate::scene::{LAMPS, Scene};
 
 /// the shadow map's width and height
 const SHADOW_SIZE: u32 = 2048;
@@ -81,6 +81,8 @@ struct Globals {
   light_color: [f32; 4],
   ambient: [f32; 4],
   shadows: [f32; 4],
+  /// each lamp's place with its reach, and then its color
+  lamps: [[[f32; 4]; 2]; LAMPS],
 }
 
 /// one object's place and material, read once per instance
@@ -91,6 +93,7 @@ struct Placed {
   color: [f32; 4],
   highlight: [f32; 4],
   finish: [f32; 4],
+  texture: [f32; 4],
 }
 
 /// the samples of each pixel when edges are smoothed
@@ -177,7 +180,7 @@ impl Renderer {
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &wgpu::vertex_attr_array![
           2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4,
-          6 => Float32x4, 7 => Float32x4, 8 => Float32x4
+          6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4
         ],
       },
     ];
@@ -390,9 +393,17 @@ impl Renderer {
       shadows: [
         f32::from(u8::from(look.soft_shadows)),
         1.0 / SHADOW_SIZE as f32,
-        0.0,
+        scene.lamps.len().min(LAMPS) as f32,
         0.0,
       ],
+      lamps: std::array::from_fn(|index| {
+        scene.lamps.get(index).map_or([[0.0; 4]; 2], |lamp| {
+          [
+            lamp.at.extend(lamp.reach).into(),
+            lamp.color.extend(0.0).into(),
+          ]
+        })
+      }),
     };
     queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
     let options = [
@@ -417,15 +428,16 @@ impl Renderer {
         highlight: [
           object.material.specular,
           object.material.shininess,
-          0.0,
+          object.material.glow_radius,
           0.0,
         ],
         finish: [
           object.material.reflect,
           object.material.metal,
           object.material.spun,
-          0.0,
+          object.material.glaze,
         ],
+        texture: [object.material.grain, object.material.brushed, 0.0, 0.0],
       })
       .collect();
     if placed.len() > self.placed_room {

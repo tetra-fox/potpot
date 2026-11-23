@@ -5,6 +5,7 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use glam::{Mat4, Vec2, Vec3};
 
 use crate::mesh::Mesh;
+use crate::scene::Object;
 
 /// the sweep of most hardware knobs, three quarters of a turn
 pub const KNOB_SWEEP: f32 = 1.5 * PI;
@@ -998,6 +999,427 @@ pub fn fader_ticks(count: u32, travel: f32, inner: f32, outer: f32, long_every: 
   ticks
 }
 
+/// a push button, described by its parts: a pad with rounded corners that stands on the
+/// origin
+#[derive(Clone, Copy, Debug)]
+pub struct Button {
+  /// how wide the button is, along x
+  pub width: f32,
+  /// how long it is, along y
+  pub length: f32,
+  pub height: f32,
+  /// how round its corners are, from zero for square to one for as round as its shorter
+  /// side allows, which makes a square button a circle
+  pub corner: f32,
+  /// how far its top's edge is rolled over, as a share of its height
+  pub roll: f32,
+  /// how much higher its top is in the middle than at the rim, as a share of its height.
+  /// below zero the top is hollow
+  pub crown: f32,
+}
+
+impl Button {
+  /// a square rubber pad with soft corners, like a drum pad or a clip launcher's
+  pub fn pad(side: f32, height: f32) -> Self {
+    Self {
+      width: side,
+      length: side,
+      height,
+      corner: 0.3,
+      roll: 0.35,
+      crown: 0.06,
+    }
+  }
+
+  /// a round button with a crowned top
+  pub fn round(diameter: f32, height: f32) -> Self {
+    Self {
+      corner: 1.0,
+      roll: 0.4,
+      crown: 0.15,
+      ..Self::pad(diameter, height)
+    }
+  }
+
+  /// a long button with round ends
+  pub fn pill(width: f32, length: f32, height: f32) -> Self {
+    Self {
+      width,
+      length,
+      corner: 1.0,
+      ..Self::pad(width, height)
+    }
+  }
+
+  /// a low wide key with small corners and a nearly flat top, like a function button
+  pub fn key(width: f32, length: f32, height: f32) -> Self {
+    Self {
+      width,
+      length,
+      corner: 0.25,
+      roll: 0.25,
+      crown: 0.02,
+      ..Self::pad(width, height)
+    }
+  }
+
+  /// the radius of the corners
+  fn corner_radius(&self) -> f32 {
+    self.width.min(self.length) / 2.0 * self.corner.clamp(0.0, 1.0)
+  }
+
+  /// how far out the button's outline is at an angle around its middle
+  fn outline_at(&self, angle: f32) -> f32 {
+    let (half, round) = (
+      Vec2::new(self.width, self.length) / 2.0,
+      self.corner_radius(),
+    );
+    let toward = Vec2::from_angle(angle).abs();
+    // out to the nearer of the two straight sides
+    let out = (half / toward.max(Vec2::splat(f32::EPSILON))).min_element();
+    let center = half - Vec2::splat(round);
+    let hit = toward * out;
+    if hit.x <= center.x || hit.y <= center.y {
+      return out;
+    }
+    // past where both sides have begun to curve, it is out to the corner's circle instead
+    let along = toward.dot(center);
+    along
+      + (along * along - center.length_squared() + round * round)
+        .max(0.0)
+        .sqrt()
+  }
+
+  /// the rings of the button's surface as how far out each is, against its outline, and
+  /// how high
+  fn rings(&self) -> Vec<Vec2> {
+    let roll = (self.height * self.roll).min(self.width.min(self.length) * 0.25);
+    // the roll takes this much off the outline, by the shorter side
+    let inset = roll / (self.width.min(self.length) / 2.0);
+    let shoulder = self.height - roll;
+    let mut rings = vec![Vec2::new(1.0, 0.0), Vec2::new(1.0, shoulder)];
+    for step in 1..ROLL {
+      let (up, inward) = (step as f32 / ROLL as f32 * FRAC_PI_2).sin_cos();
+      rings.push(Vec2::new(
+        1.0 - inset * (1.0 - inward),
+        shoulder + roll * up,
+      ));
+    }
+    let face = 1.0 - inset;
+    for ring in 0..=TOP_RINGS {
+      let out = 1.0 - ring as f32 / TOP_RINGS as f32;
+      let crown = self.height * self.crown * (1.0 - out * out);
+      rings.push(Vec2::new(face * out, self.height + crown));
+    }
+    rings
+  }
+
+  /// the button itself
+  pub fn body(&self) -> Mesh {
+    let rings = self.rings();
+    Mesh::rings(rings.len(), 96, CREASE, |ring, angle| {
+      let ring = rings[ring];
+      (Vec2::from_angle(angle) * self.outline_at(angle) * ring.x).extend(ring.y)
+    })
+  }
+
+  /// the gap around the button, as a dark strip lying on the panel `gap` wider than the
+  /// button all around
+  pub fn seat(&self, gap: f32) -> Mesh {
+    let grown = Self {
+      width: self.width + gap * 2.0,
+      length: self.length + gap * 2.0,
+      // the same corners, pushed out by the gap
+      corner: ((self.corner_radius() + gap) / (self.width.min(self.length) / 2.0 + gap)).min(1.0),
+      ..*self
+    };
+    let rings = [
+      Vec2::new(1.0, 0.0),
+      Vec2::new(1.0, 0.2),
+      Vec2::new(0.0, 0.2),
+    ];
+    Mesh::rings(rings.len(), 96, CREASE, |ring, angle| {
+      let ring = rings[ring];
+      (Vec2::from_angle(angle) * grown.outline_at(angle) * ring.x).extend(ring.y)
+    })
+  }
+
+  /// the light a lit button throws on what is around it, for a button at (x, y) lit in
+  /// `color` at `level` from zero to one
+  pub fn lamp(&self, x: f32, y: f32, color: Vec3, level: f32) -> crate::Lamp {
+    crate::Lamp {
+      at: Vec3::new(x, y, self.height * 1.5),
+      // strong enough to show on a dark panel, which gives little of any light back
+      color: color * level.clamp(0.0, 1.0) * 2.4,
+      reach: self.width.max(self.length) * 1.5,
+    }
+  }
+
+  /// how far from its middle a lit button's glow fades, for [`crate::Material::lit`]
+  pub fn glow_radius(&self) -> f32 {
+    self.width.min(self.length) * 0.55
+  }
+}
+
+/// where a button sits, and how far down it is held: `pressed` runs from zero for up to one
+/// for all the way down, which sinks it a quarter of the `height` it is told
+pub fn button_transform(x: f32, y: f32, height: f32, pressed: f32) -> Mat4 {
+  Mat4::from_translation(Vec3::new(x, y, -height * 0.25 * pressed.clamp(0.0, 1.0)))
+}
+
+/// a push switch: a plunger standing in a collar on the panel, sprung so that it comes back
+/// out by itself
+#[derive(Clone, Copy, Debug)]
+pub struct PushSwitch {
+  /// the plunger, as tall as it stands out of the panel when it is out
+  pub plunger: Button,
+  /// how far the plunger goes in when it is pushed all the way
+  pub travel: f32,
+  /// how wide the collar around the plunger is
+  pub collar: f32,
+  /// how high the collar stands
+  pub collar_height: f32,
+}
+
+/// what a push switch does when it is pushed
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Push {
+  /// each push turns it over: in and on, then out and off. it stays most of the way in
+  /// while it is on
+  Latching,
+  /// it is on only while it is held, like any button
+  Momentary,
+}
+
+impl PushSwitch {
+  /// a square plunger in a square collar
+  pub fn square(side: f32, height: f32) -> Self {
+    Self {
+      plunger: Button {
+        corner: 0.18,
+        roll: 0.12,
+        crown: -0.04,
+        ..Button::pad(side, height)
+      },
+      travel: height * 0.45,
+      collar: side * 0.16,
+      collar_height: height * 0.4,
+    }
+  }
+
+  /// a round plunger in a round collar
+  pub fn round(diameter: f32, height: f32) -> Self {
+    Self {
+      plunger: Button {
+        roll: 0.14,
+        crown: 0.05,
+        ..Button::round(diameter, height)
+      },
+      ..Self::square(diameter, height)
+    }
+  }
+
+  /// the plunger, out
+  pub fn plunger(&self) -> Mesh {
+    self.plunger.body()
+  }
+
+  /// the collar, a ring around the plunger with a hole for it to move in
+  pub fn collar(&self) -> Mesh {
+    // the plunger's outline pushed out by a distance, keeping its corners
+    let grown = |by: f32| {
+      let button = self.plunger;
+      let shorter = button.width.min(button.length) / 2.0;
+      Button {
+        width: button.width + by * 2.0,
+        length: button.length + by * 2.0,
+        corner: ((button.corner_radius() + by) / (shorter + by)).min(1.0),
+        ..button
+      }
+    };
+    // a hair of room around the plunger
+    let (outer, inner) = (grown(self.collar), grown(self.collar * 0.08));
+    let (tall, cut) = (
+      self.collar_height,
+      self.collar_height.min(self.collar) * 0.25,
+    );
+    // up the outside, over a cut corner, across the top, and down the inside
+    let rings = [
+      (outer, 0.0, 0.0),
+      (outer, 0.0, tall - cut),
+      (outer, cut, tall),
+      (inner, -cut, tall),
+      (inner, 0.0, tall - cut),
+      (inner, 0.0, 0.0),
+    ];
+    Mesh::rings(rings.len(), 96, CREASE, |ring, angle| {
+      let (outline, inset, height) = rings[ring];
+      (Vec2::from_angle(angle) * (outline.outline_at(angle) - inset)).extend(height)
+    })
+  }
+
+  /// how far in the plunger is, from zero for out to one for all the way: all the way
+  /// while it is `held`, and most of the way while a latching switch is `on`
+  pub fn depth(&self, push: Push, on: bool, held: bool) -> f32 {
+    match (held, push, on) {
+      (true, ..) => 1.0,
+      (false, Push::Latching, true) => 0.7,
+      _ => 0.0,
+    }
+  }
+
+  /// whether the switch is on after a push is let go, given whether it was on before. a
+  /// momentary switch is never on once it is let go
+  pub fn released(push: Push, was_on: bool) -> bool {
+    push == Push::Latching && !was_on
+  }
+
+  /// where the plunger sits for a switch at (x, y) that is `depth` of the way in
+  pub fn transform(&self, x: f32, y: f32, depth: f32) -> Mat4 {
+    Mat4::from_translation(Vec3::new(x, y, -self.travel * depth.clamp(0.0, 1.0)))
+  }
+}
+
+/// a level meter: a ladder of lights, green at the bottom, then yellow, then red, each the
+/// end of its own light pipe set nearly flush in the panel. it runs up the panel from its
+/// foot at the origin
+#[derive(Clone, Copy, Debug)]
+pub struct Meter {
+  /// how many lights it has
+  pub segments: u32,
+  /// how wide each light is, across the meter
+  pub width: f32,
+  /// how long each light is, along the meter
+  pub length: f32,
+  /// the distance from one light to the next
+  pub pitch: f32,
+  /// how wide the dark gap around each window is
+  pub margin: f32,
+  /// the share of the lights, from the bottom, where they turn yellow and then red
+  pub yellow_from: f32,
+  pub red_from: f32,
+}
+
+impl Meter {
+  /// a ladder of `segments` lights, each `width` across, filling `length` of the panel
+  pub fn ladder(segments: u32, width: f32, length: f32) -> Self {
+    let pitch = length / segments.max(1) as f32;
+    Self {
+      segments,
+      width,
+      length: pitch * 0.72,
+      pitch,
+      margin: 0.8,
+      yellow_from: 0.6,
+      red_from: 0.85,
+    }
+  }
+
+  /// how far the meter runs up the panel
+  pub fn reach(&self) -> f32 {
+    self.pitch * self.segments as f32
+  }
+
+  /// the shape of one light pipe's end: a low flat rectangle with tight corners and a
+  /// tight rolled edge, which is what catches a glint and where its light comes out
+  fn lens(&self) -> Button {
+    Button {
+      corner: 0.16,
+      roll: 0.5,
+      crown: 0.03,
+      ..Button::key(self.width, self.length, self.length.min(self.width) * 0.22)
+    }
+  }
+
+  /// one light's window, lying on the origin. every light of the meter is this mesh
+  pub fn segment(&self) -> Mesh {
+    self.lens().body()
+  }
+
+  /// the dark gap around one window where it is set into the panel
+  pub fn seat(&self) -> Mesh {
+    self.lens().seat(self.margin)
+  }
+
+  /// the gaps around every window, as objects of the mesh at `seat`, for a meter whose foot
+  /// is at (x, y)
+  pub fn seats(&self, seat: usize, x: f32, y: f32) -> Vec<Object> {
+    (0..self.segments)
+      .map(|index| Object {
+        mesh: seat,
+        transform: self.place(x, y, index),
+        material: crate::Material::matte(Vec3::splat(0.008)),
+      })
+      .collect()
+  }
+
+  /// where the light at `index` goes for a meter whose foot is at (x, y)
+  fn place(&self, x: f32, y: f32, index: u32) -> Mat4 {
+    Mat4::from_translation(Vec3::new(x, y - self.pitch * (index as f32 + 0.5), 0.0))
+  }
+
+  /// the color the light at `index`, counted from the bottom, shows when it is lit
+  pub fn color(&self, index: u32) -> Vec3 {
+    let up = index as f32 / self.segments.max(1) as f32;
+    if up >= self.red_from {
+      Vec3::new(1.0, 0.10, 0.06)
+    } else if up >= self.yellow_from {
+      Vec3::new(1.0, 0.80, 0.05)
+    } else {
+      Vec3::new(0.08, 0.95, 0.2)
+    }
+  }
+
+  /// the meter's lights as objects of the mesh at `segment`, for a meter whose foot is at
+  /// (x, y) showing `level` from zero to one. the topmost lit light is as bright as the
+  /// part of it the level covers. `peak`, if there is one, lights the one light at that
+  /// level too, the way a meter holds its highest reading
+  pub fn lights(
+    &self,
+    segment: usize,
+    x: f32,
+    y: f32,
+    level: f32,
+    peak: Option<f32>,
+  ) -> Vec<Object> {
+    let count = self.segments as f32;
+    let held = peak
+      .filter(|&peak| peak > 0.0)
+      .map(|peak| ((peak.clamp(0.0, 1.0) * count).ceil() as u32).saturating_sub(1));
+    (0..self.segments)
+      .map(|index| {
+        let color = self.color(index);
+        let covered = (level.clamp(0.0, 1.0) * count - index as f32).clamp(0.0, 1.0);
+        let lit = if held == Some(index) { 1.0 } else { covered };
+        // each is the end of a light pipe: smoky and barely tinted when dark, and when lit
+        // brightest over the light at the bottom of it and along its walls
+        let dark = crate::Material::pipe();
+        let dark = crate::Material {
+          color: dark.color + color * 0.03,
+          ..dark
+        };
+        Object {
+          mesh: segment,
+          transform: self.place(x, y, index),
+          material: dark.lit(color, lit, self.width.min(self.length) * 0.5),
+        }
+      })
+      .collect()
+  }
+
+  /// the light the meter throws on what is around it at a level: one lamp at the top of
+  /// its lit part, in the color it has reached
+  pub fn lamp(&self, x: f32, y: f32, level: f32) -> Option<crate::Lamp> {
+    let lit = (level.clamp(0.0, 1.0) * self.segments as f32).ceil() as u32;
+    let top = lit.checked_sub(1)?;
+    Some(crate::Lamp {
+      at: Vec3::new(x, y - self.pitch * (top as f32 + 0.5), self.width),
+      color: self.color(top) * 0.6,
+      reach: self.width * 3.0,
+    })
+  }
+}
+
 /// a flat plate with its top at height zero, the panel everything stands on
 pub fn plate(width: f32, height: f32, thickness: f32) -> Mesh {
   Mesh::cuboid(
@@ -1247,6 +1669,164 @@ mod tests {
     assert_eq!(at(0.5), Vec3::new(100.0, 200.0, 0.0));
     assert_eq!(at(1.0).y, 160.0);
     assert_eq!(at(0.0).y, 240.0);
+  }
+
+  #[test]
+  fn a_button_s_outline_is_a_rectangle_with_round_corners() {
+    let key = Button::key(40.0, 20.0, 8.0);
+    // straight out to the middle of each side
+    assert!((key.outline_at(0.0) - 20.0).abs() < 1e-4);
+    assert!((key.outline_at(FRAC_PI_2) - 10.0).abs() < 1e-4);
+    // toward the rectangle's corner it stops on the corner's circle, short of the corner
+    let corner = Vec2::new(20.0, 10.0);
+    let round = key.corner_radius();
+    let hit = corner.normalize() * key.outline_at(corner.to_angle());
+    assert!(
+      (hit.distance(corner - Vec2::splat(round)) - round).abs() < 1e-3,
+      "{hit}"
+    );
+    assert!(hit.length() < corner.length());
+    // a square as round as it can be is a circle
+    let round = Button::round(30.0, 8.0);
+    for step in 0..64 {
+      let out = round.outline_at(step as f32 / 64.0 * TAU);
+      assert!((out - 15.0).abs() < 1e-3, "{out}");
+    }
+  }
+
+  #[test]
+  fn every_button_fills_its_size() {
+    let buttons = [
+      Button::pad(30.0, 10.0),
+      Button::round(30.0, 10.0),
+      Button::pill(20.0, 44.0, 8.0),
+      Button::key(44.0, 20.0, 6.0),
+    ];
+    for button in buttons {
+      let (mut min, mut max) = (Vec3::MAX, Vec3::MIN);
+      for vertex in &button.body().vertices {
+        let position = Vec3::from(vertex.position);
+        (min, max) = (min.min(position), max.max(position));
+        assert!(
+          Vec3::from(vertex.normal).is_normalized(),
+          "{button:?} at {position}"
+        );
+      }
+      let half = Vec2::new(button.width, button.length) / 2.0;
+      assert!(
+        (min.truncate() + half).length() < 0.05,
+        "{button:?} from {min}"
+      );
+      assert!(
+        (max.truncate() - half).length() < 0.05,
+        "{button:?} to {max}"
+      );
+      assert_eq!(min.z, 0.0);
+      let top = button.height * (1.0 + button.crown);
+      assert!((max.z - top).abs() < 1e-3, "{button:?} is {} high", max.z);
+      // its seat is that much wider all around and lies flat
+      for vertex in &button.seat(2.0).vertices {
+        let position = Vec3::from(vertex.position);
+        assert!(position.x.abs() <= half.x + 2.01 && position.y.abs() <= half.y + 2.01);
+        assert!(position.z <= 0.2);
+      }
+    }
+  }
+
+  #[test]
+  fn a_held_button_sinks_and_a_dark_one_throws_no_light() {
+    let down = button_transform(10.0, 20.0, 8.0, 1.0).transform_point3(Vec3::ZERO);
+    assert_eq!(down, Vec3::new(10.0, 20.0, -2.0));
+    let pad = Button::pad(30.0, 10.0);
+    assert_eq!(pad.lamp(0.0, 0.0, Vec3::ONE, 0.0).color, Vec3::ZERO);
+    assert!(pad.lamp(0.0, 0.0, Vec3::ONE, 1.0).reach > 30.0);
+  }
+
+  #[test]
+  fn a_meter_lights_from_the_bottom_up_in_green_yellow_and_red() {
+    let meter = Meter::ladder(10, 8.0, 100.0);
+    assert_eq!(meter.reach(), 100.0);
+    let lights = meter.lights(3, 50.0, 200.0, 0.45, None);
+    assert_eq!(lights.len(), 10);
+    let glows: Vec<f32> = lights.iter().map(|light| light.material.glow).collect();
+    // four whole lights and half of the fifth
+    assert_eq!(&glows[..4], &[1.0; 4]);
+    assert!((glows[4] - 0.5).abs() < 1e-5);
+    assert_eq!(&glows[5..], &[0.0; 5]);
+    // the first is at the foot and each next one is further up the panel
+    let ys: Vec<f32> = (lights.iter())
+      .map(|light| light.transform.w_axis.y)
+      .collect();
+    assert_eq!(ys[0], 195.0);
+    assert!(ys.windows(2).all(|pair| pair[1] == pair[0] - 10.0));
+    // green, then yellow from six tenths up, then red from eighty-five hundredths
+    let greenest = |index: u32| meter.color(index).y > meter.color(index).x;
+    assert!(greenest(0) && greenest(5) && !greenest(6));
+    assert!(meter.color(8).y > 0.5 && meter.color(9).y < 0.5);
+    // a held peak lights one light above the level
+    let held = meter.lights(3, 0.0, 0.0, 0.2, Some(0.9));
+    assert_eq!(held[8].material.glow, 1.0);
+    assert_eq!(held[7].material.glow, 0.0);
+    // and a silent meter throws no light
+    assert!(meter.lamp(0.0, 0.0, 0.0).is_none());
+    assert!(
+      meter
+        .lamp(0.0, 0.0, 0.95)
+        .is_some_and(|lamp| lamp.color.x > lamp.color.y)
+    );
+  }
+
+  #[test]
+  fn a_latching_switch_stays_in_and_a_momentary_one_comes_back() {
+    let switch = PushSwitch::square(24.0, 14.0);
+    // held, either is all the way in
+    assert_eq!(switch.depth(Push::Latching, false, true), 1.0);
+    assert_eq!(switch.depth(Push::Momentary, false, true), 1.0);
+    // let go, a latching one that is on stays most of the way in and the rest are out
+    let latched = switch.depth(Push::Latching, true, false);
+    assert!(latched > 0.5 && latched < 1.0);
+    assert_eq!(switch.depth(Push::Latching, false, false), 0.0);
+    assert_eq!(switch.depth(Push::Momentary, true, false), 0.0);
+    // each push turns a latching one over
+    assert!(PushSwitch::released(Push::Latching, false));
+    assert!(!PushSwitch::released(Push::Latching, true));
+    assert!(!PushSwitch::released(Push::Momentary, false));
+    // even all the way in, the plunger still stands over its collar
+    let top = switch
+      .transform(0.0, 0.0, 1.0)
+      .transform_point3(Vec3::Z * switch.plunger.height);
+    assert!(
+      top.z > switch.collar_height,
+      "{} under {}",
+      top.z,
+      switch.collar_height
+    );
+  }
+
+  #[test]
+  fn a_collar_is_a_ring_around_its_plunger() {
+    for switch in [
+      PushSwitch::square(24.0, 14.0),
+      PushSwitch::round(24.0, 14.0),
+    ] {
+      let outline = |mesh: &Mesh| {
+        let reach = |vertex: &crate::Vertex| Vec3::from(vertex.position).truncate().length();
+        let reaches: Vec<f32> = mesh.vertices.iter().map(reach).collect();
+        (
+          reaches.iter().copied().fold(f32::MAX, f32::min),
+          reaches.iter().copied().fold(f32::MIN, f32::max),
+        )
+      };
+      let collar = switch.collar();
+      let (inside, outside) = outline(&collar);
+      // nothing of it is where the plunger's middle is, and it reaches past the plunger
+      assert!(inside > 11.9, "{switch:?} collar comes in to {inside}");
+      assert!(outside > outline(&switch.plunger()).1 + switch.collar * 0.9);
+      for vertex in &collar.vertices {
+        assert!(Vec3::from(vertex.normal).is_normalized());
+        assert!((0.0..=switch.collar_height + 1e-4).contains(&vertex.position[2]));
+      }
+    }
   }
 
   #[test]

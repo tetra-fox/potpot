@@ -17,5 +17,5 @@ pub mod iced;
 pub use glam;
 pub use mesh::{Mesh, Vertex};
 pub use renderer::{Place, Renderer};
-pub use scene::{Light, Look, Material, Object, Scene};
+pub use scene::{LAMPS, Lamp, Light, Look, Material, Object, Scene};
 pub use wgpu;
