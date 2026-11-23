@@ -59,6 +59,10 @@ pub struct Light {
   /// how wide the edges of shadows are, as if the light were that much bigger. one is
   /// nearly a point, and a studio's wide soft light is five or more
   pub softness: f32,
+  /// how far off the light and the viewer are, in widths of the panel, for what shines: up
+  /// close a flat glossy face has its highlight in one place and fades away from it, as it
+  /// does in a photograph. zero puts both infinitely far, and such a face shines evenly
+  pub nearness: f32,
 }
 
 impl Default for Light {
@@ -70,6 +74,7 @@ impl Default for Light {
       falloff: 0.22,
       occlusion: 1.0,
       softness: 2.5,
+      nearness: 1.2,
     }
   }
 }
@@ -170,8 +175,8 @@ impl Material {
   /// polished plastic, like bakelite
   pub fn glossy(color: Vec3) -> Self {
     Self {
-      specular: 0.7,
-      shininess: 90.0,
+      specular: 0.42,
+      shininess: 70.0,
       reflect: 0.6,
       ..Self::matte(color)
     }
@@ -213,8 +218,8 @@ impl Material {
   /// a clear glossy pane `size` across, over whatever color is under it
   pub fn pane(color: Vec3, size: f32) -> Self {
     Self {
-      specular: 0.9,
-      shininess: 140.0,
+      specular: 0.6,
+      shininess: 260.0,
       reflect: 0.7,
       glaze: size,
       ..Self::matte(color)

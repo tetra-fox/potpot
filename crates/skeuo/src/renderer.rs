@@ -451,7 +451,9 @@ impl Renderer {
       toward_light: (scene.light.toward.normalize())
         .extend(scene.light.softness)
         .into(),
-      toward_viewer: scene.toward_viewer().extend(0.0).into(),
+      toward_viewer: (scene.toward_viewer())
+        .extend(scene.light.nearness * scene.size.max_element())
+        .into(),
       light_color: scene.light.color.extend(scene.light.falloff).into(),
       ambient: scene.light.ambient.extend(0.0).into(),
       shadows: [

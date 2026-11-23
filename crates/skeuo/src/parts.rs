@@ -1238,24 +1238,13 @@ impl PushSwitch {
       }
     };
     // a hair of room around the plunger
-    let (outer, inner) = (grown(self.collar), grown(self.collar * 0.08));
-    let (tall, cut) = (
+    let cut = self.collar_height.min(self.collar) * 0.25;
+    band(
+      grown(self.collar),
+      grown(self.collar * 0.08),
       self.collar_height,
-      self.collar_height.min(self.collar) * 0.25,
-    );
-    // up the outside, over a cut corner, across the top, and down the inside
-    let rings = [
-      (outer, 0.0, 0.0),
-      (outer, 0.0, tall - cut),
-      (outer, cut, tall),
-      (inner, -cut, tall),
-      (inner, 0.0, tall - cut),
-      (inner, 0.0, 0.0),
-    ];
-    Mesh::rings(rings.len(), 96, CREASE, |ring, angle| {
-      let (outline, inset, height) = rings[ring];
-      (Vec2::from_angle(angle) * (outline.outline_at(angle) - inset)).extend(height)
-    })
+      cut,
+    )
   }
 
   /// how far in the plunger is, from zero for out to one for all the way: all the way
@@ -1430,6 +1419,133 @@ impl Meter {
       reach: self.width * 3.0,
     })
   }
+}
+
+/// a raised band between two outlines, with a hole in its middle: up the outside, over a
+/// corner cut `cut` wide, across the top `tall` above the panel, and down the inside
+fn band(outer: Button, inner: Button, tall: f32, cut: f32) -> Mesh {
+  let rings = [
+    (outer, 0.0, 0.0),
+    (outer, 0.0, tall - cut),
+    (outer, cut, tall),
+    (inner, -cut, tall),
+    (inner, 0.0, tall - cut),
+    (inner, 0.0, 0.0),
+  ];
+  Mesh::rings(rings.len(), 144, CREASE, |ring, angle| {
+    let (outline, inset, height) = rings[ring];
+    (Vec2::from_angle(angle) * (outline.outline_at(angle) - inset)).extend(height)
+  })
+}
+
+/// a raised frame around a rectangle centered on the origin, like the bezel of a screen or
+/// the rim of a panel: `width` by `length` on the outside, `border` wide, `height` tall,
+/// with corners of radius `corner` on the outside
+pub fn frame(width: f32, length: f32, border: f32, height: f32, corner: f32) -> Mesh {
+  let shape = |width: f32, length: f32, corner: f32| Button {
+    width,
+    length,
+    height,
+    corner: (corner / (width.min(length) / 2.0)).clamp(0.0, 1.0),
+    roll: 0.0,
+    crown: 0.0,
+  };
+  band(
+    shape(width, length, corner),
+    shape(
+      width - border * 2.0,
+      length - border * 2.0,
+      (corner - border).max(0.0),
+    ),
+    height,
+    height.min(border) * 0.3,
+  )
+}
+
+/// the strokes of a letter on a grid four wide and six tall: each run of digit pairs is a
+/// line through those points, across and then up from the letter's foot
+fn strokes(letter: char) -> &'static [&'static str] {
+  match letter {
+    'A' => &["002640", "1232"],
+    'B' => &["00063645443303", "3342413000"],
+    'C' => &["4536160501103041"],
+    'D' => &["00063645413000"],
+    'E' => &["46060040", "0333"],
+    'F' => &["460600", "0333"],
+    'G' => &["45361605011030414323"],
+    'H' => &["0006", "4046", "0343"],
+    'I' => &["2026", "1030", "1636"],
+    'J' => &["0110304146"],
+    'K' => &["0006", "460340"],
+    'L' => &["060040"],
+    'M' => &["0006234640"],
+    'N' => &["00064046"],
+    'O' | '0' => &["160501103041453616"],
+    'P' => &["00063645443303"],
+    'Q' => &["160501103041453616", "2240"],
+    'R' => &["00063645443303", "2340"],
+    'S' => &["453616050413334241301001"],
+    'T' => &["0646", "2620"],
+    'U' => &["060110304146"],
+    'V' => &["062046"],
+    'W' => &["0610233046"],
+    'X' => &["0046", "0640"],
+    'Y' => &["062346", "2320"],
+    'Z' => &["06460040"],
+    '1' => &["152620", "1030"],
+    '2' => &["05163645440040"],
+    '3' => &["05163645443323", "334241301001"],
+    '4' => &["30360242"],
+    '5' => &["460603334241301001"],
+    '6' => &["4536160501103041423303"],
+    '7' => &["064610"],
+    '8' => &["1304051636454433", "1302011030414233"],
+    '9' => &["0110304145361605041343"],
+    '-' => &["1333"],
+    '+' => &["1333", "2224"],
+    '.' => &["2020"],
+    ':' => &["2121", "2424"],
+    '/' => &["0046"],
+    '%' => &["0046", "0505", "4141"],
+    '>' => &["052301"],
+    '<' => &["450341"],
+    _ => &[],
+  }
+}
+
+/// lettering painted flat on the panel in a plain drawn face of capitals and figures,
+/// centered on the origin: letters `height` tall with strokes `weight` wide. anything it
+/// has no letter for is a space
+pub fn legend(text: &str, height: f32, weight: f32) -> Mesh {
+  let unit = height / 6.0;
+  // each letter is four wide, and two more go to the gap after it
+  let count = text.chars().count() as f32;
+  let left = -(count * 6.0 - 2.0) * unit / 2.0;
+  let mut legend = Mesh::default();
+  for (index, letter) in text.chars().enumerate() {
+    let origin = Vec2::new(left + index as f32 * 6.0 * unit, height / 2.0);
+    for run in strokes(letter.to_ascii_uppercase()) {
+      let points: Vec<Vec2> = (run.as_bytes().chunks(2))
+        .map(|pair| {
+          let (across, up) = (f32::from(pair[0] - b'0'), f32::from(pair[1] - b'0'));
+          // up the letter is up the panel, which is toward negative y
+          origin + Vec2::new(across, -up) * unit
+        })
+        .collect();
+      for line in points.windows(2) {
+        // a stroke with its ends squared off half its width past them, so that strokes
+        // meet without a notch and one of no length is a dot
+        let along = (line[1] - line[0]).try_normalize().unwrap_or(Vec2::X) * weight / 2.0;
+        let across = along.perp();
+        let (from, to) = (line[0] - along, line[1] + along);
+        legend.quad(
+          [from - across, from + across, to + across, to - across].map(|at| at.extend(PAINT)),
+          Vec3::Z,
+        );
+      }
+    }
+  }
+  legend
 }
 
 /// the dashed ring around a knob that old soft synths draw: `count` short bars lying on the
@@ -1897,6 +2013,54 @@ mod tests {
         assert!(Vec3::from(vertex.normal).is_normalized());
         assert!((0.0..=switch.collar_height + 1e-4).contains(&vertex.position[2]));
       }
+    }
+  }
+
+  #[test]
+  fn a_legend_is_centered_and_as_tall_as_it_is_told() {
+    let legend = legend("CUTOFF 12", 12.0, 1.5);
+    let (mut min, mut max) = (Vec3::MAX, Vec3::MIN);
+    for vertex in &legend.vertices {
+      let position = Vec3::from(vertex.position);
+      (min, max) = (min.min(position), max.max(position));
+    }
+    // nine letters of four and eight gaps of two between them, at two to a unit, and
+    // then half a stroke more, or a little over that at the end of a slanted one
+    let half = (9.0 * 6.0 - 2.0) * 2.0 / 2.0 + 0.75;
+    assert!(
+      (max.x - half).abs() < 0.35 && (min.x + half).abs() < 0.35,
+      "{min} to {max}"
+    );
+    assert!(
+      (max.y - 6.75).abs() < 0.35 && (min.y + 6.75).abs() < 0.35,
+      "{min} to {max}"
+    );
+    // every letter and figure has strokes, each a whole number of points on its grid
+    for letter in ('A'..='Z').chain('0'..='9') {
+      let runs = strokes(letter);
+      assert!(!runs.is_empty(), "{letter} is blank");
+      for run in runs {
+        assert!(run.len() >= 4 && run.len() % 2 == 0, "{letter}: {run}");
+        for pair in run.as_bytes().chunks(2) {
+          assert!(
+            (b'0'..=b'4').contains(&pair[0]) && (b'0'..=b'6').contains(&pair[1]),
+            "{letter}: {run}"
+          );
+        }
+      }
+    }
+    assert!(super::legend(" ", 12.0, 1.5).vertices.is_empty());
+  }
+
+  #[test]
+  fn a_frame_is_a_rim_with_nothing_in_its_middle() {
+    let frame = frame(200.0, 100.0, 10.0, 6.0, 4.0);
+    for vertex in &frame.vertices {
+      let position = Vec3::from(vertex.position);
+      let inside = position.x.abs() < 89.9 && position.y.abs() < 39.9;
+      assert!(!inside, "the frame fills its middle at {position}");
+      assert!(position.x.abs() <= 100.01 && position.y.abs() <= 50.01);
+      assert!((0.0..=6.001).contains(&position.z));
     }
   }
 

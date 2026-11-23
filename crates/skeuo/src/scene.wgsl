@@ -4,6 +4,8 @@ struct Globals {
   view: mat4x4<f32>,
   light_view: mat4x4<f32>,
   toward_light: vec4<f32>,
+  // and in w how far off the light and the viewer are for what shines, or zero for
+  // infinitely far
   toward_viewer: vec4<f32>,
   light_color: vec4<f32>,
   ambient: vec4<f32>,
@@ -235,7 +237,15 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
   let rough = textured(normalize(lit.normal), lit.world, lit.texture);
   let normal = rough.xyz;
   let toward_light = globals.toward_light.xyz;
-  let toward_viewer = globals.toward_viewer.xyz;
+  // what lights a surface comes from one way everywhere, but what shines off it comes from
+  // a light and a viewer at a place, so that the shine is somewhere and not all over
+  var toward_viewer = globals.toward_viewer.xyz;
+  var shining = toward_light;
+  if globals.toward_viewer.w > 0.0 {
+    let middle = vec3<f32>(globals.panel.xy * 0.5, 0.0);
+    shining = normalize(middle + toward_light * globals.toward_viewer.w - lit.world);
+    toward_viewer = normalize(middle + toward_viewer * globals.toward_viewer.w * 2.0 - lit.world);
+  }
   let facing = max(dot(normal, toward_light), 0.0);
   let share = lit_share(lit.world, facing);
   let seen = max(dot(normal, toward_viewer), 0.0);
@@ -282,7 +292,7 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
 
   // metal tints what it throws back, anything else throws it back white
   let tint = mix(vec3<f32>(1.0), surface, metal);
-  let halfway = normalize(toward_light + toward_viewer);
+  let halfway = normalize(shining + toward_viewer);
   var shine = pow(max(dot(normal, halfway), 0.0), lit.highlight.y);
   if spun > 0.0 {
     let key = spun_shine(lit.world, lit.center, lit.axis, halfway, lit.highlight.y);
