@@ -539,7 +539,9 @@ impl Knob {
       }
     }
     let top_rings = if self.top == Top::Flat { 1 } else { TOP_RINGS };
-    for ring in 0..=top_rings {
+    // with a sharp edge the shoulder is the face's rim already
+    let first = usize::from(self.edge_size() == 0.0);
+    for ring in first..=top_rings {
       // the face's rim has the grip's outline, so that flutes cut into the top and a
       // handle's top is a handle
       let inward = ring as f32 / top_rings as f32;

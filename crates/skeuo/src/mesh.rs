@@ -145,7 +145,11 @@ impl Mesh {
               }
             }
           }
-          sum.try_normalize().unwrap_or(own)
+          // a face squeezed to nothing has no way to face, and neither do its corners
+          sum
+            .try_normalize()
+            .or(own.try_normalize())
+            .unwrap_or(Vec3::Z)
         };
         mesh.quad_with_normals(
           corners(band, step),
