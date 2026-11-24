@@ -6,3 +6,4 @@
 
 pub mod interaction;
 pub mod sent;
+pub mod stroke;

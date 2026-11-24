@@ -6,8 +6,8 @@ use std::mem::size_of;
 use bytemuck::{Pod, Zeroable};
 use glam::Vec2;
 
-use crate::parts::legend;
 use crate::renderer::Place;
+use controls::stroke;
 
 /// a color as it is to look on the target, with how much of what is under it it covers
 pub type Color = [f32; 4];
@@ -74,9 +74,14 @@ impl Flat {
   /// lettering in the face of [`crate::parts::legend`], with the top left of its first letter at
   /// `from`: letters `height` tall with strokes `weight` wide
   pub fn legend(&mut self, text: &str, from: Vec2, height: f32, weight: f32, color: Color) {
-    let offset = from - legend::top_left(text.chars().count(), height);
-    for [start, end] in legend::lines(text, height) {
-      self.line(offset + start, offset + end, weight, color);
+    let offset = from - Vec2::from(stroke::top_left(text.chars().count(), height));
+    for [start, end] in stroke::lines(text, height) {
+      self.line(
+        offset + Vec2::from(start),
+        offset + Vec2::from(end),
+        weight,
+        color,
+      );
     }
   }
 }
