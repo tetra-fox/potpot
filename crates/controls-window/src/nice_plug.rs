@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use baseview::HandlerError;
 use controls::fit::{chosen, shaped};
-use controls::interaction::{Control, Dial, Feel, Key};
+use controls::interaction::{Control, Dial, Feel, Key, Readout};
 use nice_plug::context::gui::GuiContext;
 use nice_plug::editor::dpi::NativeSize;
 use nice_plug::editor::{EditorHandle, HostMethods, ResizeHint, SpawnedEditor};
@@ -28,15 +28,18 @@ pub struct Bound {
   pub step: Option<f32>,
   /// how the control answers the pointer and the wheel
   pub feel: Feel,
+  /// what the control's readout can show of a value typed into it
+  pub readout: Readout,
 }
 
 impl Bound {
   /// a control on `param`, which has to be one of the parameters the editor is made with
-  pub fn new(param: &impl nice_plug::params::Param, step: Option<f32>) -> Self {
+  pub fn new(param: &impl nice_plug::params::Param, step: Option<f32>, readout: Readout) -> Self {
     Self {
       param: param.as_ptr(),
       step,
       feel: Feel::default(),
+      readout,
     }
   }
 }
@@ -211,6 +214,7 @@ impl<S: Skin> nice_plug::editor::Editor for Editor<S> {
       .map(|(parameter, bound)| Control {
         parameter,
         feel: bound.feel,
+        readout: bound.readout,
       })
       .collect();
     let opening = Opening {
@@ -422,10 +426,10 @@ impl baseview::host::HostMainThreadCaller for MainThreadCaller {
 mod tests {
   use controls::flat::Flat;
   use controls::furniture::{GripLook, MenuLook};
-  use controls::interaction::{Readout, Target};
+  use controls::interaction::Target;
   use nice_plug::prelude::{FloatParam, FloatRange, Param, Params};
 
-  use super::{Arc, Bound, Gpu, Held, NotOurs, Remembered, Settings, Skin};
+  use super::{Arc, Bound, Gpu, Held, NotOurs, Readout, Remembered, Settings, Skin};
   use crate::skin::View;
 
   #[derive(Params)]
@@ -446,6 +450,11 @@ mod tests {
     }
   }
 
+  const READOUT: Readout = Readout {
+    room: 4,
+    shows: |_| true,
+  };
+
   /// a skin that draws nothing
   struct Blank;
 
@@ -462,10 +471,6 @@ mod tests {
       title: String::new(),
       size: [200.0, 100.0],
       scales: [1.0, 2.0],
-      readout: Readout {
-        room: 4,
-        shows: |_| true,
-      },
       menu: MenuLook::default(),
       grip: GripLook::default(),
     };
@@ -480,14 +485,14 @@ mod tests {
   fn only_the_plugins_own_parameters_can_be_bound() {
     let (ours, theirs) = (Two::new(), Two::new());
     let own = vec![
-      Bound::new(&ours.first, None),
-      Bound::new(&ours.second, Some(0.1)),
+      Bound::new(&ours.first, None, READOUT),
+      Bound::new(&ours.second, Some(0.1), READOUT),
     ];
     assert!(editor(Arc::clone(&ours), own).is_ok());
     // one of another plugin's, which nothing here keeps alive, is turned away
     let other = vec![
-      Bound::new(&ours.first, None),
-      Bound::new(&theirs.second, None),
+      Bound::new(&ours.first, None, READOUT),
+      Bound::new(&theirs.second, None, READOUT),
     ];
     let refused = editor(Arc::clone(&ours), other).expect_err("a parameter of another's");
     assert_eq!(refused.control, 1);

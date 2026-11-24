@@ -308,13 +308,7 @@ impl<S: Skin> Window<S> {
         (param.dial, host)
       })
       .unzip();
-    let interaction = Interaction::new(
-      dials,
-      controls,
-      settings.size,
-      settings.readout,
-      settings.scales,
-    );
+    let interaction = Interaction::new(dials, controls, settings.size, settings.scales);
     let values: Vec<f32> = hosts.iter().map(|host| (host.value)()).collect();
     let [_, _, width, height] = fitted(window, settings.size);
     let scale = (f64::from(width) / size.scale_factor) as f32 / settings.size[0];

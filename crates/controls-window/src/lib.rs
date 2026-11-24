@@ -31,12 +31,12 @@
 //!   title: "Bar".to_owned(),
 //!   size: [200.0, 100.0],
 //!   scales: [1.0, 2.0],
-//!   readout: Readout { room: 6, shows: |letter| letter.is_ascii() },
 //!   menu: MenuLook::default(),
 //!   grip: GripLook::default(),
 //! };
 //! let params = vec![Param::free(Dial::linear([0.0, 1.0], 0.5, None, 2, ""))];
-//! let controls = vec![Control { parameter: 0, feel: Feel::default() }];
+//! let readout = Readout { room: 4, shows: |letter| letter.is_ascii() };
+//! let controls = vec![Control { parameter: 0, feel: Feel::default(), readout }];
 //! let opened = controls_window::open(settings, params, controls, Opening::alone(), |_| Bar)?;
 //! opened.window.run_until_closed()?;
 //! # Ok::<(), controls_window::baseview::Error>(())

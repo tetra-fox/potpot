@@ -181,12 +181,14 @@ impl Dial {
 /// control is known by its place among the panel's controls, and names the parameter it
 /// turns by that one's place among the panel's parameters. the two orders are not the same
 /// thing: a parameter may have no control, or more than one
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct Control {
   /// the parameter it turns
   pub parameter: usize,
   /// how it answers the pointer and the wheel
   pub feel: Feel,
+  /// what its readout can show of a value typed into it
+  pub readout: Readout,
 }
 
 /// what a control shows, as the panel's look is handed it
@@ -509,12 +511,11 @@ pub struct Interaction {
   wheel: Option<(usize, f32, Instant)>,
   /// what the clipboard was asked for, until its text comes
   awaiting: Option<Paste>,
-  readout: Readout,
   /// the least and the most times its own size the window is pulled to
   scales: [f32; 2],
 }
 
-/// what a readout can show of a value that is typed into it
+/// what a control's readout can show of a value that is typed into it
 #[derive(Clone, Copy, Debug)]
 pub struct Readout {
   /// how many letters it has room for
@@ -525,15 +526,9 @@ pub struct Readout {
 
 impl Interaction {
   /// the behaviour of a panel `size` across and down with these controls on parameters the
-  /// dials describe, whose readouts are all like `readout`. the grip pulls the window from
-  /// the first of `scales` times its own size to the second
-  pub fn new(
-    dials: Vec<Dial>,
-    controls: Vec<Control>,
-    size: Point,
-    readout: Readout,
-    scales: [f32; 2],
-  ) -> Self {
+  /// dials describe. the grip pulls the window from the first of `scales` times its own
+  /// size to the second
+  pub fn new(dials: Vec<Dial>, controls: Vec<Control>, size: Point, scales: [f32; 2]) -> Self {
     assert!(
       controls
         .iter()
@@ -548,7 +543,6 @@ impl Interaction {
       pressed: None,
       wheel: None,
       awaiting: None,
-      readout,
       scales,
     }
   }
@@ -676,7 +670,9 @@ impl Interaction {
         fine,
         begun,
       } => {
-        let Control { parameter, feel } = self.controls[*control];
+        let Control {
+          parameter, feel, ..
+        } = self.controls[*control];
         let dial = &self.dials[parameter];
         // with the fine key the knob goes on from where it shows, so that pressing the key
         // moves nothing, and every move adds its own part of a turn, so that the key changes
@@ -855,7 +851,9 @@ impl Interaction {
     else {
       return;
     };
-    let Control { parameter, feel } = self.controls[control];
+    let Control {
+      parameter, feel, ..
+    } = self.controls[control];
     let from = match self.wheel {
       Some((turning, value, _)) if turning == control => value,
       _ => {
@@ -877,7 +875,6 @@ impl Interaction {
   }
 
   fn keyed(&mut self, key: Key, actions: &mut Vec<Action>) {
-    let Readout { room, shows } = self.readout;
     let edit = match &mut self.state {
       State::Edit(edit) => edit,
       State::Menu(_) => {
@@ -889,6 +886,7 @@ impl Interaction {
       State::Idle | State::Drag { .. } | State::Resize { .. } => return,
     };
     let (letters, selected) = (edit.letters(), edit.selected());
+    let Readout { room, shows } = self.controls[edit.control].readout;
     match key {
       Key::Enter | Key::Tab => {
         self.commit(actions);
@@ -952,7 +950,8 @@ impl Interaction {
     let text = text.trim();
     match (wanted, &mut self.state) {
       (Paste::Typed(control), State::Edit(edit)) if edit.control == control => {
-        edit.put(text, self.readout.room, self.readout.shows);
+        let Readout { room, shows } = self.controls[control].readout;
+        edit.put(text, room, shows);
         actions.push(Action::Redraw);
       }
       // typing ended before the text came
@@ -1079,12 +1078,12 @@ mod tests {
     let on = |parameter| Control {
       parameter,
       feel: Feel::default(),
+      readout: Readout {
+        room: ROOM,
+        shows: |_| true,
+      },
     };
-    let readout = Readout {
-      room: ROOM,
-      shows: |_| true,
-    };
-    let mut panel = Interaction::new(dials, vec![on(MIX), on(PITCH)], SIZE, readout, SCALES);
+    let mut panel = Interaction::new(dials, vec![on(MIX), on(PITCH)], SIZE, SCALES);
     let values = [0.5, 0.5, 1.0, 0.5];
     let moment = Moment {
       now: Instant::now(),
@@ -1157,6 +1156,54 @@ mod tests {
   }
 
   #[test]
+  fn each_readout_holds_and_shows_what_its_own_control_says_it_can() {
+    // one readout with room for two figures, and one with room for five of anything
+    let dials = vec![shift(None), mix()];
+    let narrow = Control {
+      parameter: 0,
+      feel: Feel::default(),
+      readout: Readout {
+        room: 2,
+        shows: |letter| letter.is_ascii_digit(),
+      },
+    };
+    let wide = Control {
+      parameter: 1,
+      feel: Feel::default(),
+      readout: Readout {
+        room: 5,
+        shows: |_| true,
+      },
+    };
+    let mut panel = Interaction::new(dials, vec![narrow, wide], SIZE, SCALES);
+    let values = [0.5, 1.0];
+    let mut typed = |control: usize, letters: &str| {
+      let moment = Moment {
+        now: Instant::now(),
+        values: &values,
+        scale: 1.0,
+      };
+      let press = Event::Press {
+        button: Button::Left,
+        at: [10.0, 10.0],
+        window: [10.0, 10.0],
+        over: Some(Target::Readout(control)),
+        reset: false,
+      };
+      panel.handle(press.clone(), moment);
+      panel.handle(press, moment);
+      for letter in letters.chars() {
+        panel.handle(Event::Key(Key::Letter(letter)), moment);
+      }
+      let text = panel.edit().expect("a value being typed").text.clone();
+      panel.handle(Event::Key(Key::Escape), moment);
+      text
+    };
+    assert_eq!(typed(0, "1x2.345"), "12");
+    assert_eq!(typed(1, "1x2.345"), "1x2.3");
+  }
+
+  #[test]
   fn a_linear_dial_is_written_and_read_in_its_plain_units() {
     let dial = Dial::linear([-12.0, 12.0], 0.0, Some(1.0), 1, " st");
     assert_eq!(dial.default, 0.5);
@@ -1180,18 +1227,18 @@ mod tests {
 
   fn interaction() -> Interaction {
     let dials = vec![shift(None), shift(None), mix(), shift(Some(1.0))];
-    let readout = Readout {
-      room: ROOM,
-      shows: |letter| letter.is_ascii_digit() || " +-.,%st".contains(letter),
-    };
-    // a control for each parameter, in the same order
+    // a control for each parameter, in the same order, with readouts all alike
     let controls = (0..dials.len())
       .map(|parameter| Control {
         parameter,
         feel: Feel::default(),
+        readout: Readout {
+          room: ROOM,
+          shows: |letter| letter.is_ascii_digit() || " +-.,%st".contains(letter),
+        },
       })
       .collect();
-    Interaction::new(dials, controls, SIZE, readout, SCALES)
+    Interaction::new(dials, controls, SIZE, SCALES)
   }
 
   impl Bench {

@@ -25,8 +25,6 @@ const RADIUS: f32 = 30.0;
 /// half a readout's width and height
 const READOUT: [f32; 2] = [38.0, 12.0];
 const LETTERS: f32 = 9.0;
-/// how many letters a readout has room for
-const ROOM: usize = 7;
 
 const GROUND: Color = [0.11, 0.12, 0.14, 1.0];
 const WELL: Color = [0.05, 0.055, 0.065, 1.0];
@@ -44,6 +42,8 @@ struct Knob {
   step: Option<f32>,
   decimals: usize,
   unit: &'static str,
+  /// how many letters can be typed into its readout
+  room: usize,
   feel: Feel,
 }
 
@@ -60,6 +60,7 @@ fn knobs() -> [Knob; 4] {
       step: Some(1.0),
       decimals: 0,
       unit: " st",
+      room: 3,
       feel,
     },
     Knob {
@@ -70,6 +71,7 @@ fn knobs() -> [Knob; 4] {
       step: None,
       decimals: 2,
       unit: "",
+      room: 5,
       feel,
     },
     Knob {
@@ -80,6 +82,7 @@ fn knobs() -> [Knob; 4] {
       step: Some(5.0),
       decimals: 0,
       unit: "%",
+      room: 3,
       feel: Feel {
         wheel: 0.01,
         ..feel
@@ -93,6 +96,7 @@ fn knobs() -> [Knob; 4] {
       step: None,
       decimals: 1,
       unit: " dB",
+      room: 5,
       feel: Feel { fine: 0.02, ..feel },
     },
   ]
@@ -204,10 +208,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     title: "Flat".to_owned(),
     size: SIZE,
     scales: [0.5, 3.0],
-    readout: Readout {
-      room: ROOM,
-      shows: |letter| letter == ' ' || stroke::lettered(letter),
-    },
     menu: MenuLook::default(),
     grip: GripLook::default(),
   };
@@ -220,6 +220,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .map(|(parameter, knob)| Control {
       parameter,
       feel: knob.feel,
+      readout: Readout {
+        room: knob.room,
+        shows: |letter| letter == ' ' || stroke::lettered(letter),
+      },
     })
     .collect();
   let opened = controls_window::open(settings, params, controls, Opening::alone(), |_| Look {

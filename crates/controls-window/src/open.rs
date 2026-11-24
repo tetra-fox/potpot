@@ -10,7 +10,7 @@ use baseview::dpi::LogicalSize;
 use baseview::{HandlerError, WindowSettings, WindowWaker};
 use controls::Point;
 use controls::furniture::{GripLook, MenuLook};
-use controls::interaction::{Control, Dial, Key, Readout};
+use controls::interaction::{Control, Dial, Key};
 use tracing::error;
 use wgpu::rwh::HasWindowHandle;
 
@@ -27,8 +27,6 @@ pub struct Settings {
   pub size: Point,
   /// the least and the most times its own size the window is
   pub scales: [f32; 2],
-  /// what the readouts can show of a value typed into them
-  pub readout: Readout,
   /// the look of a control's menu
   pub menu: MenuLook,
   /// the look of the grip the window is pulled larger and smaller by
