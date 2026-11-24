@@ -10,7 +10,6 @@
 use std::f32::consts::PI;
 
 use controls_window::controls::flat::{Color, Flat};
-use controls_window::controls::furniture::{GripLook, MenuLook};
 use controls_window::controls::interaction::{Control, Dial, Edit, Feel, Readout, Target};
 use controls_window::controls::stroke;
 use controls_window::{Gpu, Opening, Param, Settings, Skin, View, wgpu};
@@ -50,7 +49,12 @@ struct Knob {
 /// the panel's knobs, left to right: one in whole semitones, one smooth, one in steps of
 /// five that the wheel moves slowly, and one that the fine key slows down a great deal
 fn knobs() -> [Knob; 4] {
+  // how each answers the pointer and the wheel: as usual, with a wheel that moves it a
+  // hundredth of its turn for each line, and with a fine key that slows it fifty times
   let feel = Feel::default();
+  let (mut slow_wheel, mut very_fine) = (feel, feel);
+  slow_wheel.wheel = 0.01;
+  very_fine.fine = 0.02;
   [
     Knob {
       name: "TUNE",
@@ -83,10 +87,7 @@ fn knobs() -> [Knob; 4] {
       decimals: 0,
       unit: "%",
       room: 3,
-      feel: Feel {
-        wheel: 0.01,
-        ..feel
-      },
+      feel: slow_wheel,
     },
     Knob {
       name: "LEVEL",
@@ -97,7 +98,7 @@ fn knobs() -> [Knob; 4] {
       decimals: 1,
       unit: " dB",
       room: 5,
-      feel: Feel { fine: 0.02, ..feel },
+      feel: very_fine,
     },
   ]
 }
@@ -204,26 +205,17 @@ fn typed(over: &mut Flat, edit: &Edit, middle: [f32; 2]) {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-  let settings = Settings {
-    title: "Flat".to_owned(),
-    size: SIZE,
-    scales: [0.5, 3.0],
-    menu: MenuLook::default(),
-    grip: GripLook::default(),
-  };
+  let settings = Settings::new("Flat", SIZE);
   // a parameter for each knob, which no host has: each stands where the panel last set it
   let params = knobs()
     .iter()
     .map(|knob| Param::free(knob.dial()))
     .collect();
   let controls = (knobs().iter().enumerate())
-    .map(|(parameter, knob)| Control {
-      parameter,
-      feel: knob.feel,
-      readout: Readout {
-        room: knob.room,
-        shows: |letter| letter == ' ' || stroke::lettered(letter),
-      },
+    .map(|(parameter, knob)| {
+      let mut control = Control::new(parameter, Readout::new(knob.room));
+      control.feel = knob.feel;
+      control
     })
     .collect();
   let opened = controls_window::open(settings, params, controls, Opening::alone(), |_| Look {

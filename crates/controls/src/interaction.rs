@@ -41,8 +41,10 @@ impl Drag {
   }
 }
 
-/// how a control answers the pointer and the wheel
+/// how a control answers the pointer and the wheel. it starts as [`Feel::default`] and is
+/// changed a field at a time
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Feel {
   /// how it is dragged
   pub drag: Drag,
@@ -73,6 +75,7 @@ impl Default for Feel {
 /// of its whole turn, from zero to one, and its plain value is that in the units it is read
 /// and written in. it can be handed
 /// to another thread, which is where some systems have a window's
+#[non_exhaustive]
 pub struct Dial {
   /// the value a reset gives it
   pub default: f32,
@@ -105,6 +108,26 @@ impl std::fmt::Debug for Dial {
 }
 
 impl Dial {
+  /// a parameter that turns smoothly and has no unit, from its ways between a value and its
+  /// plain value, and between a value and its text. `step` and `unit` are set after
+  pub fn new(
+    default: f32,
+    plain: impl Fn(f32) -> f32 + Send + 'static,
+    turn: impl Fn(f32) -> f32 + Send + 'static,
+    write: impl Fn(f32) -> String + Send + 'static,
+    read: impl Fn(&str) -> Option<f32> + Send + 'static,
+  ) -> Self {
+    Self {
+      default,
+      step: None,
+      plain: Box::new(plain),
+      turn: Box::new(turn),
+      write: Box::new(write),
+      unit: String::new(),
+      read: Box::new(read),
+    }
+  }
+
   /// a control over a straight run of plain values from the first of `range` to the second,
   /// at `default` to begin with. it is written with so many `decimals` and `unit` after it,
   /// and read with or without the unit
@@ -182,6 +205,7 @@ impl Dial {
 /// turns by that one's place among the panel's parameters. the two orders are not the same
 /// thing: a parameter may have no control, or more than one
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Control {
   /// the parameter it turns
   pub parameter: usize,
@@ -191,8 +215,20 @@ pub struct Control {
   pub readout: Readout,
 }
 
+impl Control {
+  /// a control on a parameter, with a readout, that feels as [`Feel::default`] does
+  pub fn new(parameter: usize, readout: Readout) -> Self {
+    Self {
+      parameter,
+      feel: Feel::default(),
+      readout,
+    }
+  }
+}
+
 /// what a control shows, as the panel's look is handed it
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Reading {
   /// where its parameter stands, as a part of its whole turn
   pub value: f32,
@@ -517,11 +553,23 @@ pub struct Interaction {
 
 /// what a control's readout can show of a value that is typed into it
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Readout {
   /// how many letters it has room for
   pub room: usize,
   /// whether it has a letter for something typed
   pub shows: fn(char) -> bool,
+}
+
+impl Readout {
+  /// a readout with room for so many letters, which shows a space and whatever
+  /// [`crate::stroke`] has a letter for
+  pub fn new(room: usize) -> Self {
+    Self {
+      room,
+      shows: |letter| letter == ' ' || crate::stroke::lettered(letter),
+    }
+  }
 }
 
 impl Interaction {

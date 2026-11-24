@@ -10,8 +10,7 @@
 //!
 //! ```no_run
 //! use controls_window::controls::flat::Flat;
-//! use controls_window::controls::furniture::{GripLook, MenuLook};
-//! use controls_window::controls::interaction::{Control, Dial, Feel, Readout, Target};
+//! use controls_window::controls::interaction::{Control, Dial, Readout, Target};
 //! use controls_window::{Gpu, Opening, Param, Settings, Skin, View, wgpu};
 //!
 //! /// one control, drawn as a bar as long as its value
@@ -27,16 +26,9 @@
 //!   }
 //! }
 //!
-//! let settings = Settings {
-//!   title: "Bar".to_owned(),
-//!   size: [200.0, 100.0],
-//!   scales: [1.0, 2.0],
-//!   menu: MenuLook::default(),
-//!   grip: GripLook::default(),
-//! };
+//! let settings = Settings::new("Bar", [200.0, 100.0]);
 //! let params = vec![Param::free(Dial::linear([0.0, 1.0], 0.5, None, 2, ""))];
-//! let readout = Readout { room: 4, shows: |letter| letter.is_ascii() };
-//! let controls = vec![Control { parameter: 0, feel: Feel::default(), readout }];
+//! let controls = vec![Control::new(0, Readout::new(4))];
 //! let opened = controls_window::open(settings, params, controls, Opening::alone(), |_| Bar)?;
 //! opened.window.run_until_closed()?;
 //! # Ok::<(), controls_window::baseview::Error>(())

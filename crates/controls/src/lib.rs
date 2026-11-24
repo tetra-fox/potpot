@@ -9,14 +9,13 @@
 //! use std::time::Instant;
 //!
 //! use controls::interaction::{
-//!   Action, Button, Control, Dial, Event, Feel, Interaction, Moment, Readout, Target,
+//!   Action, Button, Control, Dial, Event, Interaction, Moment, Readout, Target,
 //! };
 //!
 //! // a parameter over two octaves in whole semitones, and one knob that turns it, on a panel
 //! // 200 points by 100
 //! let dial = Dial::linear([-12.0, 12.0], 0.0, Some(1.0), 0, " st");
-//! let readout = Readout { room: 3, shows: |letter| letter.is_ascii() };
-//! let knob = Control { parameter: 0, feel: Feel::default(), readout };
+//! let knob = Control::new(0, Readout::new(3));
 //! let mut panel = Interaction::new(vec![dial], vec![knob], [200.0, 100.0], [1.0, 2.0]);
 //!
 //! // the pointer goes down on it and up the panel by forty points

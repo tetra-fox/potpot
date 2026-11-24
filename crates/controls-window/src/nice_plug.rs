@@ -21,6 +21,7 @@ use crate::skin::{Gpu, Skin};
 
 /// one of a panel's controls bound to one of the plugin's parameters
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Bound {
   param: ParamPtr,
   /// the coarse step the control moves by, in the parameter's plain units. none turns
@@ -33,11 +34,12 @@ pub struct Bound {
 }
 
 impl Bound {
-  /// a control on `param`, which has to be one of the parameters the editor is made with
-  pub fn new(param: &impl nice_plug::params::Param, step: Option<f32>, readout: Readout) -> Self {
+  /// a control on `param`, which has to be one of the parameters the editor is made with.
+  /// it turns smoothly and feels as [`Feel::default`] does
+  pub fn new(param: &impl nice_plug::params::Param, readout: Readout) -> Self {
     Self {
       param: param.as_ptr(),
-      step,
+      step: None,
       feel: Feel::default(),
       readout,
     }
@@ -66,22 +68,23 @@ impl Held {
   /// what there is to know of it for a control that moves by `step`
   fn dial(&self, step: Option<f32>) -> Dial {
     let (plain, turn, write, read) = (self.clone(), self.clone(), self.clone(), self.clone());
-    Dial {
+    let mut dial = Dial::new(
       // SAFETY: `param` points into `_params`, which `self` keeps alive, as does each of
       // the clones the closures below own
-      default: unsafe { self.param.default_normalized_value() },
-      step,
+      unsafe { self.param.default_normalized_value() },
       // SAFETY: the same
-      plain: Box::new(move |value| unsafe { plain.param.preview_plain(value) }),
+      move |value| unsafe { plain.param.preview_plain(value) },
       // SAFETY: the same
-      turn: Box::new(move |plain| unsafe { turn.param.preview_normalized(plain) }),
+      move |plain| unsafe { turn.param.preview_normalized(plain) },
       // SAFETY: the same
-      write: Box::new(move |value| unsafe { write.param.normalized_value_to_string(value, false) }),
+      move |value| unsafe { write.param.normalized_value_to_string(value, false) },
       // SAFETY: the same
-      unit: unsafe { self.param.unit() }.to_owned(),
-      // SAFETY: the same
-      read: Box::new(move |text| unsafe { read.param.string_to_normalized_value(text) }),
-    }
+      move |text| unsafe { read.param.string_to_normalized_value(text) },
+    );
+    dial.step = step;
+    // SAFETY: the same
+    dial.unit = unsafe { self.param.unit() }.to_owned();
+    dial
   }
 
   /// the parameter as the window has it, with its ways to the host through `gui`
@@ -104,6 +107,7 @@ impl Held {
 
 /// the panel's parameters are not all the plugin's own
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct NotOurs {
   /// the place among the panel's of the first that is not
   pub control: usize,
@@ -211,10 +215,10 @@ impl<S: Skin> nice_plug::editor::Editor for Editor<S> {
       .collect();
     // each bound control turns the parameter bound at its own place
     let controls = (self.bound.iter().enumerate())
-      .map(|(parameter, bound)| Control {
-        parameter,
-        feel: bound.feel,
-        readout: bound.readout,
+      .map(|(parameter, bound)| {
+        let mut control = Control::new(parameter, bound.readout);
+        control.feel = bound.feel;
+        control
       })
       .collect();
     let opening = Opening {
@@ -450,11 +454,6 @@ mod tests {
     }
   }
 
-  const READOUT: Readout = Readout {
-    room: 4,
-    shows: |_| true,
-  };
-
   /// a skin that draws nothing
   struct Blank;
 
@@ -485,14 +484,14 @@ mod tests {
   fn only_the_plugins_own_parameters_can_be_bound() {
     let (ours, theirs) = (Two::new(), Two::new());
     let own = vec![
-      Bound::new(&ours.first, None, READOUT),
-      Bound::new(&ours.second, Some(0.1), READOUT),
+      Bound::new(&ours.first, Readout::new(4)),
+      Bound::new(&ours.second, Readout::new(4)),
     ];
     assert!(editor(Arc::clone(&ours), own).is_ok());
     // one of another plugin's, which nothing here keeps alive, is turned away
     let other = vec![
-      Bound::new(&ours.first, None, READOUT),
-      Bound::new(&theirs.second, None, READOUT),
+      Bound::new(&ours.first, Readout::new(4)),
+      Bound::new(&theirs.second, Readout::new(4)),
     ];
     let refused = editor(Arc::clone(&ours), other).expect_err("a parameter of another's");
     assert_eq!(refused.control, 1);

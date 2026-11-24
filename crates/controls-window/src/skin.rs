@@ -6,6 +6,7 @@ use controls::interaction::{Edit, Menu, Reading, Target};
 
 /// the graphics device the window draws with, for a skin to make what it draws from
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct Gpu<'a> {
   /// the device
   pub device: &'a wgpu::Device,
@@ -19,6 +20,7 @@ pub struct Gpu<'a> {
 /// from this alone: with the same view it is the same picture, and the window draws a frame
 /// only when the view has changed
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct View<'a> {
   /// what each control shows, in the order of the panel's controls
   pub controls: &'a [Reading],

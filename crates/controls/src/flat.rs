@@ -8,6 +8,7 @@ pub type Color = [f32; 4];
 
 /// a rectangle about a middle, lying any way round
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Shape {
   /// where its middle is
   pub middle: Point,

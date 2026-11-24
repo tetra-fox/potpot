@@ -17,8 +17,11 @@ use wgpu::rwh::HasWindowHandle;
 use crate::skin::{Gpu, Skin};
 use crate::window::{Guarded, Window};
 
-/// how a panel is shown: what there is to say of its window before anything is drawn in it
+/// how a panel is shown: what there is to say of its window before anything is drawn in it.
+/// [`Settings::new`] takes what every panel has to say, and the rest is changed a field at a
+/// time
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Settings {
   /// what the window is called where it has a title
   pub title: String,
@@ -34,6 +37,18 @@ pub struct Settings {
 }
 
 impl Settings {
+  /// a window called `title` for a panel of `size`, which is pulled from half the panel's
+  /// own size to three times it, with the menu and the grip looking as they do by default
+  pub fn new(title: impl Into<String>, size: Point) -> Self {
+    Self {
+      title: title.into(),
+      size,
+      scales: [0.5, 3.0],
+      menu: MenuLook::default(),
+      grip: GripLook::default(),
+    }
+  }
+
   /// the window's size in the screen's points at so many times the panel's own
   pub fn sized(&self, scale: f32) -> LogicalSize<f32> {
     LogicalSize::new(self.size[0] * scale, self.size[1] * scale)
@@ -42,6 +57,7 @@ impl Settings {
 
 /// one of a panel's parameters: what its control does, and its ways to the host. the window
 /// calls these on its own thread, which is not the opener's on every system
+#[non_exhaustive]
 pub struct Param {
   /// what its control is like
   pub dial: Dial,
@@ -56,6 +72,23 @@ pub struct Param {
 }
 
 impl Param {
+  /// a parameter a host has, from what its control does and its four ways to the host
+  pub fn new(
+    dial: Dial,
+    value: impl Fn() -> f32 + Send + 'static,
+    begin: impl Fn() + Send + 'static,
+    set: impl Fn(f32) + Send + 'static,
+    end: impl Fn() + Send + 'static,
+  ) -> Self {
+    Self {
+      dial,
+      value: Box::new(value),
+      begin: Box::new(begin),
+      set: Box::new(set),
+      end: Box::new(end),
+    }
+  }
+
   /// a parameter no host has: it stands where it was last set, from its dial's default on
   pub fn free(dial: Dial) -> Self {
     let held = Arc::new(AtomicU32::new(dial.default.to_bits()));
@@ -186,6 +219,7 @@ fn display_scale() -> f64 {
 }
 
 /// where a window goes and who it answers to
+#[non_exhaustive]
 pub struct Opening<'a, W> {
   /// the window it is put in, or none for one of its own
   pub parent: Option<&'a W>,

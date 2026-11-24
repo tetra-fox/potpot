@@ -7,8 +7,10 @@ use crate::Point;
 use crate::flat::{Color, Flat};
 use crate::interaction::{Item, Menu, Target};
 
-/// the menu: a flat list drawn over the picture, with a row for each item
+/// the menu: a flat list drawn over the picture, with a row for each item. it starts as
+/// [`MenuLook::default`] and is changed a field at a time
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct MenuLook {
   /// how wide and tall a row is
   pub row: Point,
@@ -149,8 +151,10 @@ impl MenuLook {
 
 /// the grip the window is pulled larger and smaller by, drawn flat in its far corner. its
 /// measures are in the screen's points and not the panel's, so that it is the same size
-/// however large the window is
+/// however large the window is. it starts as [`GripLook::default`] and is changed a field at
+/// a time
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct GripLook {
   /// how wide and tall the corner it takes up is
   pub reach: f32,
