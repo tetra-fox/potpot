@@ -1,6 +1,8 @@
 //! the panel itself and what is fixed to it
 
-use glam::Vec3;
+use std::f32::consts::FRAC_PI_2;
+
+use glam::{Vec2, Vec3};
 
 use super::button::Button;
 use super::outline::{Outline, band};
@@ -38,6 +40,27 @@ pub fn frame(width: f32, length: f32, border: f32, height: f32, corner: f32) -> 
     height,
     height.min(border) * 0.3,
   )
+}
+
+/// a polished ring lying on the panel around the origin, for a knob to stand in: from
+/// `inner` to `outer` away from the middle and `height` tall at its lip, which is rolled
+/// over on the outside. from the lip its face slopes down toward the middle like a
+/// shallow funnel, with a hard edge between the two that catches the light
+pub fn bezel(inner: f32, outer: f32, height: f32) -> Mesh {
+  /// the steps of the lip's roll, few enough degrees each to shade as one curve
+  const LIP: usize = 9;
+  let roll = height.min((outer - inner) * 0.3);
+  let mut profile = vec![Vec2::new(outer, 0.0)];
+  profile.extend((0..=LIP).map(|step| {
+    let (up, out) = (step as f32 / LIP as f32 * FRAC_PI_2).sin_cos();
+    Vec2::new(outer - roll + roll * out, height - roll + roll * up)
+  }));
+  profile.push(Vec2::new(inner, height * 0.4));
+  profile.push(Vec2::new(inner, 0.0));
+  // only the roll's own steps are shallow enough to round over
+  Mesh::rings(profile.len(), 96, 0.97, |ring, angle| {
+    (Vec2::from_angle(angle) * profile[ring].x).extend(profile[ring].y)
+  })
 }
 
 /// a round-headed screw with a slot, `radius` wide
