@@ -3,11 +3,8 @@
 //! a [`Scene`] is a panel seen from above with [`Object`]s on it, one light casting shadows,
 //! and a [`Look`] that can make the picture as blocky and banded as an old render. a
 //! [`Renderer`] draws it onto any wgpu texture, and again only when it has changed, and
-//! [`Scene::pick`] tells which object is seen at a point of the picture. [`Flat`] shapes are
-//! for what is not part of the panel, like a menu: a [`FlatRenderer`] draws them over the
-//! picture as plain colors.
+//! [`Scene::pick`] tells which object is seen at a point of the picture.
 
-mod flat;
 mod material;
 mod mesh;
 pub mod parts;
@@ -15,8 +12,6 @@ mod pick;
 mod renderer;
 mod scene;
 
-pub use controls::flat::{Color, Flat};
-pub use flat::FlatRenderer;
 pub use glam;
 pub use material::Material;
 pub use mesh::{Mesh, Vertex};

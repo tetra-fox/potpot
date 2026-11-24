@@ -205,7 +205,6 @@ mod tests {
     let shaders = [
       ("scene", scene_source()),
       ("present", PRESENT_SOURCE.to_owned()),
-      ("flat", include_str!("../flat.wgsl").to_owned()),
     ];
     for (name, source) in shaders {
       let module = ::naga::front::wgsl::parse_str(&source).expect("the shader to parse");

@@ -1,0 +1,45 @@
+[package]
+name = "controls-window"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+description = "a baseview window for a panel of controls, drawn with wgpu by whatever skin it is given"
+license = "GPL-3.0-or-later"
+publish = false
+
+[dependencies]
+controls.workspace = true
+# the window, which the panel is put in and its input comes from
+baseview = "0.4.2"
+# the layout of what the flat shapes are drawn from
+bytemuck = { version = "1", features = ["derive"] }
+# the system's clipboard, which baseview only writes and only on macos. without its default
+# features it carries text alone
+arboard = { version = "3", default-features = false }
+# the keys baseview reports, in the version it reports them with
+keyboard-types = "0.8"
+# waits for the graphics adapter and device while the window opens
+pollster = "0.4"
+# what goes wrong is said through this, which is what a plugin wrapper's log listens to
+tracing = "0.1"
+# the window makes the device a skin draws with, so it picks the backends. the gl one is
+# left out: it cannot read a depth texture by texel, which a lit skin's shaders do
+wgpu = { workspace = true, features = ["dx12", "metal", "vulkan"] }
+
+# tells the window manager the shape of a window no host has, and reads the display's scale
+# before there is a window. baseview is on the same version
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", features = ["resource_manager"] }
+
+# puts the finished picture in the window as plain pixels
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+softbuffer = { version = "0.4", default-features = false, features = ["x11", "x11-dlopen"] }
+
+# on windows that is one call, and softbuffer keeps a thread of its own going for it for as
+# long as the process lives, which a plugin that can be unloaded cannot have
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_HiDpi"] }
+
+[dev-dependencies]
+# writes the flat shapes' shader as each graphics api is given it. the version wgpu is on
+naga = { version = "27", features = ["hlsl-out", "msl-out", "spv-out", "wgsl-in"] }

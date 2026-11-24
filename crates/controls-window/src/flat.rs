@@ -1,13 +1,10 @@
-//! draws [`Flat`] shapes straight onto a target, over the picture and apart from it, with no
-//! light on them and nothing of a [`crate::Look`]
+//! draws [`Flat`] shapes straight onto a target, over whatever a skin has drawn there
 
 use std::mem::size_of;
 
 use bytemuck::{Pod, Zeroable};
 use controls::flat::{Color, Flat, Shape};
-use glam::Vec2;
-
-use crate::renderer::Place;
+use controls::stroke::Point;
 
 /// one corner of a shape, which is a rectangle about a middle: lying along the pixels and
 /// drawn onto their edges, or any way round with its edges smoothed
@@ -60,7 +57,7 @@ struct Options {
 
 /// what drawing [`Flat`] shapes takes on the gpu
 #[derive(Debug)]
-pub struct FlatRenderer {
+pub(crate) struct FlatRenderer {
   pipeline: wgpu::RenderPipeline,
   options: wgpu::Buffer,
   group: wgpu::BindGroup,
@@ -75,13 +72,13 @@ pub struct FlatRenderer {
 
 impl FlatRenderer {
   /// `target` is the format of the textures [`FlatRenderer::render`] will draw onto
-  pub fn new(device: &wgpu::Device, target: wgpu::TextureFormat) -> Self {
+  pub(crate) fn new(device: &wgpu::Device, target: wgpu::TextureFormat) -> Self {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-      label: Some("skeuo flat"),
+      label: Some("controls flat"),
       source: wgpu::ShaderSource::Wgsl(include_str!("flat.wgsl").into()),
     });
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-      label: Some("skeuo flat"),
+      label: Some("controls flat"),
       entries: &[wgpu::BindGroupLayoutEntry {
         binding: 0,
         visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
@@ -94,13 +91,13 @@ impl FlatRenderer {
       }],
     });
     let options = device.create_buffer(&wgpu::BufferDescriptor {
-      label: Some("skeuo flat"),
+      label: Some("controls flat"),
       size: size_of::<Options>() as u64,
       usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false,
     });
     let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-      label: Some("skeuo flat"),
+      label: Some("controls flat"),
       layout: &layout,
       entries: &[wgpu::BindGroupEntry {
         binding: 0,
@@ -108,10 +105,10 @@ impl FlatRenderer {
       }],
     });
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-      label: Some("skeuo flat"),
+      label: Some("controls flat"),
       layout: Some(
         &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-          label: Some("skeuo flat"),
+          label: Some("controls flat"),
           bind_group_layouts: &[&layout],
           push_constant_ranges: &[],
         }),
@@ -158,16 +155,16 @@ impl FlatRenderer {
 
   /// takes the shapes to draw next. `size` is the width and height their points run over,
   /// which is a scene's panel, and `pixels` those of the place they will be drawn in
-  pub fn prepare(
+  pub(crate) fn prepare(
     &mut self,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     flat: &Flat,
-    size: Vec2,
+    size: Point,
     pixels: [u32; 2],
   ) {
     let options = Options {
-      size: size.into(),
+      size,
       pixels: pixels.map(|side| side as f32),
       options: [f32::from(u8::from(self.target_encodes)), 0.0, 0.0, 0.0],
     };
@@ -189,19 +186,19 @@ impl FlatRenderer {
   /// draws the shapes last prepared over `place` on the target, leaving everything outside
   /// `clip` as it was. `clip` is x, y, width and height in the target's pixels, and has to
   /// lie on the target
-  pub fn render(
+  pub(crate) fn render(
     &self,
     encoder: &mut wgpu::CommandEncoder,
     target: &wgpu::TextureView,
-    place: Place,
-    clip: [u32; 4],
+    place: [u32; 4],
   ) {
     let count = self.held.shapes().len() as u32 * 6;
-    if count == 0 || clip[2] == 0 || clip[3] == 0 || place.width <= 0.0 || place.height <= 0.0 {
+    let [x, y, width, height] = place;
+    if count == 0 || width == 0 || height == 0 {
       return;
     }
     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-      label: Some("skeuo flat"),
+      label: Some("controls flat"),
       color_attachments: &[Some(wgpu::RenderPassColorAttachment {
         view: target,
         depth_slice: None,
@@ -217,8 +214,8 @@ impl FlatRenderer {
     });
     pass.set_pipeline(&self.pipeline);
     pass.set_bind_group(0, &self.group, &[]);
-    pass.set_viewport(place.x, place.y, place.width, place.height, 0.0, 1.0);
-    pass.set_scissor_rect(clip[0], clip[1], clip[2], clip[3]);
+    pass.set_viewport(x as f32, y as f32, width as f32, height as f32, 0.0, 1.0);
+    pass.set_scissor_rect(x, y, width, height);
     pass.set_vertex_buffer(0, self.corners.slice(..));
     pass.draw(0..count, 0..1);
   }
@@ -226,9 +223,41 @@ impl FlatRenderer {
 
 fn corner_buffer(device: &wgpu::Device, room: usize) -> wgpu::Buffer {
   device.create_buffer(&wgpu::BufferDescriptor {
-    label: Some("skeuo flat"),
+    label: Some("controls flat"),
     size: (room.max(1) * size_of::<Corner>()) as u64,
     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
     mapped_at_creation: false,
   })
+}
+
+#[cfg(test)]
+mod tests {
+  /// a backend is handed the shader in a language of its own, which naga writes it in when
+  /// the pipeline is made. one it cannot be written in fails there, on the user's machine
+  #[test]
+  fn the_shader_can_be_written_for_every_backend() {
+    use naga::back::{hlsl, msl, spv};
+
+    let module = naga::front::wgsl::parse_str(include_str!("flat.wgsl")).expect("it to parse");
+    let info = naga::valid::Validator::new(
+      naga::valid::ValidationFlags::all(),
+      naga::valid::Capabilities::empty(),
+    )
+    .validate(&module)
+    .expect("it to be valid");
+    let mut direct3d = String::new();
+    let pipeline = hlsl::PipelineOptions::default();
+    hlsl::Writer::new(&mut direct3d, &hlsl::Options::default(), &pipeline)
+      .write(&module, &info, None)
+      .expect("it to be written for direct3d");
+    msl::write_string(
+      &module,
+      &info,
+      &msl::Options::default(),
+      &msl::PipelineOptions::default(),
+    )
+    .expect("it to be written for metal");
+    spv::write_vec(&module, &info, &spv::Options::default(), None)
+      .expect("it to be written for vulkan");
+  }
 }

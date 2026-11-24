@@ -71,7 +71,8 @@ impl Default for Feel {
 }
 
 /// what there is to know of one control. its value is a part of its whole turn, from zero to
-/// one, and its plain value is that in the units it is read and written in
+/// one, and its plain value is that in the units it is read and written in. it can be handed
+/// to another thread, which is where some systems have a window's
 pub struct Dial {
   /// the value a reset gives it
   pub default: f32,
@@ -79,18 +80,18 @@ pub struct Dial {
   /// lands on whole steps only. none turns smoothly
   pub step: Option<f32>,
   /// a value in plain units
-  pub plain: Box<dyn Fn(f32) -> f32>,
+  pub plain: Box<dyn Fn(f32) -> f32 + Send>,
   /// a plain value as a part of the turn. one past either end comes out as that end
-  pub turn: Box<dyn Fn(f32) -> f32>,
+  pub turn: Box<dyn Fn(f32) -> f32 + Send>,
   /// a value as it is written, with its unit after it or without
-  pub write: Box<dyn Fn(f32, bool) -> String>,
+  pub write: Box<dyn Fn(f32, bool) -> String + Send>,
   /// the value that text stands for, if it is one
   pub read: Read,
   /// how it answers the pointer and the wheel
   pub feel: Feel,
 }
 
-type Read = Box<dyn Fn(&str) -> Option<f32>>;
+type Read = Box<dyn Fn(&str) -> Option<f32> + Send>;
 
 impl std::fmt::Debug for Dial {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
