@@ -1,16 +1,13 @@
-//! flat shapes drawn straight onto a target, over the picture and apart from it: rectangles
-//! and lettering in plain colors, with no light on them and nothing of a [`crate::Look`]
+//! draws [`Flat`] shapes straight onto a target, over the picture and apart from it, with no
+//! light on them and nothing of a [`crate::Look`]
 
 use std::mem::size_of;
 
 use bytemuck::{Pod, Zeroable};
+use controls::flat::{Color, Flat, Shape};
 use glam::Vec2;
 
 use crate::renderer::Place;
-use controls::stroke;
-
-/// a color as it is to look on the target, with how much of what is under it it covers
-pub type Color = [f32; 4];
 
 /// one corner of a shape, which is a rectangle about a middle: lying along the pixels and
 /// drawn onto their edges, or any way round with its edges smoothed
@@ -36,53 +33,19 @@ impl Corner {
   ];
 }
 
-/// shapes to draw, in the order they were added, the later over the earlier. their places
-/// are in the same points as a scene's panel, from its top left
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Flat {
-  corners: Vec<Corner>,
-}
-
-impl Flat {
-  fn shape(&mut self, middle: Vec2, along: Vec2, half: Vec2, color: Color, snap: bool) {
-    let corner = |side: [f32; 2]| Corner {
-      middle: middle.into(),
-      along: along.into(),
-      half: half.into(),
+impl Corner {
+  /// the six corners of the two triangles a shape is drawn as
+  fn of(shape: &Shape) -> [Self; 6] {
+    let corner = |side: [f32; 2]| Self {
+      middle: shape.middle,
+      along: shape.along,
+      half: shape.half,
       side,
-      color,
-      snap: f32::from(u8::from(snap)),
+      color: shape.color,
+      snap: f32::from(u8::from(shape.snap)),
     };
     let sides = [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]];
-    (self.corners).extend([0, 1, 2, 0, 2, 3].map(|side: usize| corner(sides[side])));
-  }
-
-  /// a filled rectangle between two corners. its sides are drawn on pixel edges, so they
-  /// are sharp whatever the scale
-  pub fn rect(&mut self, min: Vec2, max: Vec2, color: Color) {
-    self.shape((min + max) / 2.0, Vec2::X, (max - min) / 2.0, color, true);
-  }
-
-  /// a line `weight` wide from one point to another, with round ends half its width past
-  /// them. its edges are smoothed, whichever way it runs
-  pub fn line(&mut self, from: Vec2, to: Vec2, weight: f32, color: Color) {
-    let along = (to - from).try_normalize().unwrap_or(Vec2::X);
-    let half = Vec2::new(from.distance(to), weight) / 2.0;
-    self.shape((from + to) / 2.0, along, half, color, false);
-  }
-
-  /// lettering in the face of [`crate::parts::legend`], with the top left of its first letter at
-  /// `from`: letters `height` tall with strokes `weight` wide
-  pub fn legend(&mut self, text: &str, from: Vec2, height: f32, weight: f32, color: Color) {
-    let offset = from - Vec2::from(stroke::top_left(text.chars().count(), height));
-    for [start, end] in stroke::lines(text, height) {
-      self.line(
-        offset + Vec2::from(start),
-        offset + Vec2::from(end),
-        weight,
-        color,
-      );
-    }
+    [0, 1, 2, 0, 2, 3].map(|side: usize| corner(sides[side]))
   }
 }
 
@@ -213,11 +176,12 @@ impl FlatRenderer {
       self.held_options = options;
     }
     if *flat != self.held {
-      if flat.corners.len() > self.room {
-        self.room = flat.corners.len().next_power_of_two();
+      let corners: Vec<Corner> = flat.shapes().iter().flat_map(Corner::of).collect();
+      if corners.len() > self.room {
+        self.room = corners.len().next_power_of_two();
         self.corners = corner_buffer(device, self.room);
       }
-      queue.write_buffer(&self.corners, 0, bytemuck::cast_slice(&flat.corners));
+      queue.write_buffer(&self.corners, 0, bytemuck::cast_slice(&corners));
       self.held.clone_from(flat);
     }
   }
@@ -232,7 +196,7 @@ impl FlatRenderer {
     place: Place,
     clip: [u32; 4],
   ) {
-    let count = self.held.corners.len() as u32;
+    let count = self.held.shapes().len() as u32 * 6;
     if count == 0 || clip[2] == 0 || clip[3] == 0 || place.width <= 0.0 || place.height <= 0.0 {
       return;
     }

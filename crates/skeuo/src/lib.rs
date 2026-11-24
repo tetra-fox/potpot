@@ -15,7 +15,8 @@ mod pick;
 mod renderer;
 mod scene;
 
-pub use flat::{Color, Flat, FlatRenderer};
+pub use controls::flat::{Color, Flat};
+pub use flat::FlatRenderer;
 pub use glam;
 pub use material::Material;
 pub use mesh::{Mesh, Vertex};
