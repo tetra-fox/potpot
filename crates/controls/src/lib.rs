@@ -4,7 +4,9 @@
 
 #![warn(missing_docs, missing_debug_implementations)]
 
+pub mod fit;
 pub mod flat;
+pub mod furniture;
 pub mod interaction;
 pub mod sent;
 pub mod stroke;
