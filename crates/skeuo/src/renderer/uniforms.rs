@@ -195,6 +195,44 @@ mod tests {
     fields.map(|(name, at)| (name.to_owned(), at)).into()
   }
 
+  /// each backend is handed the shaders in a language of its own, which naga writes them
+  /// in when a pipeline is made. a shader one of them cannot be written in fails there, on
+  /// the user's machine, so all of them are written here
+  #[test]
+  fn every_shader_can_be_written_for_every_backend() {
+    use ::naga::back::{hlsl, msl, spv};
+
+    let shaders = [
+      ("scene", scene_source()),
+      ("present", PRESENT_SOURCE.to_owned()),
+      ("flat", include_str!("../flat.wgsl").to_owned()),
+    ];
+    for (name, source) in shaders {
+      let module = ::naga::front::wgsl::parse_str(&source).expect("the shader to parse");
+      let info = ::naga::valid::Validator::new(
+        ::naga::valid::ValidationFlags::all(),
+        ::naga::valid::Capabilities::empty(),
+      )
+      .validate(&module)
+      .expect("the shader to be valid");
+
+      let mut direct3d = String::new();
+      let pipeline = hlsl::PipelineOptions::default();
+      hlsl::Writer::new(&mut direct3d, &hlsl::Options::default(), &pipeline)
+        .write(&module, &info, None)
+        .unwrap_or_else(|error| panic!("{name} for direct3d: {error}"));
+      msl::write_string(
+        &module,
+        &info,
+        &msl::Options::default(),
+        &msl::PipelineOptions::default(),
+      )
+      .unwrap_or_else(|error| panic!("{name} for metal: {error}"));
+      spv::write_vec(&module, &info, &spv::Options::default(), None)
+        .unwrap_or_else(|error| panic!("{name} for vulkan: {error}"));
+    }
+  }
+
   #[test]
   fn the_scene_shader_reads_what_it_is_given() {
     let module = shader(&scene_source());

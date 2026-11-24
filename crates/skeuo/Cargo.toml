@@ -12,6 +12,9 @@ glam = { version = "0.30", features = ["bytemuck"] }
 wgpu.workspace = true
 
 [dev-dependencies]
+# turns the shaders into what each graphics api is given, to see that it can be done on any
+# machine. the version wgpu itself is on
+naga = { version = "27", features = ["hlsl-out", "msl-out", "spv-out", "wgsl-in"] }
 png = "0.18"
 pollster = "0.4"
 wgpu = { workspace = true, features = ["vulkan"] }
