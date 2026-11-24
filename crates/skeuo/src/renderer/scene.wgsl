@@ -202,19 +202,33 @@ fn textured(normal: vec3<f32>, world: vec3<f32>, texture: vec4<f32>) -> vec4<f32
 }
 
 // the room around the panel as a mirror would show it, by the way a reflection leaves: a
-// soft window around the light, a dimmer one across from it, a pale band where the walls
-// meet the eye, and under that the lit panel itself. `normal` is the mirror's own facing,
-// which says what side of the room it looks at when the reflection runs straight down
-fn room(leaving: vec3<f32>, normal: vec3<f32>) -> f32 {
-  let window = smoothstep(0.72, 0.9, dot(leaving, globals.toward_light.xyz));
-  let across = vec3<f32>(-globals.toward_light.xy, globals.toward_light.z);
-  let second = smoothstep(0.8, 0.95, dot(leaving, normalize(across))) * 0.25;
-  let band = smoothstep(-0.25, 0.1, leaving.z) * (1.0 - smoothstep(0.1, 0.5, leaving.z));
-  // the walls are brighter on the side the light is on
-  let side = 0.5 + 0.5 * dot(normalize(normal.xy + vec2<f32>(0.0001)), normalize(globals.toward_light.xy));
-  let ceiling = smoothstep(0.3, 1.0, leaving.z) * 0.12;
-  let panel = (1.0 - smoothstep(-0.35, 0.0, leaving.z)) * mix(0.03, 0.2, side * side);
-  return window + second + band * mix(0.12, 0.5, side) + ceiling + panel + 0.02;
+// wide lamp on the light's side that reaches from well up the wall nearly to the ceiling,
+// a small dim one across from it, a ceiling paler than the walls, a bright line where the
+// walls meet the floor, and under that line a floor that is dark at its far edge and
+// lighter toward the panel. `normal` is the mirror's own facing, which says what side of
+// the room it looks at when the reflection runs straight up or down. `crisp` is how sharp
+// the edges of all this are, from a blur to a clean cut, and `tinted` how far the room
+// keeps its colors: a blue ceiling, a warm line and a brown floor
+fn room(leaving: vec3<f32>, normal: vec3<f32>, crisp: f32, tinted: f32) -> vec3<f32> {
+  let aside = normalize(leaving.xy + normal.xy * 0.02 + vec2<f32>(0.00001));
+  let side = dot(aside, normalize(globals.toward_light.xy + vec2<f32>(0.0, 0.0001)));
+  let high = leaving.z;
+  let edge = mix(0.3, 0.025, crisp);
+  let lamp = smoothstep(0.24 - edge, 0.24 + edge, high) * (1.0 - smoothstep(0.82 - edge, 0.82 + edge, high))
+    * smoothstep(0.4 - edge * 2.0, 0.4 + edge * 2.0, side);
+  let second = smoothstep(0.3 - edge, 0.3 + edge, high) * (1.0 - smoothstep(0.6 - edge, 0.6 + edge, high))
+    * smoothstep(0.8 - edge, 0.8 + edge, -side) * 0.3;
+  let ceiling = smoothstep(0.5, 1.0, high) * 0.42;
+  // the walls and the line along their foot are brighter on the side the light is on
+  let lit_side = 0.5 + 0.5 * side;
+  let over = smoothstep(-edge * 0.4, edge * 0.4, high);
+  let line = over * (1.0 - smoothstep(0.07, 0.07 + edge * 2.0, high)) * mix(0.3, 0.95, lit_side);
+  let walls = over * mix(0.04, 0.12, lit_side);
+  let floor = (1.0 - over) * mix(0.015, mix(0.05, 0.24, lit_side * lit_side), smoothstep(-0.05, -0.6, high));
+  let shown = lamp + second + max(ceiling, walls) + line + floor + 0.015;
+  let above = mix(vec3<f32>(1.0, 0.96, 0.88), vec3<f32>(0.6, 0.76, 1.0), smoothstep(0.05, 0.6, high));
+  let hue = mix(vec3<f32>(0.72, 0.56, 0.42), mix(above, vec3<f32>(1.0), lamp), over);
+  return shown * mix(vec3<f32>(1.0), hue * 1.12, tinted);
 }
 
 // the highlight of a surface brushed in circles around an axis: bright where the brushing
@@ -310,11 +324,10 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
   let edge_on = pow(1.0 - seen, 5.0);
   let base = mix(0.05, 0.75, metal);
   let leaving = reflect(-toward_viewer, normal);
-  let mirrored = room(leaving, normal) * (base + (1.0 - base) * edge_on);
-  // metal shows the room in its colors: a blue sky over a pale horizon over brown ground
-  let sky = mix(vec3<f32>(0.62, 0.48, 0.36), vec3<f32>(0.66, 0.8, 1.0), smoothstep(-0.2, 0.35, leaving.z));
-  let hue = mix(sky, vec3<f32>(1.0), smoothstep(0.75, 0.95, dot(leaving, toward_light)));
-  color += tint * mix(vec3<f32>(1.0), hue * 1.15, metal) * mirrored * mirrors * mix(0.6, 1.0, share) * mix(0.5, 1.0, open);
+  // how sharply it mirrors goes with how tight its highlight is
+  let crisp = clamp((log2(max(lit.highlight.y, 1.0)) - 4.0) / 3.6, 0.0, 1.0);
+  let mirrored = room(leaving, normal, crisp, metal) * (base + (1.0 - base) * edge_on);
+  color += tint * mirrored * mirrors * mix(0.6, 1.0, share) * mix(0.5, 1.0, open);
 
   // a pane shows a sheen over the corner of it nearest the light, cut off along a slant,
   // the look of a flat piece of glass with a window somewhere behind the viewer
