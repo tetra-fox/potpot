@@ -7,8 +7,14 @@ description = "a baseview window for a panel of controls, drawn with wgpu by wha
 license = "GPL-3.0-or-later"
 publish = false
 
+[features]
+default = ["nice-plug"]
+# the window as an editor of the nice-plug plugin wrapper
+nice-plug = ["dep:nice-plug"]
+
 [dependencies]
 controls.workspace = true
+nice-plug = { version = "0.4.2", optional = true }
 # the window, which the panel is put in and its input comes from
 baseview = "0.4.2"
 # the layout of what the flat shapes are drawn from

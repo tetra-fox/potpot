@@ -9,6 +9,8 @@
 #![warn(missing_docs, missing_debug_implementations)]
 
 mod flat;
+#[cfg(feature = "nice-plug")]
+pub mod nice_plug;
 mod open;
 mod screen;
 mod skin;
