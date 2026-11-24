@@ -10,7 +10,7 @@ use super::PAINT;
 use crate::mesh::{Mesh, Vertex};
 
 /// the sides the half round at each end of a stroke is cut into
-const END: usize = 6;
+const END: usize = 4;
 
 /// lettering painted flat on the panel in a plain drawn face of capitals and figures,
 /// centered on the origin: letters `height` tall with strokes `weight` wide. anything it

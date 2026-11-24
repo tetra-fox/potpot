@@ -57,15 +57,17 @@ pub fn bezel(inner: f32, outer: f32, height: f32) -> Mesh {
   }));
   profile.push(Vec2::new(inner, height * 0.4));
   profile.push(Vec2::new(inner, 0.0));
-  // only the roll's own steps are shallow enough to round over
-  Mesh::rings(profile.len(), 96, 0.97, |ring, angle| {
+  // a small ring needs fewer sides to look round. only the roll's own steps are shallow
+  // enough to round over
+  let sides = (outer * 3.0).clamp(24.0, 96.0) as u32;
+  Mesh::rings(profile.len(), sides, 0.97, |ring, angle| {
     (Vec2::from_angle(angle) * profile[ring].x).extend(profile[ring].y)
   })
 }
 
-/// a round-headed screw with a slot, `radius` wide
-pub fn screw(radius: f32) -> Mesh {
-  let head = Mesh::lathe(
+/// the round head of a screw, `radius` wide, with nothing cut into it
+pub fn screw_head(radius: f32) -> Mesh {
+  Mesh::lathe(
     &[
       [radius, 0.0],
       [radius * 0.85, radius * 0.35],
@@ -73,12 +75,34 @@ pub fn screw(radius: f32) -> Mesh {
     ],
     16,
     true,
-  );
+  )
+}
+
+/// a round-headed screw with a slot, `radius` wide
+pub fn screw(radius: f32) -> Mesh {
   // the slot is a dark bar standing just proud of the dome, cheaper than cutting into it
-  head.merged(&Mesh::cuboid(
+  screw_head(radius).merged(&Mesh::cuboid(
     Vec3::new(-radius * 0.75, -radius * 0.12, 0.0),
     Vec3::new(radius * 0.75, radius * 0.12, radius * 0.47),
   ))
+}
+
+/// the cross cut into the head of a screw `radius` wide, as two bars standing just proud
+/// of [`screw_head`], to be drawn dark
+pub fn screw_cross(radius: f32) -> Mesh {
+  let bar = |long: f32, wide: f32| {
+    Mesh::cuboid(
+      Vec3::new(-radius * long, -radius * wide, 0.0),
+      Vec3::new(radius * long, radius * wide, radius * 0.47),
+    )
+  };
+  bar(0.58, 0.1).merged(&bar(0.1, 0.58))
+}
+
+/// a slot cut through the panel, `width` by `length` with round ends, as a dark strip
+/// lying on it: an air vent, or the long hole a rack screw goes through
+pub fn slot(width: f32, length: f32) -> Mesh {
+  Outline::new(width, length, width.min(length) / 2.0).strip()
 }
 
 /// the dark gap around a screw of a radius, `gap` wider than its head all around, lying on
