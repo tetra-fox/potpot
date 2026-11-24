@@ -83,8 +83,11 @@ pub struct Dial {
   pub plain: Box<dyn Fn(f32) -> f32 + Send>,
   /// a plain value as a part of the turn. one past either end comes out as that end
   pub turn: Box<dyn Fn(f32) -> f32 + Send>,
-  /// a value as it is written, with its unit after it or without
-  pub write: Box<dyn Fn(f32, bool) -> String + Send>,
+  /// a value as it is written, without its unit
+  pub write: Box<dyn Fn(f32) -> String + Send>,
+  /// the unit it is in, as it is written straight after a value: with a space before it if
+  /// one belongs there
+  pub unit: String,
   /// the value that text stands for, if it is one
   pub read: Read,
 }
@@ -96,6 +99,7 @@ impl std::fmt::Debug for Dial {
     f.debug_struct("Dial")
       .field("default", &self.default)
       .field("step", &self.step)
+      .field("unit", &self.unit)
       .finish_non_exhaustive()
   }
 }
@@ -119,10 +123,8 @@ impl Dial {
       step,
       plain: Box::new(plain),
       turn: Box::new(turn),
-      write: Box::new(move |value, with_unit| {
-        let unit = if with_unit { unit } else { "" };
-        format!("{:.decimals$}{unit}", plain(value))
-      }),
+      write: Box::new(move |value| format!("{:.decimals$}", plain(value))),
+      unit: unit.to_owned(),
       read: Box::new(move |text| {
         let figures = text.trim().trim_end_matches(unit.trim()).trim();
         figures.parse().ok().map(turn)
@@ -192,6 +194,11 @@ pub struct Control {
 pub struct Reading {
   /// where its parameter stands, as a part of its whole turn
   pub value: f32,
+  /// what its readout says: the value as it is written, or what has been typed so far
+  /// while one is being typed
+  pub text: String,
+  /// the unit that goes after it, which is nothing while a value is typed
+  pub unit: String,
 }
 
 /// what a point of the panel belongs to
@@ -548,9 +555,21 @@ impl Interaction {
 
   /// what each control shows with the parameters at `values`, in the controls' order
   pub fn readings(&self, values: &[f32]) -> Vec<Reading> {
-    (self.controls.iter())
-      .map(|control| Reading {
-        value: values[control.parameter],
+    (self.controls.iter().enumerate())
+      .map(|(place, control)| {
+        let (value, dial) = (values[control.parameter], &self.dials[control.parameter]);
+        match self.edit().filter(|edit| edit.control == place) {
+          Some(edit) => Reading {
+            value,
+            text: edit.text.clone(),
+            unit: String::new(),
+          },
+          None => Reading {
+            value,
+            text: (dial.write)(value),
+            unit: dial.unit.clone(),
+          },
+        }
       })
       .collect()
   }
@@ -754,7 +773,7 @@ impl Interaction {
           // has another
           Some(Target::Item(Item::Copy)) => {
             self.state = State::Idle;
-            let value = (dial.write)(values[parameter], true);
+            let value = format!("{}{}", (dial.write)(values[parameter]), dial.unit);
             actions.extend([Action::Copy(value), Action::Redraw]);
           }
           Some(Target::Item(Item::Paste)) => {
@@ -948,7 +967,7 @@ impl Interaction {
 
   fn begin_edit(&mut self, control: usize, values: &[f32], actions: &mut Vec<Action>) {
     let parameter = self.controls[control].parameter;
-    let text = (self.dials[parameter].write)(values[parameter], false);
+    let text = (self.dials[parameter].write)(values[parameter]);
     self.state = State::Edit(Edit {
       control,
       caret: text.chars().count(),
@@ -1029,13 +1048,8 @@ mod tests {
       step,
       plain: Box::new(|value| value * 48.0 - 24.0),
       turn: Box::new(|plain| ((plain + 24.0) / 48.0).clamp(0.0, 1.0)),
-      write: Box::new(|value, unit| {
-        format!(
-          "{:.2}{}",
-          value * 48.0 - 24.0,
-          if unit { " st" } else { "" }
-        )
-      }),
+      write: Box::new(|value| format!("{:.2}", value * 48.0 - 24.0)),
+      unit: " st".to_owned(),
       read: Box::new(|text| {
         let plain: f32 = text.trim().trim_end_matches(" st").parse().ok()?;
         Some(((plain + 24.0) / 48.0).clamp(0.0, 1.0))
@@ -1049,7 +1063,8 @@ mod tests {
       step: None,
       plain: Box::new(|value| value),
       turn: Box::new(|plain| plain.clamp(0.0, 1.0)),
-      write: Box::new(|value, unit| format!("{:.0}{}", value * 100.0, if unit { "%" } else { "" })),
+      write: Box::new(|value| format!("{:.0}", value * 100.0)),
+      unit: "%".to_owned(),
       read: Box::new(|text| {
         let hundredths: f32 = text.trim().trim_end_matches([' ', '%']).parse().ok()?;
         Some((hundredths / 100.0).clamp(0.0, 1.0))
@@ -1076,9 +1091,17 @@ mod tests {
       values: &values,
       scale: 1.0,
     };
-    // each control shows its own parameter
+    // each control shows its own parameter, written as that parameter is
     let readings = panel.readings(&values);
     assert_eq!([readings[0].value, readings[1].value], [1.0, 0.5]);
+    assert_eq!(
+      (readings[0].text.as_str(), readings[0].unit.as_str()),
+      ("100", "%")
+    );
+    assert_eq!(
+      (readings[1].text.as_str(), readings[1].unit.as_str()),
+      ("0.00", " st")
+    );
     // a double click on the second control resets the pitch, which is the first parameter
     let press = |over| Event::Press {
       button: Button::Left,
@@ -1111,13 +1134,39 @@ mod tests {
   }
 
   #[test]
+  fn a_control_reads_what_is_typed_into_it_while_it_is_typed() {
+    let mut bench = Bench::new();
+    let values = bench.values;
+    let said = |bench: &Bench| {
+      let reading = &bench.interaction.readings(&values)[MIX];
+      (reading.text.clone(), reading.unit.clone())
+    };
+    assert_eq!(said(&bench), ("100".to_owned(), "%".to_owned()));
+    // typing begins with the value as it was written, and no unit after it
+    let readout = Some(Target::Readout(MIX));
+    bench.press(readout, 100.0);
+    bench.press(readout, 100.0);
+    assert_eq!(said(&bench), ("100".to_owned(), String::new()));
+    bench.key(Key::Letter('4'));
+    assert_eq!(said(&bench), ("4".to_owned(), String::new()));
+    // the other controls go on reading their values
+    let pitch = &bench.interaction.readings(&values)[PITCH];
+    assert_eq!((pitch.text.as_str(), pitch.unit.as_str()), ("0.00", " st"));
+    bench.key(Key::Escape);
+    assert_eq!(said(&bench), ("100".to_owned(), "%".to_owned()));
+  }
+
+  #[test]
   fn a_linear_dial_is_written_and_read_in_its_plain_units() {
     let dial = Dial::linear([-12.0, 12.0], 0.0, Some(1.0), 1, " st");
     assert_eq!(dial.default, 0.5);
     assert_eq!((dial.plain)(0.75), 6.0);
     assert_eq!((dial.turn)(-6.0), 0.25);
-    assert_eq!((dial.write)(0.75, true), "6.0 st");
-    assert_eq!((dial.write)(0.25, false), "-6.0");
+    assert_eq!(
+      ((dial.write)(0.75), dial.unit.as_str()),
+      ("6.0".to_owned(), " st")
+    );
+    assert_eq!((dial.write)(0.25), "-6.0");
     // read with the unit or without, and with room around either
     for text in ["6", "6.0 st", " 6 st ", "6st"] {
       assert_eq!((dial.read)(text), Some(0.75), "{text}");

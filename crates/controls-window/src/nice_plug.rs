@@ -72,10 +72,10 @@ impl Held {
       plain: Box::new(move |value| unsafe { plain.param.preview_plain(value) }),
       // SAFETY: the same
       turn: Box::new(move |plain| unsafe { turn.param.preview_normalized(plain) }),
-      write: Box::new(move |value, unit| {
-        // SAFETY: the same
-        unsafe { write.param.normalized_value_to_string(value, unit) }
-      }),
+      // SAFETY: the same
+      write: Box::new(move |value| unsafe { write.param.normalized_value_to_string(value, false) }),
+      // SAFETY: the same
+      unit: unsafe { self.param.unit() }.to_owned(),
       // SAFETY: the same
       read: Box::new(move |text| unsafe { read.param.string_to_normalized_value(text) }),
     }

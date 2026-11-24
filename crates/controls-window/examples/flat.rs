@@ -111,20 +111,9 @@ impl Knob {
 }
 
 /// the look: nothing of the graphics device's is needed for flat shapes, so all it keeps is
-/// the knobs and what they are written with
+/// where the knobs are
 struct Look {
   knobs: [Knob; 4],
-  dials: [Dial; 4],
-}
-
-impl Look {
-  fn new() -> Self {
-    let knobs = knobs();
-    Self {
-      dials: [0, 1, 2, 3].map(|knob: usize| knobs[knob].dial()),
-      knobs,
-    }
-  }
 }
 
 /// lettering with its middle at a point
@@ -143,8 +132,7 @@ impl Skin for Look {
   fn prepare(&mut self, _gpu: &Gpu, view: &View, over: &mut Flat) {
     over.rect([0.0, 0.0], SIZE, GROUND);
     centered(over, "FLAT", [SIZE[0] / 2.0, 36.0], 14.0, LINE);
-    let knobs = self.knobs.iter().zip(&self.dials).zip(view.controls);
-    for (control, ((knob, dial), reading)) in knobs.enumerate() {
+    for (control, (knob, reading)) in self.knobs.iter().zip(view.controls).enumerate() {
       let value = reading.value;
       // a ring of short lines, and a pointer that sweeps three quarters of the way round
       let on_ring = |turn: f32, reach: f32| {
@@ -171,7 +159,10 @@ impl Skin for Look {
       over.rect(inside(-1.0), inside(1.0), WELL);
       match edit {
         Some(edit) => typed(over, edit, middle),
-        None => centered(over, &(dial.write)(value, true), middle, LETTERS, INK),
+        None => {
+          let written = format!("{}{}", reading.text, reading.unit);
+          centered(over, &written, middle, LETTERS, INK);
+        }
       }
     }
   }
@@ -231,8 +222,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       feel: knob.feel,
     })
     .collect();
-  let opened = controls_window::open(settings, params, controls, Opening::alone(), |_| {
-    Look::new()
+  let opened = controls_window::open(settings, params, controls, Opening::alone(), |_| Look {
+    knobs: knobs(),
   })?;
   opened.window.run_until_closed()?;
   Ok(())

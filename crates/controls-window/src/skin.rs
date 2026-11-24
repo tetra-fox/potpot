@@ -40,8 +40,11 @@ pub struct View<'a> {
 /// a panel's look: what is drawn for its controls, and where on it they are. the window owns
 /// the target, the menu, the grip and everything about the pointer and the keys
 pub trait Skin: 'static {
-  /// lays out the panel as a view has it, ready to draw. called for every frame before
-  /// [`Skin::draw`], and once before anything is asked of the skin at all. flat shapes for
+  /// lays out the panel as a view has it, ready to draw. called once before anything else
+  /// is asked of the skin, and then once for each frame that is drawn, before
+  /// [`Skin::draw`]. a frame is drawn only when the view differs from the last one drawn:
+  /// when the system wants the window painted and nothing has changed, the last picture is
+  /// put back and the skin is not asked for anything. flat shapes for
   /// the window to draw over the skin's own picture go in `over`, in the panel's points
   fn prepare(&mut self, gpu: &Gpu, view: &View, over: &mut Flat);
 
