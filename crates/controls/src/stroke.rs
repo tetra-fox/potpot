@@ -1,8 +1,7 @@
 //! a plain drawn face of capitals and figures, as the strokes its letters are made of. what
 //! draws them, flat or as a solid, is whoever uses it
 
-/// a place, across and down
-pub type Point = [f32; 2];
+use crate::Point;
 
 /// the strokes of a letter on a grid four wide and six tall: each run of digit pairs is a
 /// line through those points, across and then up from the letter's foot

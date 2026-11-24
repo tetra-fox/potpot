@@ -3,9 +3,9 @@
 //! hit and flat shapes to draw, with a plain look that a panel may change the measures and
 //! colors of
 
+use crate::Point;
 use crate::flat::{Color, Flat};
 use crate::interaction::{Item, Menu, Target};
-use crate::stroke::Point;
 
 /// the menu: a flat list drawn over the picture, with a row for each item
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -2,7 +2,7 @@
 //! is on it, and what sizes a host may give it. a panel's `size` is its width and height in
 //! its own points, whole numbers of them
 
-use crate::stroke::Point;
+use crate::Point;
 
 /// the part of a window so many pixels wide and tall that the panel is drawn on, as its left,
 /// top, width and height: the largest of the panel's own shape that fits, in the middle. a

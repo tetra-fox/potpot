@@ -16,7 +16,7 @@ use nice_plug::params::Params;
 use nice_plug::params::internals::ParamPtr;
 use nice_plug::prelude::{Modifiers, ParentWindowHandle, VirtualKeyCode};
 
-use crate::open::{Opening, Panel, Param, Remembered, Shared, Tell, open};
+use crate::open::{Opening, Param, Remembered, Settings, Shared, Tell, open};
 use crate::skin::{Gpu, Skin};
 
 /// one of a panel's controls bound to one of the plugin's parameters
@@ -122,7 +122,7 @@ impl Error for NotOurs {}
 /// a panel as a nice-plug editor, drawn by the skin `S`
 pub struct Editor<S> {
   params: Arc<dyn Params>,
-  panel: Panel,
+  settings: Settings,
   bound: Vec<Bound>,
   remembered: Arc<Remembered>,
   shared: Arc<Shared>,
@@ -132,7 +132,7 @@ pub struct Editor<S> {
 impl<S> fmt::Debug for Editor<S> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.debug_struct("Editor")
-      .field("panel", &self.panel)
+      .field("settings", &self.settings)
       .field("bound", &self.bound)
       .finish_non_exhaustive()
   }
@@ -144,7 +144,7 @@ impl<S: Skin> Editor<S> {
   /// control is bound to a parameter that is not one of `params`' own
   pub fn new(
     params: Arc<dyn Params>,
-    panel: Panel,
+    settings: Settings,
     bound: Vec<Bound>,
     remembered: Remembered,
     skin: impl Fn(&Gpu) -> S + Send + Sync + 'static,
@@ -156,7 +156,7 @@ impl<S: Skin> Editor<S> {
       Some(control) => Err(NotOurs { control }),
       None => Ok(Self {
         params,
-        panel,
+        settings,
         bound,
         remembered: Arc::new(remembered),
         shared: Arc::default(),
@@ -177,8 +177,8 @@ fn per_point(display_scale: f64) -> f64 {
 }
 
 /// the size the host is told the editor has, in the host's units
-fn reported(panel: &Panel, remembered: &Remembered, shared: &Shared) -> NativeSize<u32> {
-  let size = panel.sized((remembered.get)());
+fn reported(settings: &Settings, remembered: &Remembered, shared: &Shared) -> NativeSize<u32> {
+  let size = settings.sized((remembered.get)());
   NativeSize::from_size(size.into(), shared.display_scale())
 }
 
@@ -212,20 +212,15 @@ impl<S: Skin> nice_plug::editor::Editor for Editor<S> {
       wait_for_parent,
       host_scale: fallback_scale_factor,
       host,
+      remembered: Arc::clone(&self.remembered),
+      shared: Arc::clone(&self.shared),
     };
     let skin = Arc::clone(&self.skin);
-    let opened = open(
-      self.panel.clone(),
-      params,
-      Arc::clone(&self.remembered),
-      Arc::clone(&self.shared),
-      opening,
-      move |gpu| skin(gpu),
-    )?;
+    let opened = open(self.settings.clone(), params, opening, move |gpu| skin(gpu))?;
     Ok(SpawnedEditor {
       handle: Handle {
         tell: opened.tell,
-        panel: self.panel.clone(),
+        settings: self.settings.clone(),
         remembered: Arc::clone(&self.remembered),
         shared: Arc::clone(&self.shared),
       },
@@ -234,20 +229,20 @@ impl<S: Skin> nice_plug::editor::Editor for Editor<S> {
   }
 
   fn size(&self) -> NativeSize<u32> {
-    reported(&self.panel, &self.remembered, &self.shared)
+    reported(&self.settings, &self.remembered, &self.shared)
   }
 
   /// the window may be sized at the panel's own shape, from the smallest to the largest it
   /// is drawn at
   fn resize_hint(&self) -> ResizeHint {
-    let Panel { size, scales, .. } = &self.panel;
+    let Settings { size, scales, .. } = &self.settings;
     ResizeHint {
       preserve_aspect_ratio: true,
       aspect_ratio_width: size[0] as u32,
       aspect_ratio_height: size[1] as u32,
       ..ResizeHint::RESIZABLE.with_min_max_logical_size(
-        Some(self.panel.sized(scales[0])),
-        Some(self.panel.sized(scales[1])),
+        Some(self.settings.sized(scales[0])),
+        Some(self.settings.sized(scales[1])),
       )
     }
   }
@@ -257,7 +252,7 @@ impl<S: Skin> nice_plug::editor::Editor for Editor<S> {
 #[derive(Debug)]
 pub struct Handle {
   tell: Tell,
-  panel: Panel,
+  settings: Settings,
   remembered: Arc<Remembered>,
   shared: Arc<Shared>,
 }
@@ -297,10 +292,16 @@ impl EditorHandle for Handle {
   ) -> Result<(), baseview::Error> {
     // a size the host comes up with is the user's doing, at the host's own frame, and is
     // what the editor opens at from then on. the window's settling as it opens is not
-    let told = reported(&self.panel, &self.remembered, &self.shared);
+    let told = reported(&self.settings, &self.remembered, &self.shared);
     let (given, told) = ([new_size.width, new_size.height], [told.width, told.height]);
     let per_point = per_point(window.size().scale_factor);
-    if let Some(scale) = chosen(given, told, per_point, self.panel.size, self.panel.scales) {
+    if let Some(scale) = chosen(
+      given,
+      told,
+      per_point,
+      self.settings.size,
+      self.settings.scales,
+    ) {
       (self.remembered.set)(scale);
     }
     window.resize(new_size)
@@ -314,15 +315,15 @@ impl EditorHandle for Handle {
     let now = window.size();
     let current = NativeSize::from_logical_or_physical(now.logical, now.physical);
     let limit = |scale: f32| {
-      let limit = self.panel.sized(scale);
+      let limit = self.settings.sized(scale);
       let limit = NativeSize::<u32>::from_size(limit.into(), now.scale_factor);
       [limit.width, limit.height]
     };
     let [width, height] = shaped(
       [new_size.width, new_size.height],
       [current.width, current.height],
-      self.panel.scales.map(limit),
-      self.panel.size,
+      self.settings.scales.map(limit),
+      self.settings.size,
     );
     Some(NativeSize::new(width, height))
   }
@@ -412,7 +413,7 @@ mod tests {
   use controls::interaction::{Readout, Target};
   use nice_plug::prelude::{FloatParam, FloatRange, Param, Params};
 
-  use super::{Arc, Bound, Feel, Gpu, Held, NotOurs, Panel, Remembered, Skin};
+  use super::{Arc, Bound, Feel, Gpu, Held, NotOurs, Remembered, Settings, Skin};
   use crate::skin::View;
 
   #[derive(Params)]
@@ -445,7 +446,7 @@ mod tests {
   }
 
   fn editor(params: Arc<Two>, bound: Vec<Bound>) -> Result<super::Editor<Blank>, NotOurs> {
-    let panel = Panel {
+    let settings = Settings {
       title: String::new(),
       size: [200.0, 100.0],
       scales: [1.0, 2.0],
@@ -460,7 +461,7 @@ mod tests {
       get: Box::new(|| 1.0),
       set: Box::new(|_| {}),
     };
-    super::Editor::new(params, panel, bound, remembered, |_| Blank)
+    super::Editor::new(params, settings, bound, remembered, |_| Blank)
   }
 
   #[test]

@@ -12,15 +12,15 @@ use baseview::{
   EventStatus, HandlerError, MouseButton, MouseEvent, ScrollDelta, TimerHandle, WindowContext,
   WindowEvent, WindowHandler, WindowSize,
 };
+use controls::Point;
 use controls::fit::{fitted, point_at};
 use controls::flat::Flat;
 use controls::interaction::{Action, Button, Edit, Event, Interaction, Key, Menu, Moment, Target};
 use controls::sent::Sent;
-use controls::stroke::Point;
 use tracing::error;
 
 use crate::flat::FlatRenderer;
-use crate::open::{Panel, Param, Remembered, Shared, ToWindow};
+use crate::open::{Param, Remembered, Settings, Shared, ToWindow};
 use crate::screen::Screen;
 use crate::skin::{Gpu, Skin, View};
 
@@ -44,7 +44,7 @@ const PIXELS_PER_LINE: f32 = 20.0;
 
 pub(crate) struct Window<S> {
   context: WindowContext,
-  panel: Panel,
+  settings: Settings,
   /// each parameter's ways to the host, in the panel's order
   hosts: Vec<Host>,
   remembered: Arc<Remembered>,
@@ -239,15 +239,15 @@ impl<S: Skin> State<S> {
 
   /// what of the panel is at one of its points: the menu while it is up, the grip, or
   /// whatever the skin has there
-  fn target_at(&self, panel: &Panel, at: Point) -> Option<Target> {
+  fn target_at(&self, settings: &Settings, at: Point) -> Option<Target> {
     let menu = self.interaction.menu().and_then(|menu| {
-      let corner = panel.menu.corner(menu.at, panel.size);
-      panel.menu.target_at(corner, at)
+      let corner = settings.menu.corner(menu.at, settings.size);
+      settings.menu.target_at(corner, at)
     });
     menu
       .or_else(|| {
-        (panel.grip)
-          .holds(at, panel.size, self.scale(panel.size))
+        (settings.grip)
+          .holds(at, settings.size, self.scale(settings.size))
           .then_some(Target::Grip)
       })
       .or_else(|| self.skin.target_at(at))
@@ -261,7 +261,7 @@ impl<S: Skin> Window<S> {
   )]
   pub(crate) fn new(
     context: WindowContext,
-    panel: Panel,
+    settings: Settings,
     params: Vec<Param>,
     remembered: Arc<Remembered>,
     shared: Arc<Shared>,
@@ -272,7 +272,7 @@ impl<S: Skin> Window<S> {
     let size = context.size();
     shared.set_display_scale(size.scale_factor);
     #[cfg(target_os = "linux")]
-    if top_level && let Err(error) = hint_shape(&context, size.scale_factor, &panel) {
+    if top_level && let Err(error) = hint_shape(&context, size.scale_factor, &settings) {
       error!("the window manager could not be told the editor's shape: {error}");
     }
     #[cfg(not(target_os = "linux"))]
@@ -305,10 +305,10 @@ impl<S: Skin> Window<S> {
         (param.dial, host)
       })
       .unzip();
-    let interaction = Interaction::new(dials, panel.size, panel.readout, panel.scales);
+    let interaction = Interaction::new(dials, settings.size, settings.readout, settings.scales);
     let values: Vec<f32> = hosts.iter().map(|host| (host.value)()).collect();
-    let [_, _, width, height] = fitted(window, panel.size);
-    let scale = (f64::from(width) / size.scale_factor) as f32 / panel.size[0];
+    let [_, _, width, height] = fitted(window, settings.size);
+    let scale = (f64::from(width) / size.scale_factor) as f32 / settings.size[0];
     // the editor opens only if the device can build everything it is drawn with, and lay
     // out the panel as it is. what goes wrong after that is kept for the next frame to
     // find, and drawing stops there
@@ -324,7 +324,7 @@ impl<S: Skin> Window<S> {
         edit: None,
         menu: None,
         scale,
-        pixel: panel.size[0] / width as f32,
+        pixel: settings.size[0] / width as f32,
         pixels: [width, height],
       };
       skin.prepare(&gpu, &view, &mut Flat::default());
@@ -351,7 +351,7 @@ impl<S: Skin> Window<S> {
     let tick = context.create_timer(TICK)?;
     Ok(Self {
       context,
-      panel,
+      settings,
       hosts,
       remembered,
       shared,
@@ -418,7 +418,7 @@ impl<S: Skin> Window<S> {
       return;
     };
     // a window with no size has nothing to draw
-    let stale = state.stale(&self.hosts, self.panel.size);
+    let stale = state.stale(&self.hosts, self.settings.size);
     let asks = !state.stopped && stale && !state.window.contains(&0);
     drop(state);
     if asks {
@@ -437,7 +437,7 @@ impl<S: Skin> Window<S> {
       let moment = Moment {
         now: Instant::now(),
         values: &values,
-        scale: state.scale(self.panel.size),
+        scale: state.scale(self.settings.size),
       };
       let actions = state.interaction.handle(event, moment);
       for action in &actions {
@@ -516,8 +516,8 @@ impl<S: Skin> Window<S> {
     let wanted = self.state().and_then(|mut state| state.wanted_scale.take());
     if let Some(scale) = wanted
       && let Err(error) = self.context.resize(LogicalSize::new(
-        self.panel.size[0] * scale,
-        self.panel.size[1] * scale,
+        self.settings.size[0] * scale,
+        self.settings.size[1] * scale,
       ))
     {
       error!("the editor's window could not be resized: {error}");
@@ -533,7 +533,7 @@ impl<S: Skin> Window<S> {
     }
     // the system wants the window painted and the panel is as it was last drawn, or is no
     // longer drawn at all: the last picture goes back
-    if state.stopped || !state.stale(&self.hosts, self.panel.size) {
+    if state.stopped || !state.stale(&self.hosts, self.settings.size) {
       if let Err(error) = state.screen.again() {
         stop(&mut state.stopped, error);
       }
@@ -545,7 +545,7 @@ impl<S: Skin> Window<S> {
     if state.window.iter().any(|&side| side == 0 || side > most) {
       return Ok(());
     }
-    let (panel, size) = (&self.panel, self.panel.size);
+    let (settings, size) = (&self.settings, self.settings.size);
     let (values, window, scale) = (state.values(&self.hosts), state.window, state.scale(size));
     let State {
       device,
@@ -584,9 +584,9 @@ impl<S: Skin> Window<S> {
     // the skin's own flat shapes, and over them the grip and the menu
     let mut over = Flat::default();
     skin.prepare(&gpu, &seen, &mut over);
-    panel.grip.shapes(&mut over, size, scale);
+    settings.grip.shapes(&mut over, size, scale);
     if let Some(menu) = interaction.menu() {
-      panel.menu.shapes(&mut over, menu, size, pixel);
+      settings.menu.shapes(&mut over, menu, size, pixel);
     }
     flat.prepare(device, queue, &over, size, [width, height]);
     let view = &drawn_on.view;
@@ -682,7 +682,7 @@ impl<S: Skin> Window<S> {
           // the state that was loaded may have the window at another size
           let scale = (self.remembered.get)();
           let differs = self.state().is_some_and(|mut state| {
-            let differs = (scale - state.scale(self.panel.size)).abs() > 0.001;
+            let differs = (scale - state.scale(self.settings.size)).abs() > 0.001;
             if differs {
               state.wanted_scale = Some(scale);
             }
@@ -750,7 +750,7 @@ impl<S: Skin> Window<S> {
         modifiers,
       } => self.handle(|state| {
         let pixel = [position.x as f32, position.y as f32];
-        let size = self.panel.size;
+        let size = self.settings.size;
         let at = point_at(fitted(state.window, size), pixel, size);
         state.pointer = at;
         state.on_window = pixel.map(|along| along / state.display_scale as f32);
@@ -758,7 +758,7 @@ impl<S: Skin> Window<S> {
           at,
           window: state.on_window,
           // only the menu shows what the pointer is over
-          over: (state.interaction.menu()).and_then(|_| state.target_at(&self.panel, at)),
+          over: (state.interaction.menu()).and_then(|_| state.target_at(&self.settings, at)),
           fine: fine(modifiers),
         }
       }),
@@ -770,7 +770,7 @@ impl<S: Skin> Window<S> {
           button,
           at: state.pointer,
           window: state.on_window,
-          over: state.target_at(&self.panel, state.pointer),
+          over: state.target_at(&self.settings, state.pointer),
           reset: modifiers.ctrl() || modifiers.meta(),
         });
       }
@@ -785,7 +785,7 @@ impl<S: Skin> Window<S> {
           ScrollDelta::Pixels { y, .. } => y / PIXELS_PER_LINE,
         };
         self.handle(|state| Event::Wheel {
-          over: state.target_at(&self.panel, state.pointer),
+          over: state.target_at(&self.settings, state.pointer),
           lines,
           fine: fine(modifiers),
         });
@@ -881,7 +881,7 @@ fn adapter_of(backends: wgpu::Backends) -> Result<wgpu::Adapter, wgpu::RequestAd
 fn hint_shape(
   context: &WindowContext,
   display_scale: f64,
-  panel: &Panel,
+  settings: &Settings,
 ) -> Result<(), Box<dyn std::error::Error>> {
   use wgpu::rwh::{HasWindowHandle, RawWindowHandle};
   use x11rb::properties::{AspectRatio, WmSizeHints};
@@ -891,13 +891,13 @@ fn hint_shape(
   };
   let (connection, _) = x11rb::connect(None)?;
   let pixels = |scale: f32| {
-    let size = panel.sized(scale).to_physical::<i32>(display_scale);
+    let size = settings.sized(scale).to_physical::<i32>(display_scale);
     (size.width, size.height)
   };
-  let shape = AspectRatio::new(panel.size[0] as i32, panel.size[1] as i32);
+  let shape = AspectRatio::new(settings.size[0] as i32, settings.size[1] as i32);
   let hints = WmSizeHints {
-    min_size: Some(pixels(panel.scales[0])),
-    max_size: Some(pixels(panel.scales[1])),
+    min_size: Some(pixels(settings.scales[0])),
+    max_size: Some(pixels(settings.scales[1])),
     aspect: Some((shape, shape)),
     ..WmSizeHints::default()
   };

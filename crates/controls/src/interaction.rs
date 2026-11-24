@@ -6,8 +6,7 @@
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
-/// a place on the panel, across and down in its points
-pub type Point = [f32; 2];
+use crate::Point;
 
 /// two presses this close in time and place are a double click
 const DOUBLE_TIME: Duration = Duration::from_millis(400);
@@ -104,6 +103,36 @@ impl std::fmt::Debug for Dial {
 }
 
 impl Dial {
+  /// a control over a straight run of plain values from the first of `range` to the second,
+  /// at `default` to begin with. it is written with so many `decimals` and `unit` after it,
+  /// and read with or without the unit
+  pub fn linear(
+    range: [f32; 2],
+    default: f32,
+    step: Option<f32>,
+    decimals: usize,
+    unit: &'static str,
+  ) -> Self {
+    let [least, most] = range;
+    let plain = move |value: f32| least + value * (most - least);
+    let turn = move |plain: f32| ((plain - least) / (most - least)).clamp(0.0, 1.0);
+    Self {
+      default: turn(default),
+      step,
+      plain: Box::new(plain),
+      turn: Box::new(turn),
+      write: Box::new(move |value, with_unit| {
+        let unit = if with_unit { unit } else { "" };
+        format!("{:.decimals$}{unit}", plain(value))
+      }),
+      read: Box::new(move |text| {
+        let figures = text.trim().trim_end_matches(unit.trim()).trim();
+        figures.parse().ok().map(turn)
+      }),
+      feel: Feel::default(),
+    }
+  }
+
   /// the nearest value that is a whole number of steps, or the value itself for a control
   /// without any
   fn snapped(&self, value: f32) -> f32 {
@@ -982,6 +1011,25 @@ mod tests {
       }),
       feel: Feel::default(),
     }
+  }
+
+  #[test]
+  fn a_linear_dial_is_written_and_read_in_its_plain_units() {
+    let dial = Dial::linear([-12.0, 12.0], 0.0, Some(1.0), 1, " st");
+    assert_eq!(dial.default, 0.5);
+    assert_eq!((dial.plain)(0.75), 6.0);
+    assert_eq!((dial.turn)(-6.0), 0.25);
+    assert_eq!((dial.write)(0.75, true), "6.0 st");
+    assert_eq!((dial.write)(0.25, false), "-6.0");
+    // read with the unit or without, and with room around either
+    for text in ["6", "6.0 st", " 6 st ", "6st"] {
+      assert_eq!((dial.read)(text), Some(0.75), "{text}");
+    }
+    // past an end is that end, and what is not a number is nothing
+    assert_eq!((dial.read)("40"), Some(1.0));
+    assert_eq!((dial.read)("-40 st"), Some(0.0));
+    assert_eq!((dial.read)("six"), None);
+    assert_eq!((dial.read)(""), None);
   }
 
   fn interaction() -> Interaction {

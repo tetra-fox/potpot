@@ -1,7 +1,7 @@
 //! flat shapes to draw straight onto a panel, over whatever picture it has: rectangles, lines
 //! and lettering in plain colors. this is only the list of them, which anything may draw
 
-use crate::stroke::{self, Point};
+use crate::{Point, stroke};
 
 /// a color as it is to look, with how much of what is under it it covers
 pub type Color = [f32; 4];

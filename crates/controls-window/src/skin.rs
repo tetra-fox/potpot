@@ -1,8 +1,8 @@
 //! what a panel looks like, as the window asks it of whoever draws the panel
 
+use controls::Point;
 use controls::flat::Flat;
 use controls::interaction::{Edit, Menu, Target};
-use controls::stroke::Point;
 
 /// the graphics device the window draws with, for a skin to make what it draws from
 #[derive(Clone, Copy, Debug)]

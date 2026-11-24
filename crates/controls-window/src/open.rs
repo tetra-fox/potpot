@@ -3,23 +3,23 @@
 
 use std::fmt;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc;
 
 use baseview::dpi::LogicalSize;
 use baseview::{HandlerError, WindowSettings, WindowWaker};
+use controls::Point;
 use controls::furniture::{GripLook, MenuLook};
 use controls::interaction::{Dial, Key, Readout};
-use controls::stroke::Point;
 use tracing::error;
 use wgpu::rwh::HasWindowHandle;
 
 use crate::skin::{Gpu, Skin};
 use crate::window::{Guarded, Window};
 
-/// what there is to know of a panel before anything of it is drawn
+/// how a panel is shown: what there is to say of its window before anything is drawn in it
 #[derive(Clone, Debug)]
-pub struct Panel {
+pub struct Settings {
   /// what the window is called where it has a title
   pub title: String,
   /// its width and height in its own points, whole numbers of them. the window keeps this
@@ -35,7 +35,7 @@ pub struct Panel {
   pub grip: GripLook,
 }
 
-impl Panel {
+impl Settings {
   /// the window's size in the screen's points at so many times the panel's own
   pub fn sized(&self, scale: f32) -> LogicalSize<f32> {
     LogicalSize::new(self.size[0] * scale, self.size[1] * scale)
@@ -57,6 +57,21 @@ pub struct Param {
   pub end: Box<dyn Fn() + Send>,
 }
 
+impl Param {
+  /// a parameter no host has: it stands where it was last set, from its dial's default on
+  pub fn free(dial: Dial) -> Self {
+    let held = Arc::new(AtomicU32::new(dial.default.to_bits()));
+    let (value, set) = (Arc::clone(&held), held);
+    Self {
+      dial,
+      value: Box::new(move || f32::from_bits(value.load(Ordering::Relaxed))),
+      begin: Box::new(|| {}),
+      set: Box::new(move |to| set.store(to.to_bits(), Ordering::Relaxed)),
+      end: Box::new(|| {}),
+    }
+  }
+}
+
 impl fmt::Debug for Param {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.debug_struct("Param")
@@ -72,6 +87,18 @@ pub struct Remembered {
   pub get: Box<dyn Fn() -> f32 + Send + Sync>,
   /// keeps a scale the user chose
   pub set: Box<dyn Fn(f32) + Send + Sync>,
+}
+
+impl Remembered {
+  /// a size remembered for as long as this is kept and no longer, `scale` to begin with
+  pub fn new(scale: f32) -> Self {
+    let held = Arc::new(AtomicU32::new(scale.to_bits()));
+    let (get, set) = (Arc::clone(&held), held);
+    Self {
+      get: Box::new(move || f32::from_bits(get.load(Ordering::Relaxed))),
+      set: Box::new(move |scale| set.store(scale.to_bits(), Ordering::Relaxed)),
+    }
+  }
 }
 
 impl fmt::Debug for Remembered {
@@ -170,16 +197,22 @@ pub struct Opening<'a, W> {
   pub host_scale: Option<f64>,
   /// the host's side of resizing, if there is a host
   pub host: Option<baseview::host::Host>,
+  /// where the size the user chooses is kept
+  pub remembered: Arc<Remembered>,
+  /// what the opener wants to know of the window while it is open and after
+  pub shared: Arc<Shared>,
 }
 
 impl Opening<'static, baseview::PlatformHandle> {
-  /// a window of its own, with no host
+  /// a window of its own, with no host, which opens at the panel's own size
   pub fn alone() -> Self {
     Self {
       parent: None,
       wait_for_parent: false,
       host_scale: None,
       host: None,
+      remembered: Arc::new(Remembered::new(1.0)),
+      shared: Arc::default(),
     }
   }
 }
@@ -266,10 +299,8 @@ impl fmt::Debug for Opened {
 /// with, and from then on nothing that goes wrong with the device or the skin is let out
 /// into the opener's process: it is logged and the window keeps its last picture
 pub fn open<S: Skin, W: HasWindowHandle>(
-  panel: Panel,
+  settings: Settings,
   params: Vec<Param>,
-  remembered: Arc<Remembered>,
-  shared: Arc<Shared>,
   opening: Opening<'_, W>,
   skin: impl FnOnce(&Gpu) -> S + Send + 'static,
 ) -> Result<Opened, baseview::Error> {
@@ -278,6 +309,8 @@ pub fn open<S: Skin, W: HasWindowHandle>(
     wait_for_parent,
     host_scale,
     host,
+    remembered,
+    shared,
   } = opening;
   // baseview 0.4.2 makes a child window at the scale of the window it goes in, but in a
   // host that is aware of each monitor's scale the older way it reports the scale the host
@@ -301,21 +334,21 @@ pub fn open<S: Skin, W: HasWindowHandle>(
   // with no window to go in it is the window manager's to size, which is held to the sizes
   // the panel is drawn at. in a host's window it takes the size the host gives it
   let top_level = parent.is_none() && !wait_for_parent;
-  let settings = WindowSettings::new()
-    .with_title(panel.title.clone())
-    .with_size(panel.sized((remembered.get)()))
-    .with_min_size::<LogicalSize<f32>>(top_level.then(|| panel.sized(panel.scales[0])))
-    .with_max_size::<LogicalSize<f32>>(top_level.then(|| panel.sized(panel.scales[1])))
+  let made = WindowSettings::new()
+    .with_title(settings.title.clone())
+    .with_size(settings.sized((remembered.get)()))
+    .with_min_size::<LogicalSize<f32>>(top_level.then(|| settings.sized(settings.scales[0])))
+    .with_max_size::<LogicalSize<f32>>(top_level.then(|| settings.sized(settings.scales[1])))
     .with_parent(parent)
     .with_wait_for_parent(wait_for_parent)
     .with_fallback_scale_factor(host_scale);
   let (to_window, told) = mpsc::channel();
   let window = baseview::Window::create_with_host(
-    settings,
+    made,
     move |context| -> Result<Guarded<S>, HandlerError> {
       Guarded::new(|| {
         Window::new(
-          context, panel, params, remembered, shared, told, top_level, skin,
+          context, settings, params, remembered, shared, told, top_level, skin,
         )
       })
       // baseview hands on an error of the system's in place of this one
