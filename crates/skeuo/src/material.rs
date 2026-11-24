@@ -31,6 +31,9 @@ pub struct Material {
   pub grain: f32,
   /// how deeply the surface is brushed in straight lines along x, like a sheet of aluminum
   pub brushed: f32,
+  /// how worn the surface is: blotches of grime, and patches of fine scratches that catch
+  /// the light. like the grain it is made up on the spot from where a point is on the panel
+  pub wear: f32,
 }
 
 impl Material {
@@ -48,6 +51,7 @@ impl Material {
       glaze: 0.0,
       grain: 0.0,
       brushed: 0.0,
+      wear: 0.0,
     }
   }
 

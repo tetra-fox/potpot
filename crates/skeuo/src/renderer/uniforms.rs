@@ -97,7 +97,7 @@ impl Placed {
         material.spun,
         material.glaze,
       ],
-      texture: [material.grain, material.brushed, 0.0, 0.0],
+      texture: [material.grain, material.brushed, material.wear, 0.0],
     }
   }
 

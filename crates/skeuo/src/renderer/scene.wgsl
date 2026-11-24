@@ -50,7 +50,7 @@ struct Placed {
   // x how much it mirrors, y how far it is metal, z how far its highlight is spun, w the
   // size of the pane it is or zero
   @location(8) finish: vec4<f32>,
-  // x how grainy it is, y how deeply brushed
+  // x how grainy it is, y how deeply brushed, z how worn
   @location(9) texture: vec4<f32>,
 }
 
@@ -180,8 +180,8 @@ fn rolling(at: vec2<f32>) -> f32 {
 
 // the way a surface faces once its texture has bent it, and in w how much lighter or
 // darker the texture makes that spot. the texture is made from where the spot is on the
-// panel: grain in every direction at about the size of a pixel, and brushing in long
-// streaks along x that only tilt the surface across themselves
+// panel: grain in every direction at about the size of a pixel, brushing in long streaks
+// along x that only tilt the surface across themselves, and the marks of wear
 fn textured(normal: vec3<f32>, world: vec3<f32>, texture: vec4<f32>) -> vec4<f32> {
   var bent = normal;
   var shade = 0.0;
@@ -197,6 +197,22 @@ fn textured(normal: vec3<f32>, world: vec3<f32>, texture: vec4<f32>) -> vec4<f32
     let hair = rolling(vec2<f32>(world.x * 0.04 + 9.0, world.y * 7.3)) - 0.5;
     bent.y += (streak * 0.14 + hair * 0.1) * texture.y;
     shade += (streak * 0.045 + hair * 0.035) * texture.y;
+  }
+  if texture.z > 0.0 {
+    // slow blotches of grime, and here and there a patch of fine scratches running one of
+    // three ways, each a hairline that catches the light
+    let blotch = rolling(world.xy * 0.03 + 5.0) * 0.65 + rolling(world.xy * 0.11 + 31.0) * 0.35;
+    shade -= smoothstep(0.4, 0.85, blotch) * 0.13 * texture.z;
+    for (var way = 0; way < 3; way++) {
+      let turn = 0.5 + f32(way) * 1.9;
+      let across = vec2<f32>(cos(turn), sin(turn));
+      let along = vec2<f32>(-across.y, across.x);
+      let at = vec2<f32>(dot(world.xy, along) * 0.07, dot(world.xy, across) * 2.3) + f32(way) * 17.0;
+      let worn = smoothstep(0.6, 0.8, rolling(world.xy * 0.023 + f32(way) * 43.0));
+      let hairline = smoothstep(0.88, 0.97, rolling(at)) * worn * texture.z;
+      bent += vec3<f32>(across * hairline * 0.12, 0.0);
+      shade += hairline * 0.03;
+    }
   }
   return vec4<f32>(normalize(bent), shade);
 }
