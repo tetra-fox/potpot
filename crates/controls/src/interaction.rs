@@ -9,23 +9,66 @@ use std::time::{Duration, Instant};
 /// a place on the panel, across and down in its points
 pub type Point = [f32; 2];
 
-/// how far a control turns for each point the pointer is dragged up, as a part of its whole
-/// turn
-const TURN_PER_POINT: f32 = 1.0 / 200.0;
-/// a control that moves in steps is dragged at least this many points for each of them. one
-/// with few steps is dragged further for each, at the pace of a control without any
-const POINTS_PER_STEP: f32 = 5.0;
-/// how much less a control moves while the fine key is held
-const FINE: f32 = 0.1;
-/// how far one line of the wheel turns a control that has no step, as a part of its whole turn
-const WHEEL_TURN: f32 = 0.05;
 /// two presses this close in time and place are a double click
 const DOUBLE_TIME: Duration = Duration::from_millis(400);
 const DOUBLE_REACH: f32 = 4.0;
 /// a turn of the wheel this long after the last belongs to a new gesture
 const WHEEL_REST: Duration = Duration::from_millis(400);
-/// the window is no smaller and no larger than this many times its own size
-pub const SCALES: [f32; 2] = [0.75, 3.0];
+/// the way the pointer is dragged to turn a control, and how far that turns it
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum Drag {
+  /// up the panel turns it on and down turns it back, by `turn` of its whole turn for each
+  /// point
+  Up {
+    /// the part of the whole turn one point is
+    turn: f32,
+  },
+}
+
+impl Drag {
+  /// how far the pointer has gone the way that turns the control on, in points
+  fn travel(self, from: Point, to: Point) -> f32 {
+    match self {
+      Self::Up { .. } => from[1] - to[1],
+    }
+  }
+
+  /// how far one point of that turns it
+  fn turn(self) -> f32 {
+    match self {
+      Self::Up { turn } => turn,
+    }
+  }
+}
+
+/// how a control answers the pointer and the wheel
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Feel {
+  /// how it is dragged
+  pub drag: Drag,
+  /// a control that moves in steps is dragged at least this many points for each of them.
+  /// one with few steps is dragged further for each, at the pace of a control without any
+  pub points_per_step: f32,
+  /// how much less it moves while the fine key is held
+  pub fine: f32,
+  /// how far one line of the wheel turns a control that has no step, as a part of its whole
+  /// turn
+  pub wheel: f32,
+}
+
+impl Default for Feel {
+  /// two hundred points up for the whole turn, five at least to a step, a tenth of that
+  /// with the fine key, and twenty lines of the wheel for the whole turn
+  fn default() -> Self {
+    Self {
+      drag: Drag::Up { turn: 1.0 / 200.0 },
+      points_per_step: 5.0,
+      fine: 0.1,
+      wheel: 0.05,
+    }
+  }
+}
 
 /// what there is to know of one control. its value is a part of its whole turn, from zero to
 /// one, and its plain value is that in the units it is read and written in
@@ -43,6 +86,8 @@ pub struct Dial {
   pub write: Box<dyn Fn(f32, bool) -> String>,
   /// the value that text stands for, if it is one
   pub read: Read,
+  /// how it answers the pointer and the wheel
+  pub feel: Feel,
 }
 
 type Read = Box<dyn Fn(&str) -> Option<f32>>;
@@ -52,6 +97,7 @@ impl std::fmt::Debug for Dial {
     f.debug_struct("Dial")
       .field("default", &self.default)
       .field("step", &self.step)
+      .field("feel", &self.feel)
       .finish_non_exhaustive()
   }
 }
@@ -74,8 +120,8 @@ impl Dial {
   /// how far a point of dragging turns it
   fn turn_per_point(&self) -> f32 {
     match self.step {
-      Some(step) => TURN_PER_POINT.min(self.step_turn(step) / POINTS_PER_STEP),
-      None => TURN_PER_POINT,
+      Some(step) => (self.feel.drag.turn()).min(self.step_turn(step) / self.feel.points_per_step),
+      None => self.feel.drag.turn(),
     }
   }
 
@@ -83,8 +129,8 @@ impl Dial {
   /// step further, and without it the next whole steps that way
   fn wheeled(&self, value: f32, lines: f32, fine: bool) -> f32 {
     let turned = match self.step {
-      None => value + lines * WHEEL_TURN * if fine { FINE } else { 1.0 },
-      Some(step) if fine => (self.turn)((self.plain)(value) + lines * step * FINE),
+      None => value + lines * self.feel.wheel * if fine { self.feel.fine } else { 1.0 },
+      Some(step) if fine => (self.turn)((self.plain)(value) + lines * step * self.feel.fine),
       Some(step) => {
         let steps = (self.plain)(value) / step;
         // from between two steps the first line goes to the one that way, and no further
@@ -104,9 +150,10 @@ impl Dial {
 
 /// what a point of the panel belongs to
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Target {
-  /// the knob of the control at this place among the panel's
-  Knob(usize),
+  /// the control at this place among the panel's: the part of it that is turned
+  Control(usize),
   /// the window that control's value is written in
   Readout(usize),
   /// the menu, between and around its rows
@@ -244,11 +291,12 @@ pub enum Event {
 /// what is to be done about an event, by whoever has the host and the window
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
-  /// the host is told a gesture on the control begins, then its values, then that it ends
+  /// the host is told a gesture on a parameter begins, then its values, then that it ends.
+  /// the parameter is known by its place among the panel's, which is its control's
   Begin(usize),
-  /// the control is set to a value
+  /// the parameter is set to a value
   Set(usize, f32),
-  /// the gesture on the control is over
+  /// the gesture on the parameter is over
   End(usize),
   /// the window takes the keys
   Focus,
@@ -365,7 +413,8 @@ enum State {
     turned: f32,
     /// the value last shown
     value: f32,
-    from: f32,
+    /// where the pointer last was
+    from: Point,
     /// whether the fine key was held at the last move
     fine: bool,
     begun: bool,
@@ -386,7 +435,7 @@ enum State {
 pub struct Moment<'a> {
   /// when the event came
   pub now: Instant,
-  /// where each control stands
+  /// where each parameter stands
   pub values: &'a [f32],
   /// how many times its own size the window is
   pub scale: f32,
@@ -405,16 +454,25 @@ pub struct Interaction {
   wheel: Option<(usize, f32, Instant)>,
   /// what the clipboard was asked for, until its text comes
   awaiting: Option<Paste>,
-  /// what a readout can show of a typed value: how many letters, and which
-  room: usize,
-  shows: fn(char) -> bool,
+  readout: Readout,
+  /// the least and the most times its own size the window is pulled to
+  scales: [f32; 2],
+}
+
+/// what a readout can show of a value that is typed into it
+#[derive(Clone, Copy, Debug)]
+pub struct Readout {
+  /// how many letters it has room for
+  pub room: usize,
+  /// whether it has a letter for something typed
+  pub shows: fn(char) -> bool,
 }
 
 impl Interaction {
-  /// the behaviour of a panel `size` across and down with the controls the dials describe. a
-  /// value is typed in a readout with room for `room` letters, of those that `shows` says it
-  /// has
-  pub fn new(dials: Vec<Dial>, size: Point, room: usize, shows: fn(char) -> bool) -> Self {
+  /// the behaviour of a panel `size` across and down with the controls the dials describe,
+  /// whose readouts are all like `readout`. the grip pulls the window from the first of
+  /// `scales` times its own size to the second
+  pub fn new(dials: Vec<Dial>, size: Point, readout: Readout, scales: [f32; 2]) -> Self {
     Self {
       dials,
       size,
@@ -422,8 +480,8 @@ impl Interaction {
       pressed: None,
       wheel: None,
       awaiting: None,
-      room,
-      shows,
+      readout,
+      scales,
     }
   }
 
@@ -537,9 +595,9 @@ impl Interaction {
           *turned = *value;
         }
         *fine = now_fine;
-        let pace = dial.turn_per_point() * if now_fine { FINE } else { 1.0 };
-        *turned = (*turned + (*from - at[1]) * pace).clamp(0.0, 1.0);
-        *from = at[1];
+        let pace = dial.turn_per_point() * if now_fine { dial.feel.fine } else { 1.0 };
+        *turned = (*turned + dial.feel.drag.travel(*from, at) * pace).clamp(0.0, 1.0);
+        *from = at;
         let shown = if now_fine {
           *turned
         } else {
@@ -568,7 +626,7 @@ impl Interaction {
         } else {
           down
         };
-        let wanted = further.clamp(SCALES[0], SCALES[1]);
+        let wanted = further.clamp(self.scales[0], self.scales[1]);
         if wanted != *scale {
           *scale = wanted;
           actions.push(Action::Scale(wanted));
@@ -647,15 +705,15 @@ impl Interaction {
     }
 
     match over {
-      Some(Target::Knob(control)) if reset || double => {
+      Some(Target::Control(control)) if reset || double => {
         actions.extend(gesture(control, self.dials[control].default));
       }
-      Some(Target::Knob(control)) => {
+      Some(Target::Control(control)) => {
         self.state = State::Drag {
           control,
           turned: values[control],
           value: values[control],
-          from: at[1],
+          from: at,
           fine: false,
           begun: false,
         };
@@ -676,7 +734,7 @@ impl Interaction {
   fn pressed_right(&mut self, at: Point, over: Option<Target>, actions: &mut Vec<Action>) {
     self.commit(actions);
     match over {
-      Some(Target::Knob(control) | Target::Readout(control))
+      Some(Target::Control(control) | Target::Readout(control))
         if matches!(self.state, State::Idle | State::Menu(_)) =>
       {
         self.state = State::Menu(Menu {
@@ -699,7 +757,8 @@ impl Interaction {
     moment: Moment,
     actions: &mut Vec<Action>,
   ) {
-    let (State::Idle, Some(Target::Knob(control) | Target::Readout(control))) = (&self.state, over)
+    let (State::Idle, Some(Target::Control(control) | Target::Readout(control))) =
+      (&self.state, over)
     else {
       return;
     };
@@ -724,7 +783,7 @@ impl Interaction {
   }
 
   fn keyed(&mut self, key: Key, actions: &mut Vec<Action>) {
-    let (room, shows) = (self.room, self.shows);
+    let Readout { room, shows } = self.readout;
     let edit = match &mut self.state {
       State::Edit(edit) => edit,
       State::Menu(_) => {
@@ -799,7 +858,7 @@ impl Interaction {
     let text = text.trim();
     match (wanted, &mut self.state) {
       (Paste::Typed(control), State::Edit(edit)) if edit.control == control => {
-        edit.put(text, self.room, self.shows);
+        edit.put(text, self.readout.room, self.readout.shows);
         actions.push(Action::Redraw);
       }
       // typing ended before the text came
@@ -886,6 +945,7 @@ mod tests {
   const MIX: usize = 2;
   const STEPPED: usize = 3;
   const SIZE: Point = [500.0, 250.0];
+  const SCALES: [f32; 2] = [0.75, 3.0];
 
   fn shift(step: Option<f32>) -> Dial {
     Dial {
@@ -904,6 +964,7 @@ mod tests {
         let plain: f32 = text.trim().trim_end_matches(" st").parse().ok()?;
         Some(((plain + 24.0) / 48.0).clamp(0.0, 1.0))
       }),
+      feel: Feel::default(),
     }
   }
 
@@ -918,14 +979,17 @@ mod tests {
         let hundredths: f32 = text.trim().trim_end_matches([' ', '%']).parse().ok()?;
         Some((hundredths / 100.0).clamp(0.0, 1.0))
       }),
+      feel: Feel::default(),
     }
   }
 
   fn interaction() -> Interaction {
     let dials = vec![shift(None), shift(None), mix(), shift(Some(1.0))];
-    Interaction::new(dials, SIZE, ROOM, |letter| {
-      letter.is_ascii_digit() || " +-.,%st".contains(letter)
-    })
+    let readout = Readout {
+      room: ROOM,
+      shows: |letter| letter.is_ascii_digit() || " +-.,%st".contains(letter),
+    };
+    Interaction::new(dials, SIZE, readout, SCALES)
   }
 
   impl Bench {
@@ -1041,7 +1105,7 @@ mod tests {
   #[test]
   fn a_drag_is_one_gesture_from_the_first_move_to_the_release() {
     let mut bench = Bench::new();
-    assert_eq!(bench.press(Some(Target::Knob(PITCH)), 100.0), []);
+    assert_eq!(bench.press(Some(Target::Control(PITCH)), 100.0), []);
     let first = bench.drag(80.0, false);
     assert_eq!(first[0], Begin(PITCH));
     assert!(close(set(&first[1..], PITCH), 0.6));
@@ -1054,7 +1118,7 @@ mod tests {
   #[test]
   fn a_click_that_does_not_move_tells_the_host_nothing() {
     let mut bench = Bench::new();
-    assert_eq!(bench.press(Some(Target::Knob(PITCH)), 100.0), []);
+    assert_eq!(bench.press(Some(Target::Control(PITCH)), 100.0), []);
     assert_eq!(bench.drag(100.0, false), []);
     assert_eq!(bench.release(), []);
   }
@@ -1062,7 +1126,7 @@ mod tests {
   #[test]
   fn the_fine_key_changes_the_pace_of_a_drag_and_not_its_place() {
     let mut bench = Bench::new();
-    bench.press(Some(Target::Knob(PITCH)), 100.0);
+    bench.press(Some(Target::Control(PITCH)), 100.0);
     assert!(close(set(&bench.drag(80.0, false)[1..], PITCH), 0.6));
     // held from here: the same way again moves a tenth as far, from where the knob is
     assert!(close(set(&bench.drag(60.0, true), PITCH), 0.61));
@@ -1074,7 +1138,7 @@ mod tests {
   #[test]
   fn a_drag_stops_at_the_end_of_the_turn_and_comes_back_at_once() {
     let mut bench = Bench::new();
-    bench.press(Some(Target::Knob(PITCH)), 300.0);
+    bench.press(Some(Target::Control(PITCH)), 300.0);
     assert_eq!(set(&bench.drag(0.0, false)[1..], PITCH), 1.0);
     // further the same way there is nothing new to tell the host
     assert_eq!(bench.drag(-50.0, false), []);
@@ -1090,7 +1154,7 @@ mod tests {
   fn a_stepped_control_is_dragged_from_step_to_step_and_says_so_once_each() {
     // five points of dragging to a semitone: the whole 48 take 240
     let mut bench = Bench::new();
-    bench.press(Some(Target::Knob(STEPPED)), 100.0);
+    bench.press(Some(Target::Control(STEPPED)), 100.0);
     // not yet half way to the next step
     assert_eq!(bench.drag(98.0, false), []);
     let first = bench.drag(97.0, false);
@@ -1114,7 +1178,7 @@ mod tests {
   #[test]
   fn the_fine_key_turns_a_stepped_control_smoothly_from_where_it_shows() {
     let mut bench = Bench::new();
-    bench.press(Some(Target::Knob(STEPPED)), 100.0);
+    bench.press(Some(Target::Control(STEPPED)), 100.0);
     // three points on, the knob shows a semitone though the pointer has taken it 0.6
     bench.drag(97.0, false);
     // the key going down moves nothing
@@ -1133,7 +1197,7 @@ mod tests {
     for (y, lands) in [(99.0, 8.0), (101.0, 7.0)] {
       let mut bench = Bench::new();
       bench.values[STEPPED] = semitones(7.39);
-      bench.press(Some(Target::Knob(STEPPED)), 100.0);
+      bench.press(Some(Target::Control(STEPPED)), 100.0);
       // a point either way is a fifth of a semitone, and what shows is the step nearest that
       let moved = bench.drag(y, false);
       assert_eq!(
@@ -1145,7 +1209,7 @@ mod tests {
     // with the fine key it turns on from where it is
     let mut bench = Bench::new();
     bench.values[STEPPED] = semitones(7.39);
-    bench.press(Some(Target::Knob(STEPPED)), 100.0);
+    bench.press(Some(Target::Control(STEPPED)), 100.0);
     assert!(close(
       set(&bench.drag(90.0, true)[1..], STEPPED),
       semitones(7.59)
@@ -1155,7 +1219,7 @@ mod tests {
   #[test]
   fn the_wheel_takes_a_stepped_control_a_step_and_onto_one() {
     let mut bench = Bench::new();
-    let knob = Target::Knob(STEPPED);
+    let knob = Target::Control(STEPPED);
     assert_eq!(
       bench.wheel(knob, 1.0, false)[1..],
       [Set(STEPPED, semitones(1.0))]
@@ -1328,7 +1392,7 @@ mod tests {
   #[test]
   fn a_double_click_on_a_knob_resets_it() {
     let mut bench = Bench::new();
-    let knob = Some(Target::Knob(MIX));
+    let knob = Some(Target::Control(MIX));
     bench.press(knob, 100.0);
     bench.release();
     assert_eq!(
@@ -1347,7 +1411,7 @@ mod tests {
   #[test]
   fn presses_too_far_apart_are_not_a_double_click() {
     let mut bench = Bench::new();
-    let knob = Some(Target::Knob(MIX));
+    let knob = Some(Target::Control(MIX));
     bench.press(knob, 100.0);
     bench.release();
     assert_eq!(
@@ -1360,7 +1424,7 @@ mod tests {
     assert_eq!(bench.press(knob, 110.0), []);
     bench.release();
     // or on something else
-    assert_eq!(bench.press(Some(Target::Knob(PITCH)), 110.0), []);
+    assert_eq!(bench.press(Some(Target::Control(PITCH)), 110.0), []);
   }
 
   #[test]
@@ -1370,7 +1434,7 @@ mod tests {
       button: Button::Left,
       at: [100.0, 100.0],
       window: [100.0, 100.0],
-      over: Some(Target::Knob(PITCH)),
+      over: Some(Target::Control(PITCH)),
       reset: true,
     });
     assert_eq!(actions, [Begin(PITCH), Set(PITCH, 0.5), End(PITCH)]);
@@ -1379,7 +1443,7 @@ mod tests {
   #[test]
   fn a_burst_of_the_wheel_is_one_gesture() {
     let mut bench = Bench::new();
-    let knob = Target::Knob(STEPPED);
+    let knob = Target::Control(STEPPED);
     // a semitone of the 48 the stepped shift covers for each line
     let first = bench.wheel(knob, 1.0, false);
     assert_eq!(first[0], Begin(STEPPED));
@@ -1406,7 +1470,7 @@ mod tests {
   #[test]
   fn the_wheel_moving_on_or_a_press_ends_its_gesture() {
     let mut bench = Bench::new();
-    bench.wheel(Target::Knob(PITCH), 1.0, false);
+    bench.wheel(Target::Control(PITCH), 1.0, false);
     let next = bench.wheel(Target::Readout(MIX), -1.0, false);
     assert_eq!(next[..2], [End(PITCH), Begin(MIX)]);
     assert!(close(set(&next[2..], MIX), 0.95));
@@ -1425,10 +1489,10 @@ mod tests {
   #[test]
   fn closing_ends_whatever_gesture_is_open() {
     let mut bench = Bench::new();
-    bench.press(Some(Target::Knob(PITCH)), 100.0);
+    bench.press(Some(Target::Control(PITCH)), 100.0);
     bench.drag(90.0, false);
     assert_eq!(bench.send(Event::Closed), [End(PITCH)]);
-    bench.wheel(Target::Knob(MIX), -1.0, false);
+    bench.wheel(Target::Control(MIX), -1.0, false);
     assert_eq!(bench.send(Event::Closed), [End(MIX)]);
     assert_eq!(bench.send(Event::Closed), []);
   }
@@ -1532,7 +1596,7 @@ mod tests {
       button: Button::Left,
       at: [100.0, 100.0],
       window: [100.0, 100.0],
-      over: Some(Target::Knob(PITCH)),
+      over: Some(Target::Control(PITCH)),
       reset: false,
     };
     interaction.handle(press, moment);
@@ -1546,18 +1610,21 @@ mod tests {
     assert!(close(set(&actions[1..], PITCH), 0.3));
     interaction.handle(Event::Release(Button::Left), moment);
     let wheel = Event::Wheel {
-      over: Some(Target::Knob(PITCH)),
+      over: Some(Target::Control(PITCH)),
       lines: 1.0,
       fine: false,
     };
     let actions = interaction.handle(wheel, moment);
-    assert!(close(set(&actions[1..], PITCH), 0.2 + WHEEL_TURN));
+    assert!(close(
+      set(&actions[1..], PITCH),
+      0.2 + Feel::default().wheel
+    ));
   }
 
   #[test]
   fn a_double_click_that_goes_on_moving_resets_and_does_not_drag() {
     let mut bench = Bench::new();
-    let knob = Some(Target::Knob(PITCH));
+    let knob = Some(Target::Control(PITCH));
     bench.press(knob, 100.0);
     bench.drag(99.0, false);
     bench.release();
@@ -1572,7 +1639,7 @@ mod tests {
     assert_eq!(bench.release(), []);
     // nor does the wheel take the reset's gesture on: its own begins and ends
     assert_eq!(
-      bench.wheel(Target::Knob(PITCH), 1.0, false)[0],
+      bench.wheel(Target::Control(PITCH), 1.0, false)[0],
       Begin(PITCH)
     );
   }
@@ -1703,7 +1770,7 @@ mod tests {
     let mut bench = Bench::new();
     // the pitch standing a way off its default, as the bench's readings have it
     bench.values[PITCH] = 0.2;
-    let copied = choose(&mut bench, Target::Knob(PITCH), Item::Copy);
+    let copied = choose(&mut bench, Target::Control(PITCH), Item::Copy);
     assert_eq!(copied, [Action::Copy("-14.40 st".to_owned()), Redraw]);
     assert!(bench.interaction.menu().is_none());
     // onto the formant, which has the same unit: one gesture once the text has come
@@ -1722,10 +1789,10 @@ mod tests {
     );
 
     assert_eq!(
-      choose(&mut bench, Target::Knob(MIX), Item::Copy)[0],
+      choose(&mut bench, Target::Control(MIX), Item::Copy)[0],
       Action::Copy("100%".to_owned())
     );
-    choose(&mut bench, Target::Knob(MIX), Item::Paste);
+    choose(&mut bench, Target::Control(MIX), Item::Paste);
     let pasted = bench.send(Event::Clipboard(Some("40%\n".to_owned())));
     assert_eq!(pasted, [Begin(MIX), Set(MIX, 0.4), End(MIX)]);
   }
@@ -1740,12 +1807,12 @@ mod tests {
       Some("  \n"),
       None,
     ] {
-      choose(&mut bench, Target::Knob(MIX), Item::Paste);
+      choose(&mut bench, Target::Control(MIX), Item::Paste);
       let pasted = bench.send(Event::Clipboard(text.map(str::to_owned)));
       assert_eq!(pasted, [], "{text:?}");
     }
     // nor a mix on a shift
-    choose(&mut bench, Target::Knob(PITCH), Item::Paste);
+    choose(&mut bench, Target::Control(PITCH), Item::Paste);
     assert_eq!(bench.send(Event::Clipboard(Some("40%".to_owned()))), []);
   }
 
@@ -1803,7 +1870,7 @@ mod tests {
     bench.release();
     bench.after(Duration::from_secs(1), Event::Tick);
     assert_eq!(
-      bench.press(Some(Target::Knob(MIX)), 100.0),
+      bench.press(Some(Target::Control(MIX)), 100.0),
       [Begin(PITCH), Set(PITCH, 1.0), End(PITCH), Redraw]
     );
     assert_eq!(bench.drag(120.0, false)[0], Begin(MIX));
@@ -1825,7 +1892,7 @@ mod tests {
   fn the_menu_opens_on_a_right_press_and_its_rows_act() {
     let mut bench = Bench::new();
     assert_eq!(bench.right(None), []);
-    assert_eq!(bench.right(Some(Target::Knob(MIX))), [Redraw]);
+    assert_eq!(bench.right(Some(Target::Control(MIX))), [Redraw]);
     assert_eq!(bench.interaction.menu().map(|menu| menu.control), Some(MIX));
     // the row under the pointer is marked, once for each change
     let over = |over| Event::Move {
@@ -1858,19 +1925,19 @@ mod tests {
   #[test]
   fn a_press_off_the_menu_or_escape_puts_it_away_and_does_nothing_else() {
     let mut bench = Bench::new();
-    bench.right(Some(Target::Knob(PITCH)));
-    assert_eq!(bench.press(Some(Target::Knob(MIX)), 100.0), [Redraw]);
+    bench.right(Some(Target::Control(PITCH)));
+    assert_eq!(bench.press(Some(Target::Control(MIX)), 100.0), [Redraw]);
     assert!(bench.interaction.menu().is_none());
     // the knob under that press is not being dragged
     assert_eq!(bench.drag(50.0, false), []);
     bench.release();
 
-    bench.right(Some(Target::Knob(PITCH)));
+    bench.right(Some(Target::Control(PITCH)));
     assert_eq!(bench.key(Key::Enter), []);
     assert_eq!(bench.key(Key::Escape), [Redraw]);
     assert!(bench.interaction.menu().is_none());
 
-    bench.right(Some(Target::Knob(PITCH)));
+    bench.right(Some(Target::Control(PITCH)));
     assert_eq!(bench.right(None), [Redraw]);
     assert!(bench.interaction.menu().is_none());
   }
