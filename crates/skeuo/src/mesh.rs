@@ -56,8 +56,8 @@ impl Mesh {
   /// and `smooth` rounds the shading across them
   pub fn lathe(profile: &[[f32; 2]], segments: u32, smooth: bool) -> Self {
     let mut mesh = Self::default();
-    let around = |step: u32| {
-      let (sin, cos) = (step as f32 / segments as f32 * TAU).sin_cos();
+    let around = |step: f32| {
+      let (sin, cos) = (step / segments as f32 * TAU).sin_cos();
       Vec3::new(cos, sin, 0.0)
     };
     for band in profile.windows(2) {
@@ -69,15 +69,14 @@ impl Mesh {
         (dz / length, -dr / length)
       };
       for step in 0..segments {
-        let (a, b) = (around(step), around(step + 1));
+        let (a, b) = (around(step as f32), around((step + 1) as f32));
         let at = |dir: Vec3, r: f32, z: f32| dir * r + Vec3::Z * z;
         let facing = |dir: Vec3| dir * out + Vec3::Z * up;
         let corners = [at(a, r0, z0), at(b, r0, z0), at(b, r1, z1), at(a, r1, z1)];
         if smooth {
           mesh.quad_with_normals(corners, [facing(a), facing(b), facing(b), facing(a)]);
         } else {
-          let middle = (a + b).normalize();
-          mesh.quad(corners, facing(middle));
+          mesh.quad(corners, facing(around(step as f32 + 0.5)));
         }
       }
     }
@@ -220,7 +219,8 @@ impl Mesh {
     mesh
   }
 
-  /// the mesh moved by a transform, to bake a part into place before merging
+  /// the mesh moved by a transform, to bake a part into place before merging. the transform
+  /// is a rotation and a move, with at most an even scale
   #[must_use]
   pub fn transformed(mut self, transform: Mat4) -> Self {
     for vertex in &mut self.vertices {
@@ -289,6 +289,24 @@ mod tests {
       } else {
         let outward = Vec3::new(position.x, position.y, 0.0);
         assert!(outward.dot(normal) > 0.99, "{position} faces {normal}");
+      }
+    }
+  }
+
+  #[test]
+  fn an_unsmoothed_lathe_faces_each_side_out_of_its_middle() {
+    // down to two sides, which are the two faces of a flat sheet
+    for segments in [2, 3, 8] {
+      let mesh = Mesh::lathe(&[[1.0, 0.0], [1.0, 2.0]], segments, false);
+      for (side, corners) in mesh.vertices.chunks(4).enumerate() {
+        let middle = Vec2::from_angle((side as f32 + 0.5) / segments as f32 * TAU).extend(0.0);
+        for corner in corners {
+          let normal = Vec3::from(corner.normal);
+          assert!(
+            normal.distance(middle) < 1e-5,
+            "side {side} of {segments} faces {normal}"
+          );
+        }
       }
     }
   }

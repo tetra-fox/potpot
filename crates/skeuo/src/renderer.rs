@@ -1,22 +1,27 @@
 //! draws a [`Scene`] with wgpu: a shadow map, the lit picture at its own resolution, and that
-//! picture stretched into place on a target
+//! picture stretched into place on a target. the picture is kept, and drawn again only for a
+//! scene that differs from the one it shows
+
+mod picture;
+mod pipelines;
+mod uniforms;
 
 use std::mem::size_of;
 use std::sync::Arc;
 
-use bytemuck::{Pod, Zeroable};
+use bytemuck::Zeroable;
 use wgpu::util::DeviceExt;
 
-use crate::mesh::{Mesh, Vertex};
-use crate::scene::{LAMPS, Scene};
+use self::picture::Picture;
+use self::pipelines::{DEPTH, Layouts, Pipelines};
+use self::uniforms::{Globals, Placed, Present};
+use crate::mesh::Mesh;
+use crate::scene::{Object, Scene};
 
 /// the shadow map's width and height
 const SHADOW_SIZE: u32 = 2048;
 /// the width and height of the map of how high everything on the panel is
 const HEIGHT_SIZE: u32 = 1024;
-const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-/// the picture holds srgb-encoded color in a format that does not encode, see scene.wgsl
-const PICTURE: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// a rectangle of a target, in its pixels
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -27,343 +32,75 @@ pub struct Place {
   pub height: f32,
 }
 
-/// everything on the gpu that drawing scenes takes. [`Renderer::prepare`] loads a scene and
-/// [`Renderer::render`] draws the one last prepared
+/// everything on the gpu that drawing scenes takes. [`Renderer::prepare`] draws a scene's
+/// picture and [`Renderer::render`] puts the last one drawn on a target
+#[derive(Debug)]
 pub struct Renderer {
-  shadow_pipeline: wgpu::RenderPipeline,
-  /// for one sample a pixel, and for [`SAMPLES`]
-  scene_pipelines: [wgpu::RenderPipeline; 2],
-  present_pipeline: wgpu::RenderPipeline,
+  pipelines: Pipelines,
   globals: wgpu::Buffer,
   globals_group: wgpu::BindGroup,
   shadow_map: wgpu::TextureView,
   /// how high everything on the panel is, seen from straight above
   height_map: wgpu::TextureView,
-  height_pipeline: wgpu::RenderPipeline,
-  shadow_group: wgpu::BindGroup,
+  /// both maps, for the scene pass to read
+  maps_group: wgpu::BindGroup,
   present_layout: wgpu::BindGroupLayout,
   present_options: wgpu::Buffer,
   /// whether the target encodes srgb itself
   target_encodes: bool,
+  /// the widest and tallest a texture of the device can be
+  max_side: u32,
   picture: Option<Picture>,
-  meshes: Option<Loaded>,
   placed: wgpu::Buffer,
-  /// how many objects the placed buffer holds
+  /// how many objects the placed buffer has room for
   placed_room: usize,
-  /// the mesh of each object of the prepared scene, in order
+  /// what the three buffers hold, to tell a scene that differs from the one drawn
+  held_globals: Globals,
+  held_present: Present,
+  held_placed: Vec<Placed>,
+  /// where a scene's objects are worked out to compare with what is held, kept for its room
+  next_placed: Vec<Placed>,
+  /// each mesh of the drawn scene, once
+  meshes: Vec<Loaded>,
+  /// which of the meshes each object of the drawn scene is, in order
   draws: Vec<usize>,
 }
 
-/// the picture's textures at one size
-struct Picture {
-  size: [u32; 2],
-  /// what the scene is drawn into when edges are smoothed, to be resolved into `color`
-  smoothed: Option<wgpu::TextureView>,
-  color: wgpu::TextureView,
-  depth: wgpu::TextureView,
-  group: wgpu::BindGroup,
-}
-
-/// a scene's meshes on the gpu, and the allocation they came from
+/// a mesh on the gpu, and the allocation it came from
+#[derive(Debug)]
 struct Loaded {
-  from: Arc<[Mesh]>,
-  meshes: Vec<LoadedMesh>,
-}
-
-struct LoadedMesh {
+  from: Arc<Mesh>,
   vertices: wgpu::Buffer,
   indices: wgpu::Buffer,
   count: u32,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct Globals {
-  view: [[f32; 4]; 4],
-  light_view: [[f32; 4]; 4],
-  toward_light: [f32; 4],
-  toward_viewer: [f32; 4],
-  light_color: [f32; 4],
-  ambient: [f32; 4],
-  shadows: [f32; 4],
-  overhead: [[f32; 4]; 4],
-  /// the panel's width and height, and the lowest and highest anything on it reaches
-  panel: [f32; 4],
-  /// each lamp's place with its reach, and then its color
-  lamps: [[[f32; 4]; 2]; LAMPS],
-}
-
-/// one object's place and material, read once per instance
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct Placed {
-  model: [[f32; 4]; 4],
-  color: [f32; 4],
-  highlight: [f32; 4],
-  finish: [f32; 4],
-  texture: [f32; 4],
-}
-
-/// the samples of each pixel when edges are smoothed
-const SAMPLES: u32 = 4;
-
 impl Renderer {
   /// `target` is the format of the textures [`Renderer::render`] will draw onto
   pub fn new(device: &wgpu::Device, target: wgpu::TextureFormat) -> Self {
-    let scene_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-      label: Some("skeuo scene"),
-      source: wgpu::ShaderSource::Wgsl(include_str!("scene.wgsl").into()),
-    });
-    let present_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-      label: Some("skeuo present"),
-      source: wgpu::ShaderSource::Wgsl(include_str!("present.wgsl").into()),
-    });
+    let layouts = Layouts::new(device);
+    let pipelines = Pipelines::new(device, &layouts, target);
 
-    let uniform = |binding, visibility| wgpu::BindGroupLayoutEntry {
-      binding,
-      visibility,
-      ty: wgpu::BindingType::Buffer {
-        ty: wgpu::BufferBindingType::Uniform,
-        has_dynamic_offset: false,
-        min_binding_size: None,
-      },
-      count: None,
-    };
-    let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-      label: Some("skeuo globals"),
-      entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT)],
-    });
-    let shadow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-      label: Some("skeuo shadow map"),
-      entries: &[
-        wgpu::BindGroupLayoutEntry {
-          binding: 0,
-          visibility: wgpu::ShaderStages::FRAGMENT,
-          ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Depth,
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-          },
-          count: None,
-        },
-        wgpu::BindGroupLayoutEntry {
-          binding: 1,
-          visibility: wgpu::ShaderStages::FRAGMENT,
-          ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-          count: None,
-        },
-        wgpu::BindGroupLayoutEntry {
-          binding: 2,
-          visibility: wgpu::ShaderStages::FRAGMENT,
-          ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Depth,
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-          },
-          count: None,
-        },
-      ],
-    });
-    let present_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-      label: Some("skeuo present"),
-      entries: &[
-        wgpu::BindGroupLayoutEntry {
-          binding: 0,
-          visibility: wgpu::ShaderStages::FRAGMENT,
-          ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-          },
-          count: None,
-        },
-        wgpu::BindGroupLayoutEntry {
-          binding: 1,
-          visibility: wgpu::ShaderStages::FRAGMENT,
-          ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-          count: None,
-        },
-        uniform(2, wgpu::ShaderStages::FRAGMENT),
-      ],
-    });
-
-    let vertex_buffers = [
-      wgpu::VertexBufferLayout {
-        array_stride: size_of::<Vertex>() as u64,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
-      },
-      wgpu::VertexBufferLayout {
-        array_stride: size_of::<Placed>() as u64,
-        step_mode: wgpu::VertexStepMode::Instance,
-        attributes: &wgpu::vertex_attr_array![
-          2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4,
-          6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4
-        ],
-      },
-    ];
-    // the panel's y runs down, which flips every triangle's winding, and parts are solids
-    // whose insides never show, so nothing is culled
-    let primitive = wgpu::PrimitiveState::default();
-    let depth = |bias| wgpu::DepthStencilState {
-      format: DEPTH,
-      depth_write_enabled: true,
-      depth_compare: wgpu::CompareFunction::Less,
-      stencil: wgpu::StencilState::default(),
-      bias,
-    };
-
-    let shadow_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-      label: Some("skeuo shadow"),
-      layout: Some(
-        &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-          label: Some("skeuo shadow"),
-          bind_group_layouts: &[&globals_layout],
-          push_constant_ranges: &[],
-        }),
-      ),
-      vertex: wgpu::VertexState {
-        module: &scene_shader,
-        entry_point: Some("shadow_vertex"),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-        buffers: &vertex_buffers,
-      },
-      fragment: None,
-      primitive,
-      depth_stencil: Some(depth(wgpu::DepthBiasState::default())),
-      multisample: wgpu::MultisampleState::default(),
-      multiview: None,
-      cache: None,
-    });
-    let height_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-      label: Some("skeuo heights"),
-      layout: Some(
-        &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-          label: Some("skeuo heights"),
-          bind_group_layouts: &[&globals_layout],
-          push_constant_ranges: &[],
-        }),
-      ),
-      vertex: wgpu::VertexState {
-        module: &scene_shader,
-        entry_point: Some("height_vertex"),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-        buffers: &vertex_buffers,
-      },
-      fragment: None,
-      primitive,
-      depth_stencil: Some(depth(wgpu::DepthBiasState::default())),
-      multisample: wgpu::MultisampleState::default(),
-      multiview: None,
-      cache: None,
-    });
-    let scene_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-      label: Some("skeuo scene"),
-      bind_group_layouts: &[&globals_layout, &shadow_layout],
-      push_constant_ranges: &[],
-    });
-    // one for each count of samples, since a pipeline draws at only one
-    let scene_pipelines = [1, SAMPLES].map(|count| {
-      device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("skeuo scene"),
-        layout: Some(&scene_layout),
-        vertex: wgpu::VertexState {
-          module: &scene_shader,
-          entry_point: Some("vertex"),
-          compilation_options: wgpu::PipelineCompilationOptions::default(),
-          buffers: &vertex_buffers,
-        },
-        fragment: Some(wgpu::FragmentState {
-          module: &scene_shader,
-          entry_point: Some("fragment"),
-          compilation_options: wgpu::PipelineCompilationOptions::default(),
-          targets: &[Some(PICTURE.into())],
-        }),
-        primitive,
-        depth_stencil: Some(depth(wgpu::DepthBiasState::default())),
-        multisample: wgpu::MultisampleState {
-          count,
-          ..Default::default()
-        },
-        multiview: None,
-        cache: None,
+    let uniform = |label, size| {
+      device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: size as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
       })
-    });
-    let present_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-      label: Some("skeuo present"),
-      layout: Some(
-        &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-          label: Some("skeuo present"),
-          bind_group_layouts: &[&present_layout],
-          push_constant_ranges: &[],
-        }),
-      ),
-      vertex: wgpu::VertexState {
-        module: &present_shader,
-        entry_point: Some("vertex"),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-        buffers: &[],
-      },
-      fragment: Some(wgpu::FragmentState {
-        module: &present_shader,
-        entry_point: Some("fragment"),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-        targets: &[Some(target.into())],
-      }),
-      primitive,
-      depth_stencil: None,
-      multisample: wgpu::MultisampleState::default(),
-      multiview: None,
-      cache: None,
-    });
-
-    let globals = device.create_buffer(&wgpu::BufferDescriptor {
-      label: Some("skeuo globals"),
-      size: size_of::<Globals>() as u64,
-      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-      mapped_at_creation: false,
-    });
+    };
+    let globals = uniform("skeuo globals", size_of::<Globals>());
     let globals_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
       label: Some("skeuo globals"),
-      layout: &globals_layout,
+      layout: &layouts.globals,
       entries: &[wgpu::BindGroupEntry {
         binding: 0,
         resource: globals.as_entire_binding(),
       }],
     });
 
-    let shadow_map = device
-      .create_texture(&wgpu::TextureDescriptor {
-        label: Some("skeuo shadow map"),
-        size: wgpu::Extent3d {
-          width: SHADOW_SIZE,
-          height: SHADOW_SIZE,
-          depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: DEPTH,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        view_formats: &[],
-      })
-      .create_view(&wgpu::TextureViewDescriptor::default());
-    let height_map = device
-      .create_texture(&wgpu::TextureDescriptor {
-        label: Some("skeuo heights"),
-        size: wgpu::Extent3d {
-          width: HEIGHT_SIZE,
-          height: HEIGHT_SIZE,
-          depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: DEPTH,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        view_formats: &[],
-      })
-      .create_view(&wgpu::TextureViewDescriptor::default());
+    let shadow_map = depth_map(device, "skeuo shadow map", SHADOW_SIZE);
+    let height_map = depth_map(device, "skeuo heights", HEIGHT_SIZE);
     let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
       label: Some("skeuo shadow map"),
       mag_filter: wgpu::FilterMode::Linear,
@@ -371,9 +108,9 @@ impl Renderer {
       compare: Some(wgpu::CompareFunction::LessEqual),
       ..Default::default()
     });
-    let shadow_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let maps_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
       label: Some("skeuo shadow map"),
-      layout: &shadow_layout,
+      layout: &layouts.maps,
       entries: &[
         wgpu::BindGroupEntry {
           binding: 0,
@@ -390,35 +127,33 @@ impl Renderer {
       ],
     });
 
-    let present_options = device.create_buffer(&wgpu::BufferDescriptor {
-      label: Some("skeuo present"),
-      size: size_of::<[f32; 8]>() as u64,
-      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-      mapped_at_creation: false,
-    });
-
     Self {
-      shadow_pipeline,
-      scene_pipelines,
-      present_pipeline,
+      pipelines,
       globals,
       globals_group,
       shadow_map,
       height_map,
-      height_pipeline,
-      shadow_group,
-      present_layout,
-      present_options,
+      maps_group,
+      present_layout: layouts.present,
+      present_options: uniform("skeuo present", size_of::<Present>()),
       target_encodes: target.is_srgb(),
+      max_side: device.limits().max_texture_dimension_2d,
       picture: None,
-      meshes: None,
       placed: placed_buffer(device, 0),
       placed_room: 0,
+      // a new buffer is all zeros
+      held_globals: Globals::zeroed(),
+      held_present: Present::zeroed(),
+      held_placed: Vec::new(),
+      next_placed: Vec::new(),
+      meshes: Vec::new(),
       draws: Vec::new(),
     }
   }
 
-  /// loads a scene to be drawn over `size` pixels of a target
+  /// draws the picture of a scene to go over `size` pixels of a target, unless it is the
+  /// picture already drawn: a scene that is in every part the one prepared last costs no
+  /// drawing
   pub fn prepare(
     &mut self,
     device: &wgpu::Device,
@@ -427,144 +162,102 @@ impl Renderer {
     size: [u32; 2],
   ) {
     let look = scene.look;
-    let picture_size =
-      size.map(|side| ((side as f32 / look.pixel_size.max(1.0)).ceil() as u32).max(1));
-    if self.picture.as_ref().is_none_or(|picture| {
-      picture.size != picture_size || picture.smoothed.is_some() != look.antialias
-    }) {
-      self.picture = Some(self.picture_of(device, picture_size, look.antialias));
+    // the picture is stretched over its place whatever its size, so one that the device has
+    // no texture large enough for is drawn as large as it has
+    let picture_size = size
+      .map(|side| ((side as f32 / look.pixel_size.max(1.0)).ceil() as u32).clamp(1, self.max_side));
+    let kept = (self.picture.take()).filter(|picture| picture.fits(picture_size, look.antialias));
+    let mut stale = kept.is_none();
+    let picture = kept.unwrap_or_else(|| {
+      Picture::new(
+        device,
+        &self.present_layout,
+        &self.present_options,
+        picture_size,
+        look.antialias,
+      )
+    });
+
+    // the present pass reads these every time it runs, so new ones need no new picture
+    let present = Present::of(look, self.target_encodes);
+    if present != self.held_present {
+      queue.write_buffer(&self.present_options, 0, bytemuck::bytes_of(&present));
+      self.held_present = present;
     }
-    if self
-      .meshes
-      .as_ref()
-      .is_none_or(|loaded| !Arc::ptr_eq(&loaded.from, &scene.meshes))
-    {
-      self.meshes = Some(Loaded {
-        from: Arc::clone(&scene.meshes),
-        meshes: scene.meshes.iter().map(|mesh| load(device, mesh)).collect(),
-      });
+    let globals = Globals::of(scene);
+    if globals != self.held_globals {
+      queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
+      self.held_globals = globals;
+      stale = true;
     }
 
-    let globals = Globals {
-      view: scene.view().to_cols_array_2d(),
-      light_view: scene.light_view().to_cols_array_2d(),
-      toward_light: (scene.light.toward.normalize())
-        .extend(scene.light.softness)
-        .into(),
-      toward_viewer: (scene.toward_viewer())
-        .extend(scene.light.nearness * scene.size.max_element())
-        .into(),
-      light_color: scene.light.color.extend(scene.light.falloff).into(),
-      ambient: scene.light.ambient.extend(0.0).into(),
-      shadows: [
-        f32::from(u8::from(look.soft_shadows)),
-        1.0 / SHADOW_SIZE as f32,
-        scene.lamps.len().min(LAMPS) as f32,
-        scene.light.occlusion,
-      ],
-      overhead: scene.overhead().to_cols_array_2d(),
-      panel: [
-        scene.size.x,
-        scene.size.y,
-        scene.heights[0],
-        scene.heights[1],
-      ],
-      lamps: std::array::from_fn(|index| {
-        scene.lamps.get(index).map_or([[0.0; 4]; 2], |lamp| {
-          [
-            lamp.at.extend(lamp.reach).into(),
-            lamp.color.extend(0.0).into(),
-          ]
-        })
-      }),
-    };
-    queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
-    let options = [
-      look.color_steps as f32,
-      f32::from(u8::from(self.target_encodes)),
-      look.bloom,
-      look.vignette,
-      look.soften,
-      0.0,
-      0.0,
-      0.0,
-    ];
-    queue.write_buffer(&self.present_options, 0, bytemuck::bytes_of(&options));
-
-    let mesh_count = scene.meshes.len();
-    let objects = || {
-      scene
-        .objects
-        .iter()
-        .filter(|object| object.mesh < mesh_count)
-    };
-    let placed: Vec<Placed> = objects()
-      .map(|object| Placed {
-        model: object.transform.to_cols_array_2d(),
-        color: object.material.color.extend(object.material.glow).into(),
-        highlight: [
-          object.material.specular,
-          object.material.shininess,
-          object.material.glow_radius,
-          0.0,
-        ],
-        finish: [
-          object.material.reflect,
-          object.material.metal,
-          object.material.spun,
-          object.material.glaze,
-        ],
-        texture: [object.material.grain, object.material.brushed, 0.0, 0.0],
-      })
-      .collect();
-    if placed.len() > self.placed_room {
-      self.placed_room = placed.len().next_power_of_two();
-      self.placed = placed_buffer(device, self.placed_room);
+    let objects = &scene.objects;
+    let same_meshes = objects.len() == self.draws.len()
+      && (objects.iter().zip(&self.draws))
+        .all(|(object, &mesh)| Arc::ptr_eq(&object.mesh, &self.meshes[mesh].from));
+    if !same_meshes {
+      self.load(device, objects);
+      stale = true;
     }
-    queue.write_buffer(&self.placed, 0, bytemuck::cast_slice(&placed));
-    self.draws.clear();
-    self.draws.extend(objects().map(|object| object.mesh));
+    self.next_placed.clear();
+    self.next_placed.extend(objects.iter().map(Placed::of));
+    if self.next_placed != self.held_placed {
+      std::mem::swap(&mut self.held_placed, &mut self.next_placed);
+      if self.held_placed.len() > self.placed_room {
+        self.placed_room = self.held_placed.len().next_power_of_two();
+        self.placed = placed_buffer(device, self.placed_room);
+      }
+      queue.write_buffer(&self.placed, 0, bytemuck::cast_slice(&self.held_placed));
+      stale = true;
+    }
+
+    if stale {
+      self.draw_picture(device, queue, &picture);
+    }
+    self.picture = Some(picture);
   }
 
-  /// draws the prepared scene over `place` on the target, leaving everything outside `clip`
-  /// as it was. `clip` is x, y, width and height in the target's pixels
-  pub fn render(
-    &self,
-    encoder: &mut wgpu::CommandEncoder,
-    target: &wgpu::TextureView,
-    place: Place,
-    clip: [u32; 4],
-  ) {
-    let (Some(picture), Some(loaded)) = (&self.picture, &self.meshes) else {
-      return;
+  /// puts every mesh the objects use on the gpu once, keeping the ones that are there
+  /// already and dropping the rest
+  fn load(&mut self, device: &wgpu::Device, objects: &[Object]) {
+    let mut before = std::mem::take(&mut self.meshes);
+    let found = |meshes: &[Loaded], mesh: &Arc<Mesh>| {
+      (meshes.iter()).position(|loaded| Arc::ptr_eq(&loaded.from, mesh))
     };
-    if clip[2] == 0 || clip[3] == 0 || place.width <= 0.0 || place.height <= 0.0 {
-      return;
+    self.draws.clear();
+    for object in objects {
+      let place = found(&self.meshes, &object.mesh).unwrap_or_else(|| {
+        let loaded = match found(&before, &object.mesh) {
+          Some(kept) => before.swap_remove(kept),
+          None => Loaded::new(device, &object.mesh),
+        };
+        self.meshes.push(loaded);
+        self.meshes.len() - 1
+      });
+      self.draws.push(place);
     }
+  }
 
-    {
+  /// the shadow map, the height map, and then the lit scene into the picture
+  fn draw_picture(&self, device: &wgpu::Device, queue: &wgpu::Queue, picture: &Picture) {
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+      label: Some("skeuo picture"),
+    });
+    let depth_passes = [
+      ("skeuo shadow", &self.pipelines.shadow, &self.shadow_map),
+      ("skeuo heights", &self.pipelines.height, &self.height_map),
+    ];
+    for (label, pipeline, map) in depth_passes {
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("skeuo shadow"),
+        label: Some(label),
         color_attachments: &[],
-        depth_stencil_attachment: Some(depth_attachment(&self.shadow_map)),
+        depth_stencil_attachment: Some(depth_attachment(map)),
         timestamp_writes: None,
         occlusion_query_set: None,
       });
-      pass.set_pipeline(&self.shadow_pipeline);
+      pass.set_pipeline(pipeline);
       pass.set_bind_group(0, &self.globals_group, &[]);
-      self.draw_objects(&mut pass, loaded);
-    }
-    {
-      let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("skeuo heights"),
-        color_attachments: &[],
-        depth_stencil_attachment: Some(depth_attachment(&self.height_map)),
-        timestamp_writes: None,
-        occlusion_query_set: None,
-      });
-      pass.set_pipeline(&self.height_pipeline);
-      pass.set_bind_group(0, &self.globals_group, &[]);
-      self.draw_objects(&mut pass, loaded);
+      self.draw_objects(&mut pass);
     }
     {
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -582,121 +275,109 @@ impl Renderer {
         timestamp_writes: None,
         occlusion_query_set: None,
       });
-      pass.set_pipeline(&self.scene_pipelines[usize::from(picture.smoothed.is_some())]);
+      pass.set_pipeline(&self.pipelines.scene[usize::from(picture.smoothed.is_some())]);
       pass.set_bind_group(0, &self.globals_group, &[]);
-      pass.set_bind_group(1, &self.shadow_group, &[]);
-      self.draw_objects(&mut pass, loaded);
+      pass.set_bind_group(1, &self.maps_group, &[]);
+      self.draw_objects(&mut pass);
     }
-    {
-      let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("skeuo present"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-          view: target,
-          depth_slice: None,
-          resolve_target: None,
-          ops: wgpu::Operations {
-            load: wgpu::LoadOp::Load,
-            store: wgpu::StoreOp::Store,
-          },
-        })],
-        depth_stencil_attachment: None,
-        timestamp_writes: None,
-        occlusion_query_set: None,
-      });
-      pass.set_pipeline(&self.present_pipeline);
-      pass.set_bind_group(0, &picture.group, &[]);
-      pass.set_viewport(place.x, place.y, place.width, place.height, 0.0, 1.0);
-      pass.set_scissor_rect(clip[0], clip[1], clip[2], clip[3]);
-      pass.draw(0..3, 0..1);
-    }
+    queue.submit([encoder.finish()]);
   }
 
-  fn draw_objects(&self, pass: &mut wgpu::RenderPass<'_>, loaded: &Loaded) {
+  /// stretches the picture last drawn over `place` on the target, leaving everything outside
+  /// `clip` as it was. `clip` is x, y, width and height in the target's pixels, and has to
+  /// lie on the target. before any scene is prepared there is no picture and nothing is drawn
+  pub fn render(
+    &self,
+    encoder: &mut wgpu::CommandEncoder,
+    target: &wgpu::TextureView,
+    place: Place,
+    clip: [u32; 4],
+  ) {
+    let Some(picture) = &self.picture else {
+      return;
+    };
+    if clip[2] == 0 || clip[3] == 0 || place.width <= 0.0 || place.height <= 0.0 {
+      return;
+    }
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+      label: Some("skeuo present"),
+      color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+        view: target,
+        depth_slice: None,
+        resolve_target: None,
+        ops: wgpu::Operations {
+          load: wgpu::LoadOp::Load,
+          store: wgpu::StoreOp::Store,
+        },
+      })],
+      depth_stencil_attachment: None,
+      timestamp_writes: None,
+      occlusion_query_set: None,
+    });
+    pass.set_pipeline(&self.pipelines.present);
+    pass.set_bind_group(0, &picture.group, &[]);
+    pass.set_viewport(place.x, place.y, place.width, place.height, 0.0, 1.0);
+    pass.set_scissor_rect(clip[0], clip[1], clip[2], clip[3]);
+    pass.draw(0..3, 0..1);
+  }
+
+  fn draw_objects(&self, pass: &mut wgpu::RenderPass<'_>) {
     pass.set_vertex_buffer(1, self.placed.slice(..));
-    for (object, &mesh) in self.draws.iter().enumerate() {
-      let Some(mesh) = loaded.meshes.get(mesh) else {
+    for (object, &mesh) in (0..).zip(&self.draws) {
+      let mesh = &self.meshes[mesh];
+      // wgpu has no slice of an empty buffer, and such a mesh has nothing to draw
+      if mesh.count == 0 {
         continue;
-      };
-      let object = object as u32;
+      }
       pass.set_vertex_buffer(0, mesh.vertices.slice(..));
       pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
       pass.draw_indexed(0..mesh.count, 0, object..object + 1);
     }
   }
+}
 
-  fn picture_of(&self, device: &wgpu::Device, size: [u32; 2], smooth: bool) -> Picture {
-    let texture = |label, format, usage, sample_count| {
-      device
-        .create_texture(&wgpu::TextureDescriptor {
-          label: Some(label),
-          size: wgpu::Extent3d {
-            width: size[0],
-            height: size[1],
-            depth_or_array_layers: 1,
-          },
-          mip_level_count: 1,
-          sample_count,
-          dimension: wgpu::TextureDimension::D2,
-          format,
-          usage,
-          view_formats: &[],
-        })
-        .create_view(&wgpu::TextureViewDescriptor::default())
-    };
-    let color = texture(
-      "skeuo picture",
-      PICTURE,
-      wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-      1,
-    );
-    let samples = if smooth { SAMPLES } else { 1 };
-    let smoothed = smooth.then(|| {
-      texture(
-        "skeuo picture samples",
-        PICTURE,
-        wgpu::TextureUsages::RENDER_ATTACHMENT,
-        samples,
-      )
-    });
-    let depth = texture(
-      "skeuo picture depth",
-      DEPTH,
-      wgpu::TextureUsages::RENDER_ATTACHMENT,
-      samples,
-    );
-    // each rendered pixel lands on the window as a hard-edged block
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-      label: Some("skeuo picture"),
-      mag_filter: wgpu::FilterMode::Nearest,
-      min_filter: wgpu::FilterMode::Nearest,
-      ..Default::default()
-    });
-    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-      label: Some("skeuo picture"),
-      layout: &self.present_layout,
-      entries: &[
-        wgpu::BindGroupEntry {
-          binding: 0,
-          resource: wgpu::BindingResource::TextureView(&color),
-        },
-        wgpu::BindGroupEntry {
-          binding: 1,
-          resource: wgpu::BindingResource::Sampler(&sampler),
-        },
-        wgpu::BindGroupEntry {
-          binding: 2,
-          resource: self.present_options.as_entire_binding(),
-        },
-      ],
-    });
-    Picture {
-      size,
-      smoothed,
-      color,
-      depth,
-      group,
+impl Loaded {
+  fn new(device: &wgpu::Device, mesh: &Arc<Mesh>) -> Self {
+    Self {
+      from: Arc::clone(mesh),
+      vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("skeuo vertices"),
+        contents: bytemuck::cast_slice(&mesh.vertices),
+        usage: wgpu::BufferUsages::VERTEX,
+      }),
+      indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("skeuo indices"),
+        contents: bytemuck::cast_slice(&mesh.indices),
+        usage: wgpu::BufferUsages::INDEX,
+      }),
+      // a mesh without vertices has no triangles, whatever its indices say
+      count: if mesh.vertices.is_empty() {
+        0
+      } else {
+        mesh.indices.len() as u32
+      },
     }
   }
+}
+
+/// a square depth texture that a pass draws into and a later one reads
+fn depth_map(device: &wgpu::Device, label: &str, size: u32) -> wgpu::TextureView {
+  device
+    .create_texture(&wgpu::TextureDescriptor {
+      label: Some(label),
+      size: wgpu::Extent3d {
+        width: size,
+        height: size,
+        depth_or_array_layers: 1,
+      },
+      mip_level_count: 1,
+      sample_count: 1,
+      dimension: wgpu::TextureDimension::D2,
+      format: DEPTH,
+      usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+      view_formats: &[],
+    })
+    .create_view(&wgpu::TextureViewDescriptor::default())
 }
 
 fn depth_attachment(view: &wgpu::TextureView) -> wgpu::RenderPassDepthStencilAttachment<'_> {
@@ -717,20 +398,4 @@ fn placed_buffer(device: &wgpu::Device, room: usize) -> wgpu::Buffer {
     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
     mapped_at_creation: false,
   })
-}
-
-fn load(device: &wgpu::Device, mesh: &Mesh) -> LoadedMesh {
-  LoadedMesh {
-    vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-      label: Some("skeuo vertices"),
-      contents: bytemuck::cast_slice(&mesh.vertices),
-      usage: wgpu::BufferUsages::VERTEX,
-    }),
-    indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-      label: Some("skeuo indices"),
-      contents: bytemuck::cast_slice(&mesh.indices),
-      usage: wgpu::BufferUsages::INDEX,
-    }),
-    count: mesh.indices.len() as u32,
-  }
 }

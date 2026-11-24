@@ -1,8 +1,8 @@
 // the rendered picture stretched over its place in the window, as blocks, and cut to few colors
 
 struct Present {
-  // x the steps each channel is cut to or zero, y one when the target encodes srgb itself,
-  // z how much the bright parts spill over, w how much the corners darken
+  // x the steps each channel is cut to if two or more, y one when the target encodes srgb
+  // itself, z how much the bright parts spill over, w how much the corners darken
   options: vec4<f32>,
   // x how far the picture is blurred
   more: vec4<f32>,
@@ -76,7 +76,7 @@ fn fragment(spread: Spread) -> @location(0) vec4<f32> {
   let out = (spread.at - 0.5) * 2.0;
   color *= 1.0 - present.options.w * dot(out, out) * 0.5;
   let steps = present.options.x;
-  if steps > 0.0 {
+  if steps > 1.0 {
     // the dither follows the picture's own pixels, so its pattern is as blocky as they are
     let pixel = vec2<u32>(spread.at * vec2<f32>(textureDimensions(picture)));
     color = floor(color * (steps - 1.0) + threshold(pixel)) / (steps - 1.0);

@@ -17,7 +17,8 @@ struct Globals {
   overhead: mat4x4<f32>,
   // the panel's width and height, and the lowest and highest anything on it reaches
   panel: vec4<f32>,
-  lamps: array<Lamp, 32>,
+  // LAMPS is put ahead of this source when it is loaded
+  lamps: array<Lamp, LAMPS>,
 }
 
 // a small light on the panel

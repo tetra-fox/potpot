@@ -1,0 +1,132 @@
+//! the rounded rectangle that buttons, their seats, collars and frames are cut to
+
+use glam::Vec2;
+
+use super::CREASE;
+use crate::mesh::Mesh;
+
+/// a rectangle with round corners, centered on the origin
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Outline {
+  /// how wide it is, along x
+  width: f32,
+  /// how long it is, along y
+  length: f32,
+  /// the radius of its corners, at most half its shorter side
+  round: f32,
+}
+
+impl Outline {
+  /// `corner` is the radius of the corners, kept to what the shorter side has room for
+  pub(super) fn new(width: f32, length: f32, corner: f32) -> Self {
+    Self {
+      width,
+      length,
+      round: corner.min(width.min(length) / 2.0).max(0.0),
+    }
+  }
+
+  /// how far out the outline is at an angle around its middle
+  pub(super) fn at(&self, angle: f32) -> f32 {
+    let half = Vec2::new(self.width, self.length) / 2.0;
+    let toward = Vec2::from_angle(angle).abs();
+    // out to the nearer of the two straight sides
+    let out = (half / toward.max(Vec2::splat(f32::EPSILON))).min_element();
+    let center = half - Vec2::splat(self.round);
+    let hit = toward * out;
+    if hit.x <= center.x || hit.y <= center.y {
+      return out;
+    }
+    // past where both sides have begun to curve, it is out to the corner's circle instead
+    let along = toward.dot(center);
+    along
+      + (along * along - center.length_squared() + self.round * self.round)
+        .max(0.0)
+        .sqrt()
+  }
+
+  /// the outline pushed out by a distance all around, its corners rounder by as much
+  pub(super) fn grown(&self, by: f32) -> Self {
+    Self::new(
+      self.width + by * 2.0,
+      self.length + by * 2.0,
+      self.round + by,
+    )
+  }
+
+  /// the outline filled in as a low strip lying on the panel, for the dark gap around
+  /// something set into it
+  pub(super) fn strip(&self) -> Mesh {
+    let rings = [
+      Vec2::new(1.0, 0.0),
+      Vec2::new(1.0, 0.2),
+      Vec2::new(0.0, 0.2),
+    ];
+    Mesh::rings(rings.len(), 96, CREASE, |ring, angle| {
+      let ring = rings[ring];
+      (Vec2::from_angle(angle) * self.at(angle) * ring.x).extend(ring.y)
+    })
+  }
+}
+
+/// a raised band between two outlines, with a hole in its middle: up the outside, over a
+/// corner cut `cut` wide, across the top `tall` above the panel, and down the inside
+pub(super) fn band(outer: Outline, inner: Outline, tall: f32, cut: f32) -> Mesh {
+  let rings = [
+    (outer, 0.0, 0.0),
+    (outer, 0.0, tall - cut),
+    (outer, cut, tall),
+    (inner, -cut, tall),
+    (inner, 0.0, tall - cut),
+    (inner, 0.0, 0.0),
+  ];
+  Mesh::rings(rings.len(), 144, CREASE, |ring, angle| {
+    let (outline, inset, height) = rings[ring];
+    (Vec2::from_angle(angle) * (outline.at(angle) - inset)).extend(height)
+  })
+}
+
+#[cfg(test)]
+mod tests {
+  use std::f32::consts::{FRAC_PI_2, TAU};
+
+  use super::*;
+
+  #[test]
+  fn an_outline_is_a_rectangle_with_round_corners() {
+    let key = Outline::new(40.0, 20.0, 2.5);
+    // straight out to the middle of each side
+    assert!((key.at(0.0) - 20.0).abs() < 1e-4);
+    assert!((key.at(FRAC_PI_2) - 10.0).abs() < 1e-4);
+    // toward the rectangle's corner it stops on the corner's circle, short of the corner
+    let corner = Vec2::new(20.0, 10.0);
+    let hit = corner.normalize() * key.at(corner.to_angle());
+    assert!(
+      (hit.distance(corner - Vec2::splat(2.5)) - 2.5).abs() < 1e-3,
+      "{hit}"
+    );
+    assert!(hit.length() < corner.length());
+    // a square as round as it can be is a circle, however much rounder it is asked to be
+    let round = Outline::new(30.0, 30.0, 40.0);
+    for step in 0..64 {
+      let out = round.at(step as f32 / 64.0 * TAU);
+      assert!((out - 15.0).abs() < 1e-3, "{out}");
+    }
+  }
+
+  #[test]
+  fn a_grown_outline_is_as_much_further_out_all_around() {
+    let key = Outline::new(40.0, 20.0, 2.5);
+    let grown = key.grown(3.0);
+    assert!((grown.at(0.0) - 23.0).abs() < 1e-4);
+    assert!((grown.at(FRAC_PI_2) - 13.0).abs() < 1e-4);
+    // its corners turn around the same middles, on circles wider by as much
+    let middle = Vec2::new(20.0, 10.0) - Vec2::splat(2.5);
+    for step in 0..=8 {
+      let toward = Vec2::from_angle(step as f32 / 8.0 * FRAC_PI_2);
+      let angle = (middle + toward * 5.5).to_angle();
+      let hit = Vec2::from_angle(angle) * grown.at(angle);
+      assert!((hit.distance(middle) - 5.5).abs() < 1e-3, "{hit}");
+    }
+  }
+}
