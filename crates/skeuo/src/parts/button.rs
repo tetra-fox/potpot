@@ -110,9 +110,9 @@ impl Button {
   /// the button itself
   pub fn body(&self) -> Mesh {
     let (rings, outline) = (self.rings(), self.outline());
-    Mesh::rings(rings.len(), 96, CREASE, |ring, angle| {
+    Mesh::rings(rings.len(), 96, CREASE, |ring, around| {
       let ring = rings[ring];
-      (Vec2::from_angle(angle) * outline.at(angle) * ring.x).extend(ring.y)
+      (outline.point(around) * ring.x).extend(ring.y)
     })
   }
 

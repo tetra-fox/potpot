@@ -1,5 +1,7 @@
 //! the rounded rectangle that buttons, their seats, collars and frames are cut to
 
+use std::f32::consts::FRAC_PI_2;
+
 use glam::Vec2;
 
 use super::CREASE;
@@ -45,6 +47,60 @@ impl Outline {
         .sqrt()
   }
 
+  /// the angle around the middle that a step around the outline lands on, for steps that
+  /// are even in `around`. steps even in angle would put next to none on the corners of a
+  /// long outline, which are a sliver of the turn as its middle sees them, so each stretch
+  /// gets steps by its length, and a corner by several times its own
+  pub(super) fn spread(&self, around: f32) -> f32 {
+    /// how many times its length a corner counts for
+    const CORNERS: f32 = 6.0;
+    let half = Vec2::new(self.width, self.length) / 2.0;
+    let straight = half - Vec2::splat(self.round);
+    // the first quarter of the turn runs up the side at x, around the corner and along
+    // the side at y, and the quarter after it is the same thing backwards
+    let quarter = (around / FRAC_PI_2).floor();
+    let backwards = quarter.rem_euclid(2.0) == 1.0;
+    let (first, last) = if backwards {
+      (straight.x, straight.y)
+    } else {
+      (straight.y, straight.x)
+    };
+    let corner = self.round * FRAC_PI_2 * CORNERS;
+    let all = first + corner + last;
+    let within = around / FRAC_PI_2 - quarter;
+    if all <= f32::EPSILON {
+      return around;
+    }
+    // where the corner begins and ends, as the middle sees it from the side it comes to
+    // first
+    let begins = if backwards {
+      straight.x.atan2(half.y)
+    } else {
+      straight.y.atan2(half.x)
+    };
+    let ends = FRAC_PI_2
+      - if backwards {
+        straight.y.atan2(half.x)
+      } else {
+        straight.x.atan2(half.y)
+      };
+    let (to_corner, past_corner) = (first / all, (first + corner) / all);
+    let angle = if within < to_corner {
+      begins * within / to_corner
+    } else if within < past_corner {
+      begins + (ends - begins) * (within - to_corner) / (past_corner - to_corner)
+    } else {
+      ends + (FRAC_PI_2 - ends) * (within - past_corner) / (1.0 - past_corner)
+    };
+    quarter * FRAC_PI_2 + angle
+  }
+
+  /// the point of the outline a step lands on, for steps that are even in `around`
+  pub(super) fn point(&self, around: f32) -> Vec2 {
+    let angle = self.spread(around);
+    Vec2::from_angle(angle) * self.at(angle)
+  }
+
   /// the outline pushed out by a distance all around, its corners rounder by as much
   pub(super) fn grown(&self, by: f32) -> Self {
     Self::new(
@@ -62,9 +118,9 @@ impl Outline {
       Vec2::new(1.0, 0.2),
       Vec2::new(0.0, 0.2),
     ];
-    Mesh::rings(rings.len(), 96, CREASE, |ring, angle| {
+    Mesh::rings(rings.len(), 96, CREASE, |ring, around| {
       let ring = rings[ring];
-      (Vec2::from_angle(angle) * self.at(angle) * ring.x).extend(ring.y)
+      (self.point(around) * ring.x).extend(ring.y)
     })
   }
 }
@@ -80,15 +136,17 @@ pub(super) fn band(outer: Outline, inner: Outline, tall: f32, cut: f32) -> Mesh 
     (inner, 0.0, tall - cut),
     (inner, 0.0, 0.0),
   ];
-  Mesh::rings(rings.len(), 144, CREASE, |ring, angle| {
+  Mesh::rings(rings.len(), 144, CREASE, |ring, around| {
     let (outline, inset, height) = rings[ring];
+    // both outlines by the outer one's steps, so that the band runs straight across
+    let angle = outer.spread(around);
     (Vec2::from_angle(angle) * (outline.at(angle) - inset)).extend(height)
   })
 }
 
 #[cfg(test)]
 mod tests {
-  use std::f32::consts::{FRAC_PI_2, TAU};
+  use std::f32::consts::{FRAC_1_SQRT_2, FRAC_PI_2, TAU};
 
   use super::*;
 
@@ -111,6 +169,40 @@ mod tests {
     for step in 0..64 {
       let out = round.at(step as f32 / 64.0 * TAU);
       assert!((out - 15.0).abs() < 1e-3, "{out}");
+    }
+  }
+
+  #[test]
+  fn steps_around_an_outline_crowd_into_its_corners_and_miss_none_of_the_turn() {
+    // a long frame's corner is under three degrees of the turn as its middle sees it
+    let rim = Outline::new(500.0, 250.0, 10.0);
+    let steps = 144;
+    let angles: Vec<f32> = (0..=steps)
+      .map(|step| rim.spread(step as f32 / steps as f32 * TAU))
+      .collect();
+    assert!(angles[0].abs() < 1e-5 && (angles[steps] - TAU).abs() < 1e-4);
+    assert!(
+      angles.windows(2).all(|pair| pair[1] > pair[0]),
+      "{angles:?}"
+    );
+    for quarter in 0..4 {
+      // the corner's own middle, which is where the diagonal of its square points
+      let toward = Vec2::new(240.0, 115.0) + Vec2::splat(10.0 * FRAC_1_SQRT_2);
+      let mirrored = match quarter {
+        0 => toward,
+        1 => Vec2::new(-toward.x, toward.y),
+        2 => -toward,
+        _ => Vec2::new(toward.x, -toward.y),
+      };
+      let middle = mirrored.to_angle().rem_euclid(TAU);
+      let near = (angles.iter()).filter(|angle| (**angle - middle).abs() < 0.03);
+      assert!(near.count() >= 5, "few steps on corner {quarter}");
+    }
+    // a circle is all corner, and its steps stay even
+    let round = Outline::new(30.0, 30.0, 15.0);
+    for step in 0..64 {
+      let around = step as f32 / 64.0 * TAU;
+      assert!((round.spread(around) - around).abs() < 1e-4, "{around}");
     }
   }
 
