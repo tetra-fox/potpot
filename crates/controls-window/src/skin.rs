@@ -2,7 +2,7 @@
 
 use controls::Point;
 use controls::flat::Flat;
-use controls::interaction::{Edit, Menu, Target};
+use controls::interaction::{Edit, Menu, Reading, Target};
 
 /// the graphics device the window draws with, for a skin to make what it draws from
 #[derive(Clone, Copy, Debug)]
@@ -20,7 +20,10 @@ pub struct Gpu<'a> {
 /// only when the view has changed
 #[derive(Clone, Copy, Debug)]
 pub struct View<'a> {
-  /// where each parameter stands, in the panel's order
+  /// what each control shows, in the order of the panel's controls
+  pub controls: &'a [Reading],
+  /// where each parameter stands, in the order of the panel's parameters, for whatever a
+  /// skin draws that is not a control's
   pub values: &'a [f32],
   /// the value being typed, if one is
   pub edit: Option<&'a Edit>,

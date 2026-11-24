@@ -11,7 +11,7 @@ use std::f32::consts::PI;
 
 use controls_window::controls::flat::{Color, Flat};
 use controls_window::controls::furniture::{GripLook, MenuLook};
-use controls_window::controls::interaction::{Dial, Edit, Feel, Readout, Target};
+use controls_window::controls::interaction::{Control, Dial, Edit, Feel, Readout, Target};
 use controls_window::controls::stroke;
 use controls_window::{Gpu, Opening, Param, Settings, Skin, View, wgpu};
 
@@ -100,16 +100,13 @@ fn knobs() -> [Knob; 4] {
 
 impl Knob {
   fn dial(&self) -> Dial {
-    Dial {
-      feel: self.feel,
-      ..Dial::linear(
-        self.range,
-        self.default,
-        self.step,
-        self.decimals,
-        self.unit,
-      )
-    }
+    Dial::linear(
+      self.range,
+      self.default,
+      self.step,
+      self.decimals,
+      self.unit,
+    )
   }
 }
 
@@ -146,8 +143,9 @@ impl Skin for Look {
   fn prepare(&mut self, _gpu: &Gpu, view: &View, over: &mut Flat) {
     over.rect([0.0, 0.0], SIZE, GROUND);
     centered(over, "FLAT", [SIZE[0] / 2.0, 36.0], 14.0, LINE);
-    let knobs = self.knobs.iter().zip(&self.dials).zip(view.values);
-    for (control, ((knob, dial), &value)) in knobs.enumerate() {
+    let knobs = self.knobs.iter().zip(&self.dials).zip(view.controls);
+    for (control, ((knob, dial), reading)) in knobs.enumerate() {
+      let value = reading.value;
       // a ring of short lines, and a pointer that sweeps three quarters of the way round
       let on_ring = |turn: f32, reach: f32| {
         let angle = (turn * 1.5 - 0.75) * PI;
@@ -222,12 +220,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     menu: MenuLook::default(),
     grip: GripLook::default(),
   };
-  // parameters no host has: each stands where the panel last set it
+  // a parameter for each knob, which no host has: each stands where the panel last set it
   let params = knobs()
     .iter()
     .map(|knob| Param::free(knob.dial()))
     .collect();
-  let opened = controls_window::open(settings, params, Opening::alone(), |_| Look::new())?;
+  let controls = (knobs().iter().enumerate())
+    .map(|(parameter, knob)| Control {
+      parameter,
+      feel: knob.feel,
+    })
+    .collect();
+  let opened = controls_window::open(settings, params, controls, Opening::alone(), |_| {
+    Look::new()
+  })?;
   opened.window.run_until_closed()?;
   Ok(())
 }

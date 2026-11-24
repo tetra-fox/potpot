@@ -15,7 +15,9 @@ use baseview::{
 use controls::Point;
 use controls::fit::{fitted, point_at};
 use controls::flat::Flat;
-use controls::interaction::{Action, Button, Edit, Event, Interaction, Key, Menu, Moment, Target};
+use controls::interaction::{
+  Action, Button, Control, Edit, Event, Interaction, Key, Menu, Moment, Target,
+};
 use controls::sent::Sent;
 use tracing::error;
 
@@ -263,6 +265,7 @@ impl<S: Skin> Window<S> {
     context: WindowContext,
     settings: Settings,
     params: Vec<Param>,
+    controls: Vec<Control>,
     remembered: Arc<Remembered>,
     shared: Arc<Shared>,
     told: mpsc::Receiver<ToWindow>,
@@ -305,7 +308,13 @@ impl<S: Skin> Window<S> {
         (param.dial, host)
       })
       .unzip();
-    let interaction = Interaction::new(dials, settings.size, settings.readout, settings.scales);
+    let interaction = Interaction::new(
+      dials,
+      controls,
+      settings.size,
+      settings.readout,
+      settings.scales,
+    );
     let values: Vec<f32> = hosts.iter().map(|host| (host.value)()).collect();
     let [_, _, width, height] = fitted(window, settings.size);
     let scale = (f64::from(width) / size.scale_factor) as f32 / settings.size[0];
@@ -320,6 +329,7 @@ impl<S: Skin> Window<S> {
       };
       let mut skin = skin(&gpu);
       let view = View {
+        controls: &interaction.readings(&values),
         values: &values,
         edit: None,
         menu: None,
@@ -574,6 +584,7 @@ impl<S: Skin> Window<S> {
       format: FORMAT,
     };
     let seen = View {
+      controls: &interaction.readings(&values),
       values: &values,
       edit: interaction.edit(),
       menu: interaction.menu(),

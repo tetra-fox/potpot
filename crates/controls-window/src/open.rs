@@ -10,7 +10,7 @@ use baseview::dpi::LogicalSize;
 use baseview::{HandlerError, WindowSettings, WindowWaker};
 use controls::Point;
 use controls::furniture::{GripLook, MenuLook};
-use controls::interaction::{Dial, Key, Readout};
+use controls::interaction::{Control, Dial, Key, Readout};
 use tracing::error;
 use wgpu::rwh::HasWindowHandle;
 
@@ -294,13 +294,14 @@ impl fmt::Debug for Opened {
   }
 }
 
-/// opens a window on a panel, drawn by the skin that `skin` makes once there is a graphics
-/// device to make it with. it opens only if the device can build everything the skin draws
+/// opens a window on a panel of `controls` that turn `params`, drawn by the skin that `skin`
+/// makes once there is a graphics device to make it with. it opens only if the device can build everything the skin draws
 /// with, and from then on nothing that goes wrong with the device or the skin is let out
 /// into the opener's process: it is logged and the window keeps its last picture
 pub fn open<S: Skin, W: HasWindowHandle>(
   settings: Settings,
   params: Vec<Param>,
+  controls: Vec<Control>,
   opening: Opening<'_, W>,
   skin: impl FnOnce(&Gpu) -> S + Send + 'static,
 ) -> Result<Opened, baseview::Error> {
@@ -348,7 +349,7 @@ pub fn open<S: Skin, W: HasWindowHandle>(
     move |context| -> Result<Guarded<S>, HandlerError> {
       Guarded::new(|| {
         Window::new(
-          context, settings, params, remembered, shared, told, top_level, skin,
+          context, settings, params, controls, remembered, shared, told, top_level, skin,
         )
       })
       // baseview hands on an error of the system's in place of this one

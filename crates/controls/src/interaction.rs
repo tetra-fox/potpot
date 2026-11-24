@@ -69,8 +69,9 @@ impl Default for Feel {
   }
 }
 
-/// what there is to know of one control. its value is a part of its whole turn, from zero to
-/// one, and its plain value is that in the units it is read and written in. it can be handed
+/// what there is to know of one parameter, for the controls that turn it. its value is a part
+/// of its whole turn, from zero to one, and its plain value is that in the units it is read
+/// and written in. it can be handed
 /// to another thread, which is where some systems have a window's
 pub struct Dial {
   /// the value a reset gives it
@@ -86,8 +87,6 @@ pub struct Dial {
   pub write: Box<dyn Fn(f32, bool) -> String + Send>,
   /// the value that text stands for, if it is one
   pub read: Read,
-  /// how it answers the pointer and the wheel
-  pub feel: Feel,
 }
 
 type Read = Box<dyn Fn(&str) -> Option<f32> + Send>;
@@ -97,7 +96,6 @@ impl std::fmt::Debug for Dial {
     f.debug_struct("Dial")
       .field("default", &self.default)
       .field("step", &self.step)
-      .field("feel", &self.feel)
       .finish_non_exhaustive()
   }
 }
@@ -129,7 +127,6 @@ impl Dial {
         let figures = text.trim().trim_end_matches(unit.trim()).trim();
         figures.parse().ok().map(turn)
       }),
-      feel: Feel::default(),
     }
   }
 
@@ -147,20 +144,20 @@ impl Dial {
     ((self.turn)((self.plain)(0.0) + step) - (self.turn)((self.plain)(0.0))).abs()
   }
 
-  /// how far a point of dragging turns it
-  fn turn_per_point(&self) -> f32 {
+  /// how far a point of dragging turns it, under a control that feels like `feel`
+  fn turn_per_point(&self, feel: Feel) -> f32 {
     match self.step {
-      Some(step) => (self.feel.drag.turn()).min(self.step_turn(step) / self.feel.points_per_step),
-      None => self.feel.drag.turn(),
+      Some(step) => (feel.drag.turn()).min(self.step_turn(step) / feel.points_per_step),
+      None => feel.drag.turn(),
     }
   }
 
   /// the value some lines of the wheel on from another. with the fine key it is a part of a
   /// step further, and without it the next whole steps that way
-  fn wheeled(&self, value: f32, lines: f32, fine: bool) -> f32 {
+  fn wheeled(&self, value: f32, lines: f32, fine: bool, feel: Feel) -> f32 {
     let turned = match self.step {
-      None => value + lines * self.feel.wheel * if fine { self.feel.fine } else { 1.0 },
-      Some(step) if fine => (self.turn)((self.plain)(value) + lines * step * self.feel.fine),
+      None => value + lines * feel.wheel * if fine { feel.fine } else { 1.0 },
+      Some(step) if fine => (self.turn)((self.plain)(value) + lines * step * feel.fine),
       Some(step) => {
         let steps = (self.plain)(value) / step;
         // from between two steps the first line goes to the one that way, and no further
@@ -176,6 +173,25 @@ impl Dial {
     };
     turned.clamp(0.0, 1.0)
   }
+}
+
+/// one of a panel's controls: something on it that is turned, with a readout of its own. a
+/// control is known by its place among the panel's controls, and names the parameter it
+/// turns by that one's place among the panel's parameters. the two orders are not the same
+/// thing: a parameter may have no control, or more than one
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Control {
+  /// the parameter it turns
+  pub parameter: usize,
+  /// how it answers the pointer and the wheel
+  pub feel: Feel,
+}
+
+/// what a control shows, as the panel's look is handed it
+#[derive(Clone, Debug, PartialEq)]
+pub struct Reading {
+  /// where its parameter stands, as a part of its whole turn
+  pub value: f32,
 }
 
 /// what a point of the panel belongs to
@@ -474,7 +490,9 @@ pub struct Moment<'a> {
 /// the state of a panel's controls: what is being dragged, typed or picked from the menu
 #[derive(Debug)]
 pub struct Interaction {
+  /// what there is to know of each parameter
   dials: Vec<Dial>,
+  controls: Vec<Control>,
   /// the panel's width and height in its points
   size: Point,
   state: State,
@@ -499,12 +517,25 @@ pub struct Readout {
 }
 
 impl Interaction {
-  /// the behaviour of a panel `size` across and down with the controls the dials describe,
-  /// whose readouts are all like `readout`. the grip pulls the window from the first of
-  /// `scales` times its own size to the second
-  pub fn new(dials: Vec<Dial>, size: Point, readout: Readout, scales: [f32; 2]) -> Self {
+  /// the behaviour of a panel `size` across and down with these controls on parameters the
+  /// dials describe, whose readouts are all like `readout`. the grip pulls the window from
+  /// the first of `scales` times its own size to the second
+  pub fn new(
+    dials: Vec<Dial>,
+    controls: Vec<Control>,
+    size: Point,
+    readout: Readout,
+    scales: [f32; 2],
+  ) -> Self {
+    assert!(
+      controls
+        .iter()
+        .all(|control| control.parameter < dials.len()),
+      "every control turns one of the panel's parameters"
+    );
     Self {
       dials,
+      controls,
       size,
       state: State::Idle,
       pressed: None,
@@ -513,6 +544,15 @@ impl Interaction {
       readout,
       scales,
     }
+  }
+
+  /// what each control shows with the parameters at `values`, in the controls' order
+  pub fn readings(&self, values: &[f32]) -> Vec<Reading> {
+    (self.controls.iter())
+      .map(|control| Reading {
+        value: values[control.parameter],
+      })
+      .collect()
   }
 
   /// the value being typed, if one is
@@ -591,7 +631,7 @@ impl Interaction {
     match self.state {
       State::Drag { control, begun, .. } => {
         if begun {
-          actions.push(Action::End(control));
+          actions.push(Action::End(self.controls[control].parameter));
         }
         self.state = State::Idle;
       }
@@ -617,7 +657,8 @@ impl Interaction {
         fine,
         begun,
       } => {
-        let dial = &self.dials[*control];
+        let Control { parameter, feel } = self.controls[*control];
+        let dial = &self.dials[parameter];
         // with the fine key the knob goes on from where it shows, so that pressing the key
         // moves nothing, and every move adds its own part of a turn, so that the key changes
         // the pace from here on and not the place
@@ -625,8 +666,8 @@ impl Interaction {
           *turned = *value;
         }
         *fine = now_fine;
-        let pace = dial.turn_per_point() * if now_fine { dial.feel.fine } else { 1.0 };
-        *turned = (*turned + dial.feel.drag.travel(*from, at) * pace).clamp(0.0, 1.0);
+        let pace = dial.turn_per_point(feel) * if now_fine { feel.fine } else { 1.0 };
+        *turned = (*turned + feel.drag.travel(*from, at) * pace).clamp(0.0, 1.0);
         *from = at;
         let shown = if now_fine {
           *turned
@@ -640,9 +681,9 @@ impl Interaction {
         *value = shown;
         if !*begun {
           *begun = true;
-          actions.push(Action::Begin(*control));
+          actions.push(Action::Begin(parameter));
         }
-        actions.push(Action::Set(*control, shown));
+        actions.push(Action::Set(parameter, shown));
       }
       State::Resize { grab, from, scale } => {
         // the corner goes as far as the pointer has gone since it took hold, across or down,
@@ -700,19 +741,20 @@ impl Interaction {
       // a press while the menu is up goes to the menu and nothing under or around it
       State::Menu(menu) => {
         let control = menu.control;
-        let dial = &self.dials[control];
+        let parameter = self.controls[control].parameter;
+        let dial = &self.dials[parameter];
         match over {
           Some(Target::Item(Item::Edit)) => self.begin_edit(control, values, actions),
           Some(Target::Item(Item::Reset)) => {
             self.state = State::Idle;
-            actions.extend(gesture(control, dial.default));
+            actions.extend(gesture(parameter, dial.default));
             actions.push(Action::Redraw);
           }
           // with its unit, which keeps it from being read as the value of a control that
           // has another
           Some(Target::Item(Item::Copy)) => {
             self.state = State::Idle;
-            let value = (dial.write)(values[control], true);
+            let value = (dial.write)(values[parameter], true);
             actions.extend([Action::Copy(value), Action::Redraw]);
           }
           Some(Target::Item(Item::Paste)) => {
@@ -736,13 +778,15 @@ impl Interaction {
 
     match over {
       Some(Target::Control(control)) if reset || double => {
-        actions.extend(gesture(control, self.dials[control].default));
+        let parameter = self.controls[control].parameter;
+        actions.extend(gesture(parameter, self.dials[parameter].default));
       }
       Some(Target::Control(control)) => {
+        let parameter = self.controls[control].parameter;
         self.state = State::Drag {
           control,
-          turned: values[control],
-          value: values[control],
+          turned: values[parameter],
+          value: values[parameter],
           from: at,
           fine: false,
           begun: false,
@@ -792,23 +836,24 @@ impl Interaction {
     else {
       return;
     };
+    let Control { parameter, feel } = self.controls[control];
     let from = match self.wheel {
       Some((turning, value, _)) if turning == control => value,
       _ => {
         self.rest_wheel(actions);
-        actions.push(Action::Begin(control));
-        moment.values[control]
+        actions.push(Action::Begin(parameter));
+        moment.values[parameter]
       }
     };
-    let value = self.dials[control].wheeled(from, lines, fine);
+    let value = self.dials[parameter].wheeled(from, lines, fine, feel);
     self.wheel = Some((control, value, moment.now));
-    actions.push(Action::Set(control, value));
+    actions.push(Action::Set(parameter, value));
   }
 
   /// ends the gesture the wheel has open, if it has one
   fn rest_wheel(&mut self, actions: &mut Vec<Action>) {
     if let Some((control, _, _)) = self.wheel.take() {
-      actions.push(Action::End(control));
+      actions.push(Action::End(self.controls[control].parameter));
     }
   }
 
@@ -895,14 +940,15 @@ impl Interaction {
       (Paste::Typed(_), _) => {}
       (Paste::Value(control), _) => {
         if let Some(value) = self.read(control, text) {
-          actions.extend(gesture(control, value));
+          actions.extend(gesture(self.controls[control].parameter, value));
         }
       }
     }
   }
 
   fn begin_edit(&mut self, control: usize, values: &[f32], actions: &mut Vec<Action>) {
-    let text = (self.dials[control].write)(values[control], false);
+    let parameter = self.controls[control].parameter;
+    let text = (self.dials[parameter].write)(values[parameter], false);
     self.state = State::Edit(Edit {
       control,
       caret: text.chars().count(),
@@ -920,7 +966,7 @@ impl Interaction {
     };
     let control = edit.control;
     if let Some(value) = self.read(control, &edit.text) {
-      actions.extend(gesture(control, value));
+      actions.extend(gesture(self.controls[control].parameter, value));
     }
     self.state = State::Idle;
     actions.push(Action::Redraw);
@@ -929,7 +975,7 @@ impl Interaction {
   /// the value of a control that text stands for, if it reads as one
   fn read(&self, control: usize, text: &str) -> Option<f32> {
     // a comma is the decimal point of many keyboards' number pads
-    (self.dials[control].read)(&text.replace(',', "."))
+    (self.dials[self.controls[control].parameter].read)(&text.replace(',', "."))
   }
 
   fn dismiss(&mut self, actions: &mut Vec<Action>) {
@@ -940,12 +986,12 @@ impl Interaction {
   }
 }
 
-/// a control set to a value as one whole gesture
-fn gesture(control: usize, value: f32) -> [Action; 3] {
+/// a parameter set to a value as one whole gesture
+fn gesture(parameter: usize, value: f32) -> [Action; 3] {
   [
-    Action::Begin(control),
-    Action::Set(control, value),
-    Action::End(control),
+    Action::Begin(parameter),
+    Action::Set(parameter, value),
+    Action::End(parameter),
   ]
 }
 
@@ -994,7 +1040,6 @@ mod tests {
         let plain: f32 = text.trim().trim_end_matches(" st").parse().ok()?;
         Some(((plain + 24.0) / 48.0).clamp(0.0, 1.0))
       }),
-      feel: Feel::default(),
     }
   }
 
@@ -1009,8 +1054,60 @@ mod tests {
         let hundredths: f32 = text.trim().trim_end_matches([' ', '%']).parse().ok()?;
         Some((hundredths / 100.0).clamp(0.0, 1.0))
       }),
-      feel: Feel::default(),
     }
+  }
+
+  #[test]
+  fn a_control_turns_the_parameter_it_names_and_not_the_one_at_its_own_place() {
+    // two controls on four parameters: the first turns the mix, the second the pitch
+    let dials = vec![shift(None), shift(None), mix(), shift(Some(1.0))];
+    let on = |parameter| Control {
+      parameter,
+      feel: Feel::default(),
+    };
+    let readout = Readout {
+      room: ROOM,
+      shows: |_| true,
+    };
+    let mut panel = Interaction::new(dials, vec![on(MIX), on(PITCH)], SIZE, readout, SCALES);
+    let values = [0.5, 0.5, 1.0, 0.5];
+    let moment = Moment {
+      now: Instant::now(),
+      values: &values,
+      scale: 1.0,
+    };
+    // each control shows its own parameter
+    let readings = panel.readings(&values);
+    assert_eq!([readings[0].value, readings[1].value], [1.0, 0.5]);
+    // a double click on the second control resets the pitch, which is the first parameter
+    let press = |over| Event::Press {
+      button: Button::Left,
+      at: [10.0, 10.0],
+      window: [10.0, 10.0],
+      over: Some(over),
+      reset: true,
+    };
+    assert_eq!(
+      panel.handle(press(Target::Control(1)), moment),
+      [
+        Action::Begin(PITCH),
+        Action::Set(PITCH, 0.5),
+        Action::End(PITCH)
+      ]
+    );
+    assert_eq!(
+      panel.handle(press(Target::Control(0)), moment),
+      [Action::Begin(MIX), Action::Set(MIX, 1.0), Action::End(MIX)]
+    );
+    // and the wheel over the first control's readout turns the mix down
+    let wheel = Event::Wheel {
+      over: Some(Target::Readout(0)),
+      lines: -1.0,
+      fine: false,
+    };
+    let actions = panel.handle(wheel, moment);
+    assert_eq!(actions[0], Action::Begin(MIX));
+    assert!(matches!(actions[1], Action::Set(MIX, value) if value < 1.0));
   }
 
   #[test]
@@ -1038,7 +1135,14 @@ mod tests {
       room: ROOM,
       shows: |letter| letter.is_ascii_digit() || " +-.,%st".contains(letter),
     };
-    Interaction::new(dials, SIZE, readout, SCALES)
+    // a control for each parameter, in the same order
+    let controls = (0..dials.len())
+      .map(|parameter| Control {
+        parameter,
+        feel: Feel::default(),
+      })
+      .collect();
+    Interaction::new(dials, controls, SIZE, readout, SCALES)
   }
 
   impl Bench {

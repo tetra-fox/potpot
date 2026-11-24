@@ -11,7 +11,7 @@
 //! ```no_run
 //! use controls_window::controls::flat::Flat;
 //! use controls_window::controls::furniture::{GripLook, MenuLook};
-//! use controls_window::controls::interaction::{Dial, Readout, Target};
+//! use controls_window::controls::interaction::{Control, Dial, Feel, Readout, Target};
 //! use controls_window::{Gpu, Opening, Param, Settings, Skin, View, wgpu};
 //!
 //! /// one control, drawn as a bar as long as its value
@@ -19,7 +19,7 @@
 //!
 //! impl Skin for Bar {
 //!   fn prepare(&mut self, _: &Gpu, view: &View, over: &mut Flat) {
-//!     over.rect([20.0, 40.0], [20.0 + 160.0 * view.values[0], 60.0], [1.0; 4]);
+//!     over.rect([20.0, 40.0], [20.0 + 160.0 * view.controls[0].value, 60.0], [1.0; 4]);
 //!   }
 //!   fn draw(&self, _: &mut wgpu::CommandEncoder, _: &wgpu::TextureView, _: [u32; 4]) {}
 //!   fn target_at(&self, at: [f32; 2]) -> Option<Target> {
@@ -36,7 +36,8 @@
 //!   grip: GripLook::default(),
 //! };
 //! let params = vec![Param::free(Dial::linear([0.0, 1.0], 0.5, None, 2, ""))];
-//! let opened = controls_window::open(settings, params, Opening::alone(), |_| Bar)?;
+//! let controls = vec![Control { parameter: 0, feel: Feel::default() }];
+//! let opened = controls_window::open(settings, params, controls, Opening::alone(), |_| Bar)?;
 //! opened.window.run_until_closed()?;
 //! # Ok::<(), controls_window::baseview::Error>(())
 //! ```

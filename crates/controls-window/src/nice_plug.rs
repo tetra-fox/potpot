@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use baseview::HandlerError;
 use controls::fit::{chosen, shaped};
-use controls::interaction::{Dial, Feel, Key};
+use controls::interaction::{Control, Dial, Feel, Key};
 use nice_plug::context::gui::GuiContext;
 use nice_plug::editor::dpi::NativeSize;
 use nice_plug::editor::{EditorHandle, HostMethods, ResizeHint, SpawnedEditor};
@@ -60,8 +60,8 @@ impl Held {
     unsafe { self.param.unmodulated_normalized_value() }
   }
 
-  /// what the control on it does
-  fn dial(&self, step: Option<f32>, feel: Feel) -> Dial {
+  /// what there is to know of it for a control that moves by `step`
+  fn dial(&self, step: Option<f32>) -> Dial {
     let (plain, turn, write, read) = (self.clone(), self.clone(), self.clone(), self.clone());
     Dial {
       // SAFETY: `param` points into `_params`, which `self` keeps alive, as does each of
@@ -78,16 +78,15 @@ impl Held {
       }),
       // SAFETY: the same
       read: Box::new(move |text| unsafe { read.param.string_to_normalized_value(text) }),
-      feel,
     }
   }
 
   /// the parameter as the window has it, with its ways to the host through `gui`
-  fn bound(&self, step: Option<f32>, feel: Feel, gui: &GuiContext) -> Param {
+  fn bound(&self, step: Option<f32>, gui: &GuiContext) -> Param {
     let (value, begin, set, end) = (self.clone(), self.clone(), self.clone(), self.clone());
     let (began, sets, ended) = (gui.clone(), gui.clone(), gui.clone());
     Param {
-      dial: self.dial(step, feel),
+      dial: self.dial(step),
       value: Box::new(move || value.value()),
       // SAFETY: the wrapper asks that the parameter exists, and it is one of `_params`'
       // own, which `begin` keeps alive
@@ -204,7 +203,14 @@ impl<S: Skin> nice_plug::editor::Editor for Editor<S> {
           _params: Arc::clone(&self.params),
           param: bound.param,
         };
-        held.bound(bound.step, bound.feel, &gui_context)
+        held.bound(bound.step, &gui_context)
+      })
+      .collect();
+    // each bound control turns the parameter bound at its own place
+    let controls = (self.bound.iter().enumerate())
+      .map(|(parameter, bound)| Control {
+        parameter,
+        feel: bound.feel,
       })
       .collect();
     let opening = Opening {
@@ -216,7 +222,13 @@ impl<S: Skin> nice_plug::editor::Editor for Editor<S> {
       shared: Arc::clone(&self.shared),
     };
     let skin = Arc::clone(&self.skin);
-    let opened = open(self.settings.clone(), params, opening, move |gpu| skin(gpu))?;
+    let opened = open(
+      self.settings.clone(),
+      params,
+      controls,
+      opening,
+      move |gpu| skin(gpu),
+    )?;
     Ok(SpawnedEditor {
       handle: Handle {
         tell: opened.tell,
@@ -413,7 +425,7 @@ mod tests {
   use controls::interaction::{Readout, Target};
   use nice_plug::prelude::{FloatParam, FloatRange, Param, Params};
 
-  use super::{Arc, Bound, Feel, Gpu, Held, NotOurs, Remembered, Settings, Skin};
+  use super::{Arc, Bound, Gpu, Held, NotOurs, Remembered, Settings, Skin};
   use crate::skin::View;
 
   #[derive(Params)]
@@ -488,7 +500,7 @@ mod tests {
       _params: Arc::clone(&params) as Arc<dyn Params>,
       param: params.first.as_ptr(),
     };
-    let dial = held.dial(None, Feel::default());
+    let dial = held.dial(None);
     assert_eq!(held.value(), 0.25);
     assert_eq!(dial.default, 0.25);
     assert_eq!((dial.plain)(0.5), 0.5);

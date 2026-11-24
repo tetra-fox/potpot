@@ -8,12 +8,16 @@
 //! ```
 //! use std::time::Instant;
 //!
-//! use controls::interaction::{Action, Button, Dial, Event, Interaction, Moment, Readout, Target};
+//! use controls::interaction::{
+//!   Action, Button, Control, Dial, Event, Feel, Interaction, Moment, Readout, Target,
+//! };
 //!
-//! // one knob over two octaves in whole semitones, on a panel 200 points by 100
+//! // a parameter over two octaves in whole semitones, and one knob that turns it, on a panel
+//! // 200 points by 100
 //! let dial = Dial::linear([-12.0, 12.0], 0.0, Some(1.0), 0, " st");
+//! let knob = Control { parameter: 0, feel: Feel::default() };
 //! let readout = Readout { room: 6, shows: |letter| letter.is_ascii() };
-//! let mut panel = Interaction::new(vec![dial], [200.0, 100.0], readout, [1.0, 2.0]);
+//! let mut panel = Interaction::new(vec![dial], vec![knob], [200.0, 100.0], readout, [1.0, 2.0]);
 //!
 //! // the pointer goes down on it and up the panel by forty points
 //! let moment = Moment { now: Instant::now(), values: &[0.5], scale: 1.0 };
