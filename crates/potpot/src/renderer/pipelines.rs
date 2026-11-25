@@ -9,6 +9,8 @@ use crate::scene::LAMPS;
 pub(super) const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// the picture holds srgb-encoded color in a format that does not encode, see scene.wgsl
 pub(super) const PICTURE: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// linear light in rgb and a height in a, which is not within zero and one
+pub(super) const BOUNCE: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// the samples of each pixel when edges are smoothed
 pub(super) const SAMPLES: u32 = 4;
 
@@ -28,7 +30,9 @@ pub(super) fn scene_source() -> String {
 #[derive(Debug)]
 pub(super) struct Layouts {
   pub(super) globals: wgpu::BindGroupLayout,
-  /// the shadow map with its sampler, and the height map
+  /// the shadow map with its sampler, for the pass that draws the bounce map
+  pub(super) shadow: wgpu::BindGroupLayout,
+  /// the shadow map with its sampler, the height map, and the bounce map with its sampler
   pub(super) maps: wgpu::BindGroupLayout,
   /// the picture with its sampler, and how it is degraded
   pub(super) present: wgpu::BindGroupLayout,
@@ -67,12 +71,21 @@ impl Layouts {
         label: Some("potpot globals"),
         entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT)],
       }),
-      maps: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+      shadow: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("potpot shadow map"),
         entries: &[
           texture(0, wgpu::TextureSampleType::Depth),
           sampler(1, wgpu::SamplerBindingType::Comparison),
+        ],
+      }),
+      maps: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("potpot maps"),
+        entries: &[
+          texture(0, wgpu::TextureSampleType::Depth),
+          sampler(1, wgpu::SamplerBindingType::Comparison),
           texture(2, wgpu::TextureSampleType::Depth),
+          texture(3, wgpu::TextureSampleType::Float { filterable: true }),
+          sampler(4, wgpu::SamplerBindingType::Filtering),
         ],
       }),
       present: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -91,6 +104,7 @@ impl Layouts {
 pub(super) struct Pipelines {
   pub(super) shadow: wgpu::RenderPipeline,
   pub(super) height: wgpu::RenderPipeline,
+  pub(super) bounce: wgpu::RenderPipeline,
   /// for one sample a pixel, and for [`SAMPLES`]
   pub(super) scene: [wgpu::RenderPipeline; 2],
   pub(super) present: wgpu::RenderPipeline,
@@ -153,34 +167,52 @@ impl Pipelines {
         cache: None,
       })
     };
+    // a pipeline that draws the objects lit, by a pair of the scene shader's entry points
+    let lit =
+      |label, layout: &wgpu::PipelineLayout, [vertex, fragment]: [&str; 2], format, count| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+          label: Some(label),
+          layout: Some(layout),
+          vertex: wgpu::VertexState {
+            module: &scene_shader,
+            entry_point: Some(vertex),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &vertex_buffers,
+          },
+          fragment: Some(wgpu::FragmentState {
+            module: &scene_shader,
+            entry_point: Some(fragment),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState::from(format))],
+          }),
+          primitive,
+          depth_stencil: Some(depth()),
+          multisample: wgpu::MultisampleState {
+            count,
+            ..Default::default()
+          },
+          multiview: None,
+          cache: None,
+        })
+      };
     let scene_layout = layout("potpot scene", &[&layouts.globals, &layouts.maps]);
     // one for each count of samples, since a pipeline draws at only one
     let scene = [1, SAMPLES].map(|count| {
-      device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("potpot scene"),
-        layout: Some(&scene_layout),
-        vertex: wgpu::VertexState {
-          module: &scene_shader,
-          entry_point: Some("vertex"),
-          compilation_options: wgpu::PipelineCompilationOptions::default(),
-          buffers: &vertex_buffers,
-        },
-        fragment: Some(wgpu::FragmentState {
-          module: &scene_shader,
-          entry_point: Some("fragment"),
-          compilation_options: wgpu::PipelineCompilationOptions::default(),
-          targets: &[Some(PICTURE.into())],
-        }),
-        primitive,
-        depth_stencil: Some(depth()),
-        multisample: wgpu::MultisampleState {
-          count,
-          ..Default::default()
-        },
-        multiview: None,
-        cache: None,
-      })
+      lit(
+        "potpot scene",
+        &scene_layout,
+        ["vertex", "fragment"],
+        PICTURE,
+        count,
+      )
     });
+    let bounce = lit(
+      "potpot bounce",
+      &layout("potpot bounce", &[&layouts.globals, &layouts.shadow]),
+      ["bounce_vertex", "bounce_fragment"],
+      BOUNCE,
+      SAMPLES,
+    );
     let present = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
       label: Some("potpot present"),
       layout: Some(&layout("potpot present", &[&layouts.present])),
@@ -206,6 +238,7 @@ impl Pipelines {
     Self {
       shadow: depth_only("potpot shadow", "shadow_vertex"),
       height: depth_only("potpot heights", "height_vertex"),
+      bounce,
       scene,
       present,
     }

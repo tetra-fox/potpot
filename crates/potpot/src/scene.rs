@@ -58,6 +58,11 @@ pub struct Light {
   /// how much the light that reaches every surface is kept out of corners and from under
   /// things, which grounds everything on the panel with a soft dark edge. zero is none
   pub occlusion: f32,
+  /// how much of the light that comes off surfaces lands on what is next to them, which
+  /// tints a thing with the color of its neighbors and lightens the sides of things that
+  /// face away from the light. zero is none and costs nothing, and it takes about three
+  /// to show plainly
+  pub bounce: f32,
   /// how wide the edges of shadows are, as if the light were that much bigger. one is
   /// nearly a point, and a studio's wide soft light is five or more
   pub softness: f32,
@@ -75,6 +80,7 @@ impl Default for Light {
       ambient: Vec3::splat(0.25),
       falloff: 0.22,
       occlusion: 1.0,
+      bounce: 0.0,
       softness: 2.5,
       nearness: 1.2,
     }

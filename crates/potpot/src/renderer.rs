@@ -1,4 +1,4 @@
-//! draws a [`Scene`] with wgpu: a shadow map, the lit picture at its own resolution, and that
+//! draws a [`Scene`] with wgpu: a few maps, the lit picture at its own resolution, and that
 //! picture stretched into place on a target. the picture is kept, and drawn again only for a
 //! scene that differs from the one it shows
 
@@ -13,7 +13,7 @@ use bytemuck::Zeroable;
 use wgpu::util::DeviceExt;
 
 use self::picture::Picture;
-use self::pipelines::{DEPTH, Layouts, Pipelines};
+use self::pipelines::{BOUNCE, DEPTH, Layouts, Pipelines, SAMPLES};
 use self::uniforms::{Globals, Placed, Present};
 use crate::mesh::Mesh;
 use crate::scene::{Object, Scene};
@@ -22,6 +22,10 @@ use crate::scene::{Object, Scene};
 const SHADOW_SIZE: u32 = 2048;
 /// the width and height of the map of how high everything on the panel is
 const HEIGHT_SIZE: u32 = 1024;
+/// the width and height of the map of the light that comes off everything on the panel.
+/// small, since a point catches that light from a few of its texels around it and so from
+/// further off the larger they are
+const BOUNCE_SIZE: u32 = 64;
 
 /// a rectangle of a target, in its pixels
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -42,7 +46,14 @@ pub struct Renderer {
   shadow_map: wgpu::TextureView,
   /// how high everything on the panel is, seen from straight above
   height_map: wgpu::TextureView,
-  /// both maps, for the scene pass to read
+  /// the shadow map alone, for the bounce pass to read
+  shadow_group: wgpu::BindGroup,
+  /// the light that comes off everything on the panel, seen from straight above: what the
+  /// bounce pass draws into, its depth, and what that is resolved into to be read
+  bounce_samples: wgpu::TextureView,
+  bounce_depth: wgpu::TextureView,
+  bounce_map: wgpu::TextureView,
+  /// every map, for the scene pass to read
   maps_group: wgpu::BindGroup,
   present_layout: wgpu::BindGroupLayout,
   present_options: wgpu::Buffer,
@@ -99,8 +110,27 @@ impl Renderer {
       }],
     });
 
-    let shadow_map = depth_map(device, "potpot shadow map", SHADOW_SIZE);
-    let height_map = depth_map(device, "potpot heights", HEIGHT_SIZE);
+    let read = wgpu::TextureUsages::TEXTURE_BINDING;
+    let shadow_map = map(device, "potpot shadow map", SHADOW_SIZE, DEPTH, 1, read);
+    let height_map = map(device, "potpot heights", HEIGHT_SIZE, DEPTH, 1, read);
+    let none = wgpu::TextureUsages::empty();
+    let bounce_samples = map(
+      device,
+      "potpot bounce samples",
+      BOUNCE_SIZE,
+      BOUNCE,
+      SAMPLES,
+      none,
+    );
+    let bounce_depth = map(
+      device,
+      "potpot bounce depth",
+      BOUNCE_SIZE,
+      DEPTH,
+      SAMPLES,
+      none,
+    );
+    let bounce_map = map(device, "potpot bounce", BOUNCE_SIZE, BOUNCE, 1, read);
     let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
       label: Some("potpot shadow map"),
       mag_filter: wgpu::FilterMode::Linear,
@@ -108,22 +138,34 @@ impl Renderer {
       compare: Some(wgpu::CompareFunction::LessEqual),
       ..Default::default()
     });
-    let maps_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let bounce_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+      label: Some("potpot bounce"),
+      mag_filter: wgpu::FilterMode::Linear,
+      min_filter: wgpu::FilterMode::Linear,
+      ..Default::default()
+    });
+    let view = |binding, view| wgpu::BindGroupEntry {
+      binding,
+      resource: wgpu::BindingResource::TextureView(view),
+    };
+    let sampler = |binding, sampler| wgpu::BindGroupEntry {
+      binding,
+      resource: wgpu::BindingResource::Sampler(sampler),
+    };
+    let shadow_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
       label: Some("potpot shadow map"),
+      layout: &layouts.shadow,
+      entries: &[view(0, &shadow_map), sampler(1, &shadow_sampler)],
+    });
+    let maps_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+      label: Some("potpot maps"),
       layout: &layouts.maps,
       entries: &[
-        wgpu::BindGroupEntry {
-          binding: 0,
-          resource: wgpu::BindingResource::TextureView(&shadow_map),
-        },
-        wgpu::BindGroupEntry {
-          binding: 1,
-          resource: wgpu::BindingResource::Sampler(&shadow_sampler),
-        },
-        wgpu::BindGroupEntry {
-          binding: 2,
-          resource: wgpu::BindingResource::TextureView(&height_map),
-        },
+        view(0, &shadow_map),
+        sampler(1, &shadow_sampler),
+        view(2, &height_map),
+        view(3, &bounce_map),
+        sampler(4, &bounce_sampler),
       ],
     });
 
@@ -133,6 +175,10 @@ impl Renderer {
       globals_group,
       shadow_map,
       height_map,
+      shadow_group,
+      bounce_samples,
+      bounce_depth,
+      bounce_map,
       maps_group,
       present_layout: layouts.present,
       present_options: uniform("potpot present", size_of::<Present>()),
@@ -238,7 +284,8 @@ impl Renderer {
     }
   }
 
-  /// the shadow map, the height map, and then the lit scene into the picture
+  /// the shadow map, the height map, the bounce map if light bounces, and then the lit
+  /// scene into the picture
   fn draw_picture(&self, device: &wgpu::Device, queue: &wgpu::Queue, picture: &Picture) {
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
       label: Some("potpot picture"),
@@ -257,6 +304,32 @@ impl Renderer {
       });
       pass.set_pipeline(pipeline);
       pass.set_bind_group(0, &self.globals_group, &[]);
+      self.draw_objects(&mut pass);
+    }
+    if self.held_globals.bounces() {
+      // where nothing is drawn no light comes off, from as low as anything gets
+      let nothing = wgpu::Color {
+        a: f64::from(self.held_globals.lowest()),
+        ..wgpu::Color::TRANSPARENT
+      };
+      let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("potpot bounce"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          view: &self.bounce_samples,
+          depth_slice: None,
+          resolve_target: Some(&self.bounce_map),
+          ops: wgpu::Operations {
+            load: wgpu::LoadOp::Clear(nothing),
+            store: wgpu::StoreOp::Discard,
+          },
+        })],
+        depth_stencil_attachment: Some(depth_attachment(&self.bounce_depth)),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+      });
+      pass.set_pipeline(&self.pipelines.bounce);
+      pass.set_bind_group(0, &self.globals_group, &[]);
+      pass.set_bind_group(1, &self.shadow_group, &[]);
       self.draw_objects(&mut pass);
     }
     {
@@ -360,8 +433,15 @@ impl Loaded {
   }
 }
 
-/// a square depth texture that a pass draws into and a later one reads
-fn depth_map(device: &wgpu::Device, label: &str, size: u32) -> wgpu::TextureView {
+/// a square texture that a pass draws into, with whatever else is done with it
+fn map(
+  device: &wgpu::Device,
+  label: &str,
+  size: u32,
+  format: wgpu::TextureFormat,
+  sample_count: u32,
+  also: wgpu::TextureUsages,
+) -> wgpu::TextureView {
   device
     .create_texture(&wgpu::TextureDescriptor {
       label: Some(label),
@@ -371,10 +451,10 @@ fn depth_map(device: &wgpu::Device, label: &str, size: u32) -> wgpu::TextureView
         depth_or_array_layers: 1,
       },
       mip_level_count: 1,
-      sample_count: 1,
+      sample_count,
       dimension: wgpu::TextureDimension::D2,
-      format: DEPTH,
-      usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+      format,
+      usage: wgpu::TextureUsages::RENDER_ATTACHMENT | also,
       view_formats: &[],
     })
     .create_view(&wgpu::TextureViewDescriptor::default())

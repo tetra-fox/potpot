@@ -25,6 +25,16 @@ pub(super) struct Globals {
 }
 
 impl Globals {
+  /// whether light comes off surfaces onto their neighbors at all
+  pub(super) fn bounces(&self) -> bool {
+    self.ambient[3] > 0.0
+  }
+
+  /// the lowest anything on the panel reaches
+  pub(super) fn lowest(&self) -> f32 {
+    self.panel[2]
+  }
+
   pub(super) fn of(scene: &Scene) -> Self {
     let light = scene.light;
     Self {
@@ -35,7 +45,7 @@ impl Globals {
         .extend(light.nearness * scene.size.max_element())
         .into(),
       light_color: light.color.extend(light.falloff).into(),
-      ambient: light.ambient.extend(0.0).into(),
+      ambient: light.ambient.extend(light.bounce).into(),
       shadows: [
         f32::from(u8::from(scene.look.soft_shadows)),
         1.0 / SHADOW_SIZE as f32,
