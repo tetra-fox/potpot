@@ -204,6 +204,7 @@ pub(super) fn synth(look: Look) -> Scene {
         at: Vec3::new(x, y - 31.0, 12.0),
         color: green * 2.5,
         reach: 40.0,
+        radius: 5.5,
       });
     }
   }

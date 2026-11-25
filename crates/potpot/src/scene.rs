@@ -39,6 +39,9 @@ pub struct Lamp {
   pub color: Vec3,
   /// how far its light gets before it has faded to nothing
   pub reach: f32,
+  /// how far from its middle the thing that shines reaches, which is how large the lamp
+  /// shows in a mirror
+  pub radius: f32,
 }
 
 #[derive(Clone, Copy, Debug)]

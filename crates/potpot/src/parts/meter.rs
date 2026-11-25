@@ -153,6 +153,7 @@ impl Meter {
       at: Vec3::new(x, y - self.pitch * (top as f32 + 0.5), self.width),
       color: self.color(top) * 0.6,
       reach: self.width * 3.0,
+      radius: self.width.max(self.length) / 2.0,
     })
   }
 }

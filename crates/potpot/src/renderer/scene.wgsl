@@ -25,6 +25,7 @@ struct Globals {
 struct Lamp {
   // where it is, and in w how far its light gets
   at: vec4<f32>,
+  // and in w how far from its middle the thing that shines reaches
   color: vec4<f32>,
 }
 
@@ -293,15 +294,45 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
   let nearness = 1.0 + globals.light_color.w * 2.0 * dot(from_middle, normalize(toward_light.xy + vec2<f32>(0.0, 0.0001)));
   let direct = globals.light_color.rgb * nearness;
   let lighting = globals.ambient.rgb * around * open + direct * facing * share * mix(1.0, open, 0.35);
+  // how sharply it mirrors goes with how tight its highlight is
+  let crisp = clamp((log2(max(lit.highlight.y, 1.0)) - 4.0) / 3.6, 0.0, 1.0);
+  let leaving = reflect(-toward_viewer, normal);
   var lighting_with_lamps = lighting;
+  // the highlights the lamps make, and what a mirror shows of the lamps themselves
+  var glints = vec3<f32>(0.0);
+  var lamps_mirrored = vec3<f32>(0.0);
   for (var index = 0; index < i32(globals.shadows.z); index++) {
     let lamp = globals.lamps[index];
     let toward = lamp.at.xyz - lit.world;
     let away = length(toward);
     let fade = clamp(1.0 - away / lamp.at.w, 0.0, 1.0);
+    if fade == 0.0 {
+      continue;
+    }
+    let reaching = toward / max(away, 0.0001);
+    let strength = lamp.color.rgb * fade * fade;
     // a surface turned from the lamp still catches a little of it off everything else
-    let catches = 0.25 + 0.75 * max(dot(normal, toward / max(away, 0.0001)), 0.0);
-    lighting_with_lamps += lamp.color.rgb * fade * fade * catches;
+    let catches = 0.25 + 0.75 * max(dot(normal, reaching), 0.0);
+    lighting_with_lamps += strength * catches;
+    // how wide the lamp looks from here
+    let wide = atan2(lamp.color.w, away);
+    if dot(normal, reaching) > 0.0 {
+      // a lamp that looks wide makes a highlight wider than the surface alone would
+      let spread = sqrt(2.0 / max(lit.highlight.y, 1.0)) + wide * 0.5;
+      let tightness = 2.0 / (spread * spread);
+      let between = normalize(reaching + toward_viewer);
+      var glint = pow(max(dot(normal, between), 0.0), tightness);
+      if spun > 0.0 {
+        glint = mix(glint, spun_shine(lit.world, lit.center, lit.axis, between, tightness), spun);
+      }
+      glints += strength * glint;
+    }
+    // the lamp in a mirror is a disc of that width, with an edge as soft as the mirror is
+    // dull, and dimmer the more the edge spreads it
+    let blur = mix(0.35, 0.02, crisp);
+    let off = acos(clamp(dot(leaving, reaching), -1.0, 1.0));
+    let disc = (1.0 - smoothstep(wide - blur, wide + blur, off)) * wide * wide / (wide * wide + blur * blur);
+    lamps_mirrored += lamp.color.rgb * fade * disc;
   }
   let glow = lit.color.a;
   var color = surface * mix(lighting_with_lamps, vec3<f32>(1.0), glow) * (1.0 - 0.7 * metal);
@@ -335,15 +366,15 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
   }
   let lit_side = step(0.0001, facing) * mix(0.35, 1.0, share);
   color += direct * tint * shine * lit.highlight.x * lit_side;
+  // what lights itself shows no lamp's shine over its own light
+  color += glints * tint * lit.highlight.x * (1.0 - glow);
 
   // a mirror shows more the more it is seen edge-on, and metal shows it from any side
   let edge_on = pow(1.0 - seen, 5.0);
   let base = mix(0.05, 0.75, metal);
-  let leaving = reflect(-toward_viewer, normal);
-  // how sharply it mirrors goes with how tight its highlight is
-  let crisp = clamp((log2(max(lit.highlight.y, 1.0)) - 4.0) / 3.6, 0.0, 1.0);
-  let mirrored = room(leaving, normal, crisp, metal) * (base + (1.0 - base) * edge_on);
-  color += tint * mirrored * mirrors * mix(0.6, 1.0, share) * mix(0.5, 1.0, open);
+  let mirroring = (base + (1.0 - base) * edge_on) * mirrors;
+  color += tint * room(leaving, normal, crisp, metal) * mirroring * mix(0.6, 1.0, share) * mix(0.5, 1.0, open);
+  color += tint * lamps_mirrored * mirroring * (1.0 - glow);
 
   // a pane shows a sheen over the corner of it nearest the light, cut off along a slant,
   // the look of a flat piece of glass with a window somewhere behind the viewer

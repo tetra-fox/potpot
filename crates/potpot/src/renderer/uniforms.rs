@@ -20,7 +20,7 @@ pub(super) struct Globals {
   overhead: [[f32; 4]; 4],
   /// the panel's width and height, and the lowest and highest anything on it reaches
   panel: [f32; 4],
-  /// each lamp's place with its reach, and then its color
+  /// each lamp's place with its reach, and then its color with its radius
   lamps: [[[f32; 4]; 2]; LAMPS],
 }
 
@@ -53,7 +53,7 @@ impl Globals {
         scene.lamps.get(index).map_or([[0.0; 4]; 2], |lamp| {
           [
             lamp.at.extend(lamp.reach).into(),
-            lamp.color.extend(0.0).into(),
+            lamp.color.extend(lamp.radius).into(),
           ]
         })
       }),

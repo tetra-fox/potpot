@@ -1,11 +1,13 @@
 //! renders a panel to a png without a window: `cargo run --example picture -- out.png`
-//! draws every knob style, and `faders`, `lights` or `synth` after the file's name draws
-//! every fader, lit buttons and meters, or a whole soft synth's front in an old manner.
+//! draws every knob style, and `faders`, `lights`, `lamp` or `synth` after the file's name
+//! draws every fader, lit buttons and meters, lamps beside what shows their light, or a
+//! whole soft synth's front in an old manner.
 //! after those, one number is the pixel size and a second the color steps, for the crude
 //! looks
 
 mod faders;
 mod knobs;
+mod lamp;
 mod lights;
 mod synth;
 
@@ -13,6 +15,7 @@ use potpot::{Look, Place, Renderer, Scene, wgpu};
 
 use crate::faders::faders;
 use crate::knobs::knobs;
+use crate::lamp::lamp;
 use crate::lights::lights;
 use crate::synth::synth;
 
@@ -26,8 +29,9 @@ fn main() {
     Some(panel) if panel == "knobs" => knobs,
     Some(panel) if panel == "faders" => faders,
     Some(panel) if panel == "lights" => lights,
+    Some(panel) if panel == "lamp" => lamp,
     Some(panel) if panel == "synth" => synth,
-    Some(panel) => panic!("no panel called {panel}, only knobs, faders, lights and synth"),
+    Some(panel) => panic!("no panel called {panel}, only knobs, faders, lights, lamp and synth"),
   };
   let look = Look {
     pixel_size: arguments
