@@ -54,7 +54,7 @@ pub(super) fn lamp(look: Look) -> Scene {
   objects.push(put(pad.seat(3.0), 200.0, 450.0, Material::matte(SEAT)));
   objects.push(Object {
     mesh: Arc::new(pad.body()),
-    transform: parts::button_transform(200.0, 450.0, pad.height, 0.0),
+    transform: pad.transform(200.0, 450.0, 0.0),
     material: Material::silicone(Vec3::splat(0.62)).lit(green, 1.0, pad.glow_radius()),
   });
   lamps.push(pad.lamp(200.0, 450.0, green, 1.0));

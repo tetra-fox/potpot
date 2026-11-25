@@ -575,9 +575,7 @@ impl<S: Skin> Window<S> {
     let text = self.clipboard(|clipboard| clipboard.get_text()).ok();
     self.handle(|_| Event::Clipboard(text));
   }
-}
 
-impl<S: Skin> Window<S> {
   fn draw(&self) -> Result<(), HandlerError> {
     // asked for with the state let go of: on windows the new size comes back in at once
     let wanted = self.state().and_then(|mut state| state.wanted_scale.take());
@@ -811,9 +809,7 @@ impl<S: Skin> Window<S> {
       self.refresh();
     }
   }
-}
 
-impl<S: Skin> Window<S> {
   fn on_mouse(&self, event: MouseEvent) {
     match event {
       MouseEvent::CursorMoved {
@@ -863,76 +859,6 @@ impl<S: Skin> Window<S> {
       }
       _ => {}
     }
-  }
-}
-
-/// the window as baseview has it: every call into it stops at a panic.
-///
-/// a panic out of these would unwind into baseview's window procedure on windows, which is
-/// an `extern` function, and that ends the host's whole process. it is caught here, and
-/// from then on the window does nothing: its state may be half changed, so nothing looks
-/// at it again. wgpu itself panics when the device is lost while it is waited on
-/// (`Device::poll` in its `backend/wgpu_core.rs`), and any fault of the editor's own ends
-/// here as well
-pub(crate) struct Guarded<S> {
-  window: Window<S>,
-  broken: Cell<bool>,
-}
-
-impl<S: Skin> Guarded<S> {
-  /// the window, if making it neither fails nor panics
-  pub(crate) fn new(
-    make: impl FnOnce() -> Result<Window<S>, HandlerError>,
-  ) -> Result<Self, HandlerError> {
-    let window = catch_unwind(AssertUnwindSafe(make))
-      .map_err(|panic| HandlerError::from_boxed(said(&*panic).into()))??;
-    Ok(Self {
-      window,
-      broken: Cell::new(false),
-    })
-  }
-
-  fn run<T>(&self, otherwise: T, work: impl FnOnce(&Window<S>) -> T) -> T {
-    if self.broken.get() {
-      return otherwise;
-    }
-    // nothing of the window's is looked at again after a panic
-    catch_unwind(AssertUnwindSafe(|| work(&self.window))).unwrap_or_else(|panic| {
-      self.broken.set(true);
-      error!("the editor has stopped at a panic: {}", said(&*panic));
-      otherwise
-    })
-  }
-}
-
-/// what a panic was raised with, where that was words
-fn said(panic: &(dyn std::any::Any + Send)) -> String {
-  let said = panic.downcast_ref::<&str>().copied();
-  said
-    .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
-    .unwrap_or("a panic with no message")
-    .to_owned()
-}
-
-impl<S: Skin> WindowHandler for Guarded<S> {
-  fn draw(&self) -> Result<(), HandlerError> {
-    self.run(Ok(()), Window::draw)
-  }
-
-  fn poll(&self) {
-    self.run((), Window::poll);
-  }
-
-  fn resized(&self, new_size: WindowSize) -> Result<(), HandlerError> {
-    self.run(Ok(()), |window| window.resized(new_size))
-  }
-
-  fn on_event(&self, event: baseview::Event) -> EventStatus {
-    self.run(EventStatus::Ignored, |window| window.on_event(event))
-  }
-
-  fn on_timer(&self, timer: &TimerHandle) {
-    self.run((), |window| window.on_timer(timer));
   }
 }
 
@@ -1020,6 +946,76 @@ fn keys(event: &keyboard_types::KeyboardEvent) -> Vec<Key> {
       _ => Vec::new(),
     },
     _ => Vec::new(),
+  }
+}
+
+/// the window as baseview has it: every call into it stops at a panic.
+///
+/// a panic out of these would unwind into baseview's window procedure on windows, which is
+/// an `extern` function, and that ends the host's whole process. it is caught here, and
+/// from then on the window does nothing: its state may be half changed, so nothing looks
+/// at it again. wgpu itself panics when the device is lost while it is waited on
+/// (`Device::poll` in its `backend/wgpu_core.rs`), and any fault of the editor's own ends
+/// here as well
+pub(crate) struct Guarded<S> {
+  window: Window<S>,
+  broken: Cell<bool>,
+}
+
+impl<S: Skin> Guarded<S> {
+  /// the window, if making it neither fails nor panics
+  pub(crate) fn new(
+    make: impl FnOnce() -> Result<Window<S>, HandlerError>,
+  ) -> Result<Self, HandlerError> {
+    let window = catch_unwind(AssertUnwindSafe(make))
+      .map_err(|panic| HandlerError::from_boxed(said(&*panic).into()))??;
+    Ok(Self {
+      window,
+      broken: Cell::new(false),
+    })
+  }
+
+  fn run<T>(&self, otherwise: T, work: impl FnOnce(&Window<S>) -> T) -> T {
+    if self.broken.get() {
+      return otherwise;
+    }
+    // nothing of the window's is looked at again after a panic
+    catch_unwind(AssertUnwindSafe(|| work(&self.window))).unwrap_or_else(|panic| {
+      self.broken.set(true);
+      error!("the editor has stopped at a panic: {}", said(&*panic));
+      otherwise
+    })
+  }
+}
+
+/// what a panic was raised with, where that was words
+fn said(panic: &(dyn std::any::Any + Send)) -> String {
+  let said = panic.downcast_ref::<&str>().copied();
+  said
+    .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+    .unwrap_or("a panic with no message")
+    .to_owned()
+}
+
+impl<S: Skin> WindowHandler for Guarded<S> {
+  fn draw(&self) -> Result<(), HandlerError> {
+    self.run(Ok(()), Window::draw)
+  }
+
+  fn poll(&self) {
+    self.run((), Window::poll);
+  }
+
+  fn resized(&self, new_size: WindowSize) -> Result<(), HandlerError> {
+    self.run(Ok(()), |window| window.resized(new_size))
+  }
+
+  fn on_event(&self, event: baseview::Event) -> EventStatus {
+    self.run(EventStatus::Ignored, |window| window.on_event(event))
+  }
+
+  fn on_timer(&self, timer: &TimerHandle) {
+    self.run((), |window| window.on_timer(timer));
   }
 }
 

@@ -1,7 +1,6 @@
 //! push switches: a sprung plunger in a collar
 
 use glam::{Mat4, Vec3};
-pub use potpot_controls::interaction::Push;
 
 use super::button::Button;
 use super::outline::band;
@@ -68,7 +67,7 @@ impl PushSwitch {
   }
 
   /// where the plunger sits for a switch at (x, y) that is `depth` of the way in, which
-  /// [`Push::depth`] tells
+  /// [`potpot_controls::interaction::Push::depth`] tells
   pub fn transform(&self, x: f32, y: f32, depth: f32) -> Mat4 {
     Mat4::from_translation(Vec3::new(x, y, -self.travel * depth.clamp(0.0, 1.0)))
   }

@@ -139,12 +139,16 @@ impl Button {
   pub fn glow_radius(&self) -> f32 {
     self.width.min(self.length) * 0.55
   }
-}
 
-/// where a button sits, and how far down it is held: `pressed` runs from zero for up to one
-/// for all the way down, which sinks it a quarter of the `height` it is told
-pub fn button_transform(x: f32, y: f32, height: f32, pressed: f32) -> Mat4 {
-  Mat4::from_translation(Vec3::new(x, y, -height * 0.25 * pressed.clamp(0.0, 1.0)))
+  /// where the button sits at (x, y), and how far down it is held: `pressed` runs from zero
+  /// for up to one for all the way down, which sinks it a quarter of its height
+  pub fn transform(&self, x: f32, y: f32, pressed: f32) -> Mat4 {
+    Mat4::from_translation(Vec3::new(
+      x,
+      y,
+      -self.height * 0.25 * pressed.clamp(0.0, 1.0),
+    ))
+  }
 }
 
 #[cfg(test)]
@@ -192,9 +196,9 @@ mod tests {
 
   #[test]
   fn a_held_button_sinks_and_a_dark_one_throws_no_light() {
-    let down = button_transform(10.0, 20.0, 8.0, 1.0).transform_point3(Vec3::ZERO);
+    let pad = Button::pad(30.0, 8.0);
+    let down = pad.transform(10.0, 20.0, 1.0).transform_point3(Vec3::ZERO);
     assert_eq!(down, Vec3::new(10.0, 20.0, -2.0));
-    let pad = Button::pad(30.0, 10.0);
     assert_eq!(pad.lamp(0.0, 0.0, Vec3::ONE, 0.0).color, Vec3::ZERO);
     assert!(pad.lamp(0.0, 0.0, Vec3::ONE, 1.0).reach > 30.0);
   }

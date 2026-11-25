@@ -10,10 +10,10 @@ use std::f32::consts::FRAC_PI_2;
 use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
-use potpot::parts::{self, Button, Fader, Knob, Meter, Push, PushSwitch};
+use potpot::parts::{self, Button, Fader, Knob, Meter, PushSwitch};
 use potpot::{Light, Look, Material, Mesh, Object, Place, Renderer, Scene};
 use potpot_window::controls::flat::{Color, Flat};
-use potpot_window::controls::interaction::{Control, Dial, Drag, Readout, Target, Touch};
+use potpot_window::controls::interaction::{Control, Dial, Drag, Push, Readout, Target, Touch};
 use potpot_window::{Gpu, Opening, Param, Settings, Skin, View, wgpu};
 
 const SIZE: [f32; 2] = [900.0, 520.0];
@@ -546,7 +546,7 @@ impl Demo {
       };
       drawn.place(
         body,
-        parts::button_transform(x, BUTTONS_Y, shape.height, depth),
+        shape.transform(x, BUTTONS_Y, depth),
         rubber.lit(color, level, shape.glow_radius()),
         Some(Target::Control(control)),
       );

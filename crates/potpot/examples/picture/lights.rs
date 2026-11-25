@@ -4,8 +4,9 @@ use std::f32::consts::FRAC_PI_2;
 use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec3};
-use potpot::parts::{self, Button, Meter, Push, PushSwitch};
+use potpot::parts::{self, Button, Meter, PushSwitch};
 use potpot::{Light, Look, Material, Object, Scene};
+use potpot_controls::interaction::Push;
 
 use crate::{SEAT, SIZE, framed, screws};
 
@@ -67,7 +68,7 @@ pub(super) fn lights(look: Look) -> Scene {
     });
     objects.push(Object {
       mesh: Arc::clone(body),
-      transform: parts::button_transform(x, y, shape.height, held),
+      transform: shape.transform(x, y, held),
       material: rubber.lit(color, level, shape.glow_radius()),
     });
     if level > 0.0 {
