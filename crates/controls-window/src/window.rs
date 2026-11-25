@@ -44,6 +44,14 @@ const DRAWN_WITHIN: Duration = Duration::from_secs(1);
 /// how many pixels of a wheel that scrolls by them count as one line
 const PIXELS_PER_LINE: f32 = 20.0;
 
+/// how many ticks a window keeps a size of another shape than the panel's before it is
+/// asked to take the panel's
+const SETTLED: u32 = 4;
+
+/// how many pixels a window's side may be from the panel's shape and be left alone, which
+/// rounding a size to whole pixels can put it
+const NEAR: u32 = 2;
+
 pub(crate) struct Window<S> {
   context: WindowContext,
   settings: Settings,
@@ -54,6 +62,11 @@ pub(crate) struct Window<S> {
   /// what whoever opened the window has to tell it
   told: mpsc::Receiver<ToWindow>,
   tick: TimerHandle,
+  /// whether the window is its own, with a frame the window manager resizes it by
+  top_level: bool,
+  /// a size of another shape than the panel's that the window has, and for how many ticks.
+  /// window managers can give one whatever they were hinted: kwin does when it maximizes
+  misshapen: Cell<Option<([u32; 2], u32)>>,
   /// whether baseview has asked for a frame yet, before which it is not to be asked for one
   started: Cell<bool>,
   /// the size the window was last given, until the state has taken it in
@@ -278,8 +291,6 @@ impl<S: Skin> Window<S> {
     if top_level && let Err(error) = hint_shape(&context, size.scale_factor, &settings) {
       error!("the window manager could not be told the editor's shape: {error}");
     }
-    #[cfg(not(target_os = "linux"))]
-    let _ = top_level;
 
     // direct3d 12 is started only where nothing else can draw. under wine it runs on vulkan
     // anyway, and wine's shader compiler cannot build any shader with a sampler as naga
@@ -361,6 +372,8 @@ impl<S: Skin> Window<S> {
       shared,
       told,
       tick,
+      top_level,
+      misshapen: Cell::new(None),
       started: Cell::new(false),
       sized: Cell::new(None),
       clipboard: RefCell::new(None),
@@ -383,6 +396,36 @@ impl<S: Skin> Window<S> {
         stopped: false,
       }),
     })
+  }
+
+  /// asks for the largest window of the panel's shape that fits in the one there is, once
+  /// a window of its own has kept another shape for [`SETTLED`] ticks. each size is asked
+  /// about once, so a window manager that holds the window to it is not asked again
+  fn reshape(&self) {
+    if !self.top_level {
+      return;
+    }
+    let Some(mut state) = self.state() else {
+      return;
+    };
+    let [_, _, width, height] = fitted(state.window, self.settings.size);
+    let [wide, tall] = state.window;
+    if wide - width <= NEAR && tall - height <= NEAR {
+      self.misshapen.set(None);
+      return;
+    }
+    let ticks = match self.misshapen.get() {
+      Some((size, ticks)) if size == state.window => ticks.saturating_add(1),
+      _ => 0,
+    };
+    self.misshapen.set(Some((state.window, ticks)));
+    if ticks == SETTLED {
+      let scale = (f64::from(width) / state.display_scale) as f32 / self.settings.size[0];
+      let [least, most] = self.settings.scales;
+      state.wanted_scale = Some(scale.clamp(least, most));
+      drop(state);
+      self.redraw();
+    }
   }
 
   /// asks baseview for a frame, once it has drawn its first.
@@ -742,6 +785,7 @@ impl<S: Skin> Window<S> {
   fn on_timer(&self, timer: &TimerHandle) {
     if timer == self.tick {
       self.handle(|_| Event::Tick);
+      self.reshape();
       self.refresh();
     }
   }
