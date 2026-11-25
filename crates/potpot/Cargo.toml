@@ -2,7 +2,7 @@
 name = "potpot"
 version = "0.1.0"
 edition = "2024"
-description = "a small lit 3d scene renderer on wgpu, for skeuomorphic plugin panels"
+description = "A small lit 3D scene renderer on wgpu, for skeuomorphic plugin panels"
 license.workspace = true
 publish = false
 

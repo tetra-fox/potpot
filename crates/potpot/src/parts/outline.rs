@@ -1,4 +1,6 @@
-//! the rounded rectangle that buttons, their seats, collars and frames are cut to
+//! The rounded rectangle that buttons and their seats are cut to.
+//!
+//! Collars and frames are cut to it too.
 
 use std::f32::consts::FRAC_PI_2;
 
@@ -7,19 +9,21 @@ use glam::Vec2;
 use super::CREASE;
 use crate::mesh::Mesh;
 
-/// a rectangle with round corners, centered on the origin
+/// A rectangle with round corners, centered on the origin.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Outline {
-  /// how wide it is, along x
+  /// The width along x, in points.
   width: f32,
-  /// how long it is, along y
+  /// The length along y, in points.
   length: f32,
-  /// the radius of its corners, at most half its shorter side
+  /// The radius of its corners in points, at most half its shorter side.
   round: f32,
 }
 
 impl Outline {
-  /// `corner` is the radius of the corners, kept to what the shorter side has room for
+  /// Creates an outline with corners of radius `corner`.
+  ///
+  /// `corner` is kept to what the shorter side has room for.
   pub(super) fn new(width: f32, length: f32, corner: f32) -> Self {
     Self {
       width,
@@ -28,7 +32,9 @@ impl Outline {
     }
   }
 
-  /// how far out the outline is at an angle around its middle
+  /// Returns how far out the outline is at an angle.
+  ///
+  /// The angle is around the outline's middle.
   pub(super) fn at(&self, angle: f32) -> f32 {
     let half = Vec2::new(self.width, self.length) / 2.0;
     let toward = Vec2::from_angle(angle).abs();
@@ -47,12 +53,14 @@ impl Outline {
         .sqrt()
   }
 
-  /// the angle around the middle that a step around the outline lands on, for steps that
-  /// are even in `around`. steps even in angle would put next to none on the corners of a
-  /// long outline, which are a sliver of the turn as its middle sees them, so each stretch
-  /// gets steps by its length, and a corner by several times its own
+  /// Returns the angle a step around the outline lands on.
+  ///
+  /// The angle is around the middle, for steps that are even in `around`. Steps even in angle would
+  /// put next to none on the corners of a long outline, which are a sliver of the turn as its
+  /// middle sees them. Each stretch gets steps by its length, and a corner by several times its
+  /// own.
   pub(super) fn spread(&self, around: f32) -> f32 {
-    /// how many times its length a corner counts for
+    /// The multiple of its length a corner counts for.
     const CORNERS: f32 = 6.0;
     let half = Vec2::new(self.width, self.length) / 2.0;
     let straight = half - Vec2::splat(self.round);
@@ -95,13 +103,17 @@ impl Outline {
     quarter * FRAC_PI_2 + angle
   }
 
-  /// the point of the outline a step lands on, for steps that are even in `around`
+  /// Returns the point of the outline a step lands on.
+  ///
+  /// Steps are even in `around`.
   pub(super) fn point(&self, around: f32) -> Vec2 {
     let angle = self.spread(around);
     Vec2::from_angle(angle) * self.at(angle)
   }
 
-  /// the outline pushed out by a distance all around, its corners rounder by as much
+  /// Returns the outline pushed out by a distance all around.
+  ///
+  /// Its corners are rounder by as much.
   pub(super) fn grown(&self, by: f32) -> Self {
     Self::new(
       self.width + by * 2.0,
@@ -110,8 +122,9 @@ impl Outline {
     )
   }
 
-  /// the outline filled in as a low strip lying on the panel, for the dark gap around
-  /// something set into it
+  /// Returns the outline filled in as a low strip on the panel.
+  ///
+  /// The strip is the dark gap around something set into the panel.
   pub(super) fn strip(&self) -> Mesh {
     let rings = [
       Vec2::new(1.0, 0.0),
@@ -125,8 +138,10 @@ impl Outline {
   }
 }
 
-/// a raised band between two outlines, with a hole in its middle: up the outside, over a
-/// corner cut `cut` wide, across the top `tall` above the panel, and down the inside
+/// Returns a raised band between two outlines.
+///
+/// The band has a hole in its middle and stands `tall` above the panel. Both corners of its top
+/// are cut `cut` wide.
 pub(super) fn band(outer: Outline, inner: Outline, tall: f32, cut: f32) -> Mesh {
   let rings = [
     (outer, 0.0, 0.0),
@@ -196,7 +211,10 @@ mod tests {
       };
       let middle = mirrored.to_angle().rem_euclid(TAU);
       let near = (angles.iter()).filter(|angle| (**angle - middle).abs() < 0.03);
-      assert!(near.count() >= 5, "few steps on corner {quarter}");
+      assert!(
+        near.count() >= 5,
+        "five steps or more lie near the middle of corner {quarter}"
+      );
     }
     // a circle is all corner, and its steps stay even
     let round = Outline::new(30.0, 30.0, 15.0);

@@ -1,10 +1,14 @@
-//! a plain drawn face of capitals and figures, as the strokes its letters are made of. what
-//! draws them, flat or as a solid, is whoever uses it
+//! A plain drawn face of capitals and figures.
+//!
+//! The face is the strokes its letters are made of. Whoever uses it draws them, flat or as a
+//! solid.
 
 use crate::Point;
 
-/// the strokes of a letter on a grid four wide and six tall: each run of digit pairs is a
-/// line through those points, across and then up from the letter's foot
+/// Returns the strokes of a letter.
+///
+/// The letter is on a grid four wide and six tall. Each run of digit pairs is a line through
+/// those points, across and then up from the letter's foot.
 fn strokes(letter: char) -> &'static [&'static str] {
   match letter {
     'A' => &["002640", "1232"],
@@ -55,28 +59,35 @@ fn strokes(letter: char) -> &'static [&'static str] {
   }
 }
 
-/// whether the face has a letter for it. a small letter counts as its capital
+/// Returns whether the face has a letter for a character.
+///
+/// A small letter counts as its capital.
 pub(crate) fn lettered(letter: char) -> bool {
   !strokes(letter.to_ascii_uppercase()).is_empty()
 }
 
-/// how far across from the middle of lettering of `count` letters `height` tall the gap
-/// before its letter `index` is, where a mark between two letters goes. `index` runs up to
-/// `count`, which is the gap after the last letter
+/// Returns how far across the gap before letter `index` is.
+///
+/// The distance is from the middle of lettering of `count` letters `height` tall. The gap is
+/// where a mark between two letters goes. `index` runs up to `count`, which is the gap after
+/// the last letter.
 pub(crate) fn gap(count: usize, index: usize, height: f32) -> f32 {
   let unit = height / 6.0;
   left_edge(count, unit) + (index as f32 * 6.0 - 1.0) * unit
 }
 
-/// the left edge of the first of `count` letters from the middle of them all. each letter
-/// is four units wide, and two more go to the gap after it
+/// Returns the left edge of the first of `count` letters.
+///
+/// The edge is measured from the middle of them all. Each letter is four units wide, and two
+/// more go to the gap after it.
 fn left_edge(count: usize, unit: f32) -> f32 {
   -(count as f32 * 6.0 - 2.0) * unit / 2.0
 }
 
-/// the strokes of lettering as lines from point to point, about the middle of it all:
-/// letters `height` tall, down the panel as y grows. anything the face has no letter for is
-/// a space
+/// Returns the strokes of lettering as lines from point to point.
+///
+/// The lines lie about the middle of it all, with letters `height` tall, down the panel as y
+/// grows. Anything the face has no letter for is a space.
 pub fn lines(text: &str, height: f32) -> Vec<[Point; 2]> {
   let unit = height / 6.0;
   let left = left_edge(text.chars().count(), unit);
@@ -97,8 +108,9 @@ pub fn lines(text: &str, height: f32) -> Vec<[Point; 2]> {
   lines
 }
 
-/// where the top left of the first letter is from the middle of lettering of `count` letters
-/// `height` tall
+/// Returns where the top left of the first letter is.
+///
+/// The place is measured from the middle of lettering of `count` letters `height` tall.
 pub(crate) fn top_left(count: usize, height: f32) -> Point {
   [left_edge(count, height / 6.0), -height / 2.0]
 }
@@ -112,7 +124,7 @@ mod tests {
     for letter in ' '..='~' {
       let runs = strokes(letter);
       if letter.is_ascii_uppercase() || letter.is_ascii_digit() {
-        assert!(!runs.is_empty(), "{letter} is blank");
+        assert!(!runs.is_empty(), "{letter} has strokes");
       }
       for run in runs {
         assert!(run.len() >= 4 && run.len() % 2 == 0, "{letter}: {run}");

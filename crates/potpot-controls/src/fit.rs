@@ -1,12 +1,21 @@
-//! how a panel of one shape goes in windows of any size: where it is drawn, where the pointer
-//! is on it, and what sizes a host may give it. a panel's `size` is its width and height in
-//! its own points, whole numbers of them
+//! The fit of a panel of one shape in windows of any size.
+//!
+//! The functions return where the panel is drawn, where the pointer is on it, and what sizes a
+//! host may give it. A panel's `size` is its width and height in its own points, whole numbers
+//! of them.
 
 use crate::Point;
 
-/// the part of a window so many pixels wide and tall that the panel is drawn on, as its left,
-/// top, width and height: the largest of the panel's own shape that fits, in the middle. a
-/// window of that shape is all of it, and one of any other has room left over at two sides
+/// Returns the part of a window that the panel is drawn on.
+///
+/// `window` is the window's width and height in pixels. The part is `[left, top, width, height]`:
+/// the largest of the panel's own shape that fits, in the middle. A window of that shape is all
+/// of it, and one of any other has room left over at two sides.
+///
+/// # Panics
+///
+/// Panics if `size` is less than one point wide and either `window` is no pixels wide or
+/// `size` is less than one point tall.
 pub fn fitted(window: [u32; 2], size: Point) -> [u32; 4] {
   let [wide, tall] = window.map(u64::from);
   let (across, down) = (size[0] as u64, size[1] as u64);
@@ -18,7 +27,9 @@ pub fn fitted(window: [u32; 2], size: Point) -> [u32; 4] {
   [(wide - width) / 2, (tall - height) / 2, width, height].map(|side| side as u32)
 }
 
-/// the point of the panel that is at a pixel of the window, with the panel drawn on `place`
+/// Returns the point of the panel at a pixel of the window.
+///
+/// `place` is the part of the window the panel is drawn on.
 pub fn point_at(place: [u32; 4], pixel: Point, size: Point) -> Point {
   let [left, top, width, height] = place.map(|side| side as f32);
   [
@@ -27,9 +38,21 @@ pub fn point_at(place: [u32; 4], pixel: Point, size: Point) -> Point {
   ]
 }
 
-/// the size of the panel's shape nearest one a host asks about, all in the same units: as
-/// wide as asked if the width is what has changed more from the size the window has, and
-/// else as tall as asked, and neither smaller than the least nor larger than the most
+/// Returns the size of the panel's shape nearest one asked about.
+///
+/// `asked` is the size a host asks about, and it, `current` and the least and the most are
+/// all in the same units. The size is as wide as `asked` if the width has changed from
+/// `current`, the size the window has, at least as much as the height, and as tall as `asked`
+/// otherwise. Each change is measured as a part of the panel's own side. The width is held
+/// between the least and the most.
+///
+/// # Panics
+///
+/// Panics if the least width is larger than the most.
+///
+/// Panics if `size` is less than one point wide.
+///
+/// Panics if `size` is less than one point tall and `asked` and `current` differ in height.
 pub fn shaped(
   asked: [u32; 2],
   current: [u32; 2],
@@ -49,10 +72,17 @@ pub fn shaped(
   [width, (u64::from(width) * down / across) as u32]
 }
 
-/// the scale a size from the host is the user's choice of, among the `scales` the panel is
-/// drawn at, least and most. the sizes are in the host's units, `per_point` of them to a
-/// point. none if it is the size the host was last told, which is the host saying it back,
-/// or one the panel is not drawn as small or as large as
+/// Returns the scale a size from the host is the user's choice of.
+///
+/// `scales` is the least and the most scale the panel is drawn at. The sizes are in the
+/// host's units, `per_point` of them to a point. The result is `None` if `given` is the size
+/// the host was last told, which is the host saying it back, or one the panel is not drawn as
+/// small or as large as.
+///
+/// # Panics
+///
+/// Panics if `given` differs from `told`, the first of `scales` is larger than the second
+/// and the scale of `given` is within 0.01 of both.
 pub fn chosen(
   given: [u32; 2],
   told: [u32; 2],
@@ -76,7 +106,7 @@ pub fn chosen(
 mod tests {
   use super::*;
 
-  /// a panel twice as wide as tall, drawn from three quarters to three times its size
+  // a panel twice as wide as tall, drawn from three quarters to three times its size
   const SIZE: Point = [500.0, 250.0];
   const SCALES: [f32; 2] = [0.75, 3.0];
 
@@ -86,7 +116,7 @@ mod tests {
 
   #[test]
   fn the_panel_is_fitted_into_a_window_of_any_shape_at_its_own() {
-    // a window of the panel's shape is all the panel's
+    // the panel covers all of a window of its own shape
     assert_eq!(fits([750, 375]), [0, 0, 750, 375]);
     assert_eq!(fits([500, 250]), [0, 0, 500, 250]);
     // one too wide has the room left over at its sides, and one too tall above and below
@@ -126,7 +156,9 @@ mod tests {
     assert!(point_at(place, [375.0, 100.0], SIZE)[1] < 0.0);
   }
 
-  /// the size the host is told for a scale, at so many pixels to a point
+  /// Returns the size the host is told for a scale.
+  ///
+  /// `per_point` is the number of pixels to a point.
   fn told(scale: f32, per_point: f64) -> [u32; 2] {
     SIZE.map(|side| (f64::from(side * scale) * per_point).round() as u32)
   }
@@ -143,7 +175,8 @@ mod tests {
         let same = told(scale, per_point);
         assert_eq!(choice(same, same, per_point), None);
         // any other size the panel is drawn at is taken, as the scale it is
-        let other = choice(same, told(1.3, per_point), per_point).expect("a choice");
+        let other = choice(same, told(1.3, per_point), per_point)
+          .expect("a size the panel is drawn at is a choice");
         assert!((other - scale).abs() < 0.005, "{other} for {scale}");
         assert!((SCALES[0]..=SCALES[1]).contains(&other));
       }
@@ -164,8 +197,10 @@ mod tests {
     assert_eq!(choice(given, told(1.0, 1.5), 1.5), None);
   }
 
-  /// the sizes a host may ask about at one and a half pixels to a point, from the window as
-  /// it opens
+  /// Returns the answer to a size a host asks about.
+  ///
+  /// The host asks from the window as it opens, and the least and the most are those at one
+  /// and a half pixels to a point.
   fn asked(width: u32, height: u32) -> [u32; 2] {
     let limits = [[563, 281], [2250, 1125]];
     shaped([width, height], [750, 375], limits, SIZE)

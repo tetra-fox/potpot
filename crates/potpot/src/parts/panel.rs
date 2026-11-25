@@ -1,4 +1,4 @@
-//! the panel itself and what is fixed to it
+//! The panel itself and the parts fixed to it.
 
 use std::f32::consts::FRAC_PI_2;
 
@@ -9,7 +9,9 @@ use super::button::Button;
 use super::outline::{Outline, band};
 use crate::mesh::Mesh;
 
-/// a flat plate with its top at height zero, the panel everything stands on
+/// Returns a flat plate with its top at height zero.
+///
+/// The plate is the panel everything stands on. It reaches from the origin to (`width`, `height`).
 pub fn plate(width: f32, height: f32, thickness: f32) -> Mesh {
   Mesh::cuboid(
     Vec3::new(0.0, 0.0, -thickness),
@@ -17,8 +19,10 @@ pub fn plate(width: f32, height: f32, thickness: f32) -> Mesh {
   )
 }
 
-/// a low raised plate with round corners and a soft edge, centered on the origin, for a
-/// section of a panel standing a little proud of the rest
+/// Returns a low raised plate with round corners and a soft edge.
+///
+/// The plate is centered on the origin, for a section of a panel standing a little proud of the
+/// rest.
 pub fn slab(width: f32, length: f32, height: f32, corner: f32) -> Mesh {
   Button {
     width,
@@ -31,10 +35,11 @@ pub fn slab(width: f32, length: f32, height: f32, corner: f32) -> Mesh {
   .body()
 }
 
-/// a raised frame around a rectangle centered on the origin, like the bezel of a screen or
-/// the rim of a panel: `width` by `length` on the outside, `border` wide, `height` tall,
-/// with corners of radius `corner` on the outside. `border` is kept to what the shorter
-/// side has room for
+/// Returns a raised frame around a rectangle.
+///
+/// The frame is centered on the origin, like the bezel of a screen or the rim of a panel. It is
+/// `width` by `length` on the outside and `height` tall. Its border is `border` wide, kept to what
+/// the shorter side has room for, and its outside corners have radius `corner`.
 pub fn frame(width: f32, length: f32, border: f32, height: f32, corner: f32) -> Mesh {
   let border = border.min(width.min(length) / 2.0);
   band(
@@ -45,12 +50,16 @@ pub fn frame(width: f32, length: f32, border: f32, height: f32, corner: f32) -> 
   )
 }
 
-/// a polished ring lying on the panel around the origin, for a knob to stand in: from
-/// `inner` to `outer` away from the middle and `height` tall at its lip, which is rolled
-/// over on the outside. from the lip its face slopes down toward the middle like a
-/// shallow funnel, with a hard edge between the two that catches the light
+/// Returns a polished ring for a knob to stand in.
+///
+/// The ring lies on the panel around the origin, from `inner` to `outer` away from the middle. It
+/// is `height` tall at its lip, which is rolled over on the outside. From the lip its face slopes
+/// down toward the middle like a shallow funnel, with a hard edge between the two that catches the
+/// light.
 pub fn bezel(inner: f32, outer: f32, height: f32) -> Mesh {
-  /// the steps of the lip's roll, few enough degrees each to shade as one curve
+  /// The count of steps in the lip's roll.
+  ///
+  /// Each step is few enough degrees to shade as one curve.
   const LIP: usize = 9;
   let roll = height.min((outer - inner) * 0.3);
   let mut profile = vec![Vec2::new(outer, 0.0)];
@@ -68,9 +77,11 @@ pub fn bezel(inner: f32, outer: f32, height: f32) -> Mesh {
   })
 }
 
-/// the round head of a screw, `radius` wide, with nothing cut into it: a low dome
+/// Returns the round head of a screw, a low dome of radius `radius`.
+///
+/// Nothing is cut into it.
 fn screw_head(radius: f32) -> Mesh {
-  /// the rings the dome is cut into from its rim to its middle
+  /// The count of rings from the dome's rim to its middle.
   const DOME: usize = 6;
   let rim = Vec2::new(radius, 0.0);
   let dome = (0..=DOME).map(|ring| {
@@ -83,7 +94,7 @@ fn screw_head(radius: f32) -> Mesh {
   })
 }
 
-/// a round-headed screw with a slot, `radius` wide
+/// Returns a round-headed screw with a slot, of radius `radius`.
 pub fn screw(radius: f32) -> Mesh {
   // the slot is a bar standing just proud of the dome, cheaper than cutting into it
   screw_head(radius).merged(&Mesh::cuboid(
@@ -92,14 +103,17 @@ pub fn screw(radius: f32) -> Mesh {
   ))
 }
 
-/// a slot cut through the panel, `width` by `length` with round ends, as a dark strip
-/// lying on it: an air vent, or the long hole a rack screw goes through
+/// Returns a slot cut through the panel, as a dark strip.
+///
+/// The strip lies on the panel, `width` by `length` with round ends. It is an air vent, or the long
+/// hole a rack screw goes through.
 pub fn slot(width: f32, length: f32) -> Mesh {
   Outline::new(width, length, width.min(length) / 2.0).strip()
 }
 
-/// the dark gap around a screw of a radius, `gap` wider than its head all around, lying on
-/// the panel
+/// Returns the dark gap around a screw, lying on the panel.
+///
+/// The gap is `gap` wider all around than the head of a screw of radius `radius`.
 pub fn screw_seat(radius: f32, gap: f32) -> Mesh {
   Outline::new(radius * 2.0, radius * 2.0, radius)
     .grown(gap)
@@ -116,7 +130,7 @@ mod tests {
     for vertex in &frame.vertices {
       let position = Vec3::from(vertex.position);
       let inside = position.x.abs() < 89.9 && position.y.abs() < 39.9;
-      assert!(!inside, "the frame fills its middle at {position}");
+      assert!(!inside, "the frame is open in its middle at {position}");
       assert!(position.x.abs() <= 100.01 && position.y.abs() <= 50.01);
       assert!((0.0..=6.001).contains(&position.z));
     }

@@ -1,9 +1,10 @@
-//! what the controls of an audio plugin's panel do, apart from how they look, what window
-//! they are in and what plugin they belong to. nothing here draws, and nothing here depends
-//! on anything: a panel's look is built on top, with whatever it is drawn by.
+//! What the controls of an audio plugin's panel do, with no look of their own.
 //!
-//! [`interaction`] is the heart of it: events go in, and what to tell the host and the
-//! window comes out.
+//! [`Interaction`](interaction::Interaction) takes pointer and key events and returns the
+//! [`Action`](interaction::Action)s for the host and the window. The crate draws nothing and
+//! depends on nothing: a panel's look is built on top, with whatever it is drawn by.
+//!
+//! # Examples
 //!
 //! ```
 //! use std::time::Instant;
@@ -36,12 +37,14 @@
 //! assert!(matches!(actions[1], Action::Set(0, value) if value > 0.5));
 //! ```
 //!
-//! the rest is what a window around it needs whatever it draws with: [`sent`] for showing
-//! values a host has yet to take, [`fit`] for a panel of one shape in windows of any,
-//! [`furniture`] for the menu and the grip, and [`flat`] and [`stroke`] for plain shapes and
-//! lettering to draw them in
+//! # Window support
+//!
+//! - [`sent`] shows values a host has yet to take.
+//! - [`fit`] puts a panel of one shape in windows of any.
+//! - [`furniture`] holds the menu and the grip.
+//! - [`flat`] and [`stroke`] hold plain shapes and lettering to draw them in.
 
-/// a place or a size, across and down
+/// A place or a size, across and down.
 pub type Point = [f32; 2];
 
 pub mod fit;

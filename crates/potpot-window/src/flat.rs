@@ -1,4 +1,6 @@
-//! draws [`Flat`] shapes straight onto a target, over whatever a skin has drawn there
+//! A renderer of [`Flat`] shapes.
+//!
+//! The shapes go straight onto a target, over whatever a skin has drawn there.
 
 use std::mem::size_of;
 
@@ -6,21 +8,24 @@ use bytemuck::{Pod, Zeroable};
 use potpot_controls::Point;
 use potpot_controls::flat::{Color, Flat, Shape};
 
-/// one corner of a shape, which is a rectangle about a middle: lying along the pixels and
-/// drawn onto their edges, or any way round with its edges smoothed
+/// One corner of a shape.
+///
+/// A shape is a rectangle about a middle: lying along the pixels and drawn onto their edges,
+/// or any way round with its edges smoothed.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 struct Corner {
   middle: [f32; 2],
-  /// the way the shape's length runs
+  /// The direction the shape's length runs in.
   along: [f32; 2],
-  /// how far it reaches from its middle along its length and across it. for a line the
-  /// first is to its two points, which its round ends are past
+  /// The shape's reach from its middle along its length and across it.
+  ///
+  /// For a line the first is to its two points, which its round ends are past.
   half: [f32; 2],
-  /// which corner this is: one or minus one along, and across
+  /// The corner this is: one or minus one along, and across.
   side: [f32; 2],
   color: Color,
-  /// one for a rectangle whose corners go on the nearest pixel edges
+  /// One for a rectangle whose corners go on the nearest pixel edges.
   snap: f32,
 }
 
@@ -29,7 +34,7 @@ impl Corner {
     0 => Float32x2, 1 => Float32x2, 2 => Float32x2, 3 => Float32x2, 4 => Float32x4, 5 => Float32
   ];
 
-  /// the six corners of the two triangles a shape is drawn as
+  /// Returns the six corners of the two triangles a shape is drawn as.
   fn of(shape: &Shape) -> [Self; 6] {
     let corner = |side: [f32; 2]| Self {
       middle: shape.middle,
@@ -49,27 +54,34 @@ impl Corner {
 struct Options {
   size: [f32; 2],
   pixels: [f32; 2],
-  /// one when the target encodes srgb itself
+  /// One as its first number when the target encodes sRGB itself.
   options: [f32; 4],
 }
 
-/// what drawing [`Flat`] shapes takes on the gpu
+/// The GPU resources that drawing [`Flat`] shapes takes.
 #[derive(Debug)]
 pub(crate) struct FlatRenderer {
   pipeline: wgpu::RenderPipeline,
   options: wgpu::Buffer,
   group: wgpu::BindGroup,
   corners: wgpu::Buffer,
-  /// how many corners the buffer has room for
+  /// The number of corners the buffer has room for.
   room: usize,
-  /// what the buffers hold, to tell shapes and a place that differ from them
+  /// The shapes whose corners the corner buffer holds.
+  ///
+  /// [`FlatRenderer::prepare`] writes the buffer only when it is given other shapes.
   held: Flat,
+  /// The contents of the options buffer.
+  ///
+  /// [`FlatRenderer::prepare`] writes the buffer only when the options differ from them.
   held_options: Options,
   target_encodes: bool,
 }
 
 impl FlatRenderer {
-  /// `target` is the format of the textures [`FlatRenderer::render`] will draw onto
+  /// Creates a renderer for targets of one format.
+  ///
+  /// `target` is the format of the textures [`FlatRenderer::render`] draws onto.
   pub(crate) fn new(device: &wgpu::Device, target: wgpu::TextureFormat) -> Self {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
       label: Some("controls flat"),
@@ -144,15 +156,17 @@ impl FlatRenderer {
       group,
       corners: corner_buffer(device, 0),
       room: 0,
-      // a new buffer is all zeros
       held: Flat::default(),
+      // a new buffer is all zeros
       held_options: Options::zeroed(),
       target_encodes: target.is_srgb(),
     }
   }
 
-  /// takes the shapes to draw next. `size` is the width and height their points run over,
-  /// which is a scene's panel, and `pixels` those of the place they will be drawn in
+  /// Takes the shapes to draw next.
+  ///
+  /// `size` is the panel's width and height in points, and `pixels` is the width and height
+  /// of the place the shapes are drawn in.
   pub(crate) fn prepare(
     &mut self,
     device: &wgpu::Device,
@@ -181,9 +195,10 @@ impl FlatRenderer {
     }
   }
 
-  /// draws the shapes last prepared over `place` on the target, leaving everything outside
-  /// it as it was. `place` is x, y, width and height in the target's pixels, and has to lie
-  /// on the target
+  /// Draws the shapes last prepared over `place` on the target.
+  ///
+  /// Everything outside `place` stays as it was. `place` is
+  /// `[left, top, width, height]` in the target's pixels, and has to lie on the target.
   pub(crate) fn render(
     &self,
     encoder: &mut wgpu::CommandEncoder,
@@ -230,32 +245,33 @@ fn corner_buffer(device: &wgpu::Device, room: usize) -> wgpu::Buffer {
 
 #[cfg(test)]
 mod tests {
-  /// a backend is handed the shader in a language of its own, which naga writes it in when
-  /// the pipeline is made. one it cannot be written in fails there, on the user's machine
   #[test]
   fn the_shader_can_be_written_for_every_backend() {
     use naga::back::{hlsl, msl, spv};
 
-    let module = naga::front::wgsl::parse_str(include_str!("flat.wgsl")).expect("it to parse");
+    // a backend is handed the shader in a language of its own, which naga writes it in when
+    // the pipeline is made. one it cannot be written in fails there, on the user's machine
+    let module =
+      naga::front::wgsl::parse_str(include_str!("flat.wgsl")).expect("the shader parses");
     let info = naga::valid::Validator::new(
       naga::valid::ValidationFlags::all(),
       naga::valid::Capabilities::empty(),
     )
     .validate(&module)
-    .expect("it to be valid");
+    .expect("the shader is valid");
     let mut direct3d = String::new();
     let pipeline = hlsl::PipelineOptions::default();
     hlsl::Writer::new(&mut direct3d, &hlsl::Options::default(), &pipeline)
       .write(&module, &info, None)
-      .expect("it to be written for direct3d");
+      .expect("the shader is written for direct3d");
     msl::write_string(
       &module,
       &info,
       &msl::Options::default(),
       &msl::PipelineOptions::default(),
     )
-    .expect("it to be written for metal");
+    .expect("the shader is written for metal");
     spv::write_vec(&module, &info, &spv::Options::default(), None)
-      .expect("it to be written for vulkan");
+      .expect("the shader is written for vulkan");
   }
 }

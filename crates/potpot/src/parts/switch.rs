@@ -1,4 +1,4 @@
-//! push switches: a sprung plunger in a collar
+//! Push switches, each a sprung plunger in a collar.
 
 use glam::{Mat4, Vec3};
 
@@ -6,22 +6,23 @@ use super::button::Button;
 use super::outline::band;
 use crate::mesh::Mesh;
 
-/// a push switch: a plunger standing in a collar on the panel, sprung so that it comes back
-/// out by itself
+/// A push switch, a plunger standing in a collar on the panel.
+///
+/// The plunger is sprung so that it comes back out by itself.
 #[derive(Clone, Copy, Debug)]
 pub struct PushSwitch {
-  /// the plunger, as tall as it stands out of the panel when it is out
+  /// The plunger, as tall as it stands out of the panel when out.
   pub plunger: Button,
-  /// how far the plunger goes in when it is pushed all the way
+  /// The distance the plunger goes in when pushed all the way, in points.
   pub travel: f32,
-  /// how wide the collar around the plunger is
+  /// The width of the collar around the plunger, in points.
   pub collar: f32,
-  /// how high the collar stands
+  /// The height of the collar, in points.
   pub collar_height: f32,
 }
 
 impl PushSwitch {
-  /// a square plunger in a square collar
+  /// Creates a square plunger in a square collar.
   pub fn square(side: f32, height: f32) -> Self {
     Self {
       plunger: Button {
@@ -36,7 +37,7 @@ impl PushSwitch {
     }
   }
 
-  /// a round plunger in a round collar
+  /// Creates a round plunger in a round collar.
   pub fn round(diameter: f32, height: f32) -> Self {
     Self {
       plunger: Button {
@@ -48,12 +49,14 @@ impl PushSwitch {
     }
   }
 
-  /// the plunger, out
+  /// Returns the mesh of the plunger when it is out.
   pub fn plunger(&self) -> Mesh {
     self.plunger.body()
   }
 
-  /// the collar, a ring around the plunger with a hole for it to move in
+  /// Returns the collar, a ring around the plunger.
+  ///
+  /// The ring has a hole for the plunger to move in.
   pub fn collar(&self) -> Mesh {
     let cut = self.collar_height.min(self.collar) * 0.25;
     let plunger = self.plunger.outline();
@@ -66,8 +69,10 @@ impl PushSwitch {
     )
   }
 
-  /// where the plunger sits for a switch at (x, y) that is `depth` of the way in, which
-  /// [`potpot_controls::interaction::Push::depth`] tells
+  /// Returns the transform of the plunger of a switch at (`x`, `y`).
+  ///
+  /// The plunger is `depth` of the way in, which
+  /// [`Push::depth`](potpot_controls::interaction::Push::depth) tells.
   pub fn transform(&self, x: f32, y: f32, depth: f32) -> Mat4 {
     Mat4::from_translation(Vec3::new(x, y, -self.travel * depth.clamp(0.0, 1.0)))
   }

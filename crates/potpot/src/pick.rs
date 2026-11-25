@@ -1,16 +1,21 @@
-//! which object of a scene is seen at a point of its picture
+//! The object of a scene that is seen at a point of its picture.
 
 use glam::{Vec2, Vec3};
 
 use crate::scene::Scene;
 
 impl Scene {
-  /// the object seen at a point of the picture, as its place in [`Scene::objects`]. the point
-  /// is in the panel's points from its top left, where the picture is stretched over the
-  /// panel. it is found by the line of sight through the point, so an object's sides and
-  /// whatever the lean moves count as they are drawn, and of everything on the line the one
-  /// nearest the viewer is seen. nothing outside the scene's heights or off the picture is
-  /// drawn, so nothing there is found
+  /// Returns the object seen at a point of the picture.
+  ///
+  /// The object is given as its place in [`Scene::objects`]. `at` is in the panel's points from
+  /// its top left, where the picture is stretched over the panel. The object is found by the
+  /// line of sight through the point, so an object's sides and whatever the lean moves count as
+  /// they are drawn, and of everything on the line the one nearest the viewer is seen. Nothing
+  /// outside the scene's heights or off the picture is drawn, so nothing there is found.
+  ///
+  /// # Panics
+  ///
+  /// Panics if an index of an object's mesh is past the end of the mesh's vertices.
   pub fn pick(&self, at: Vec2) -> Option<usize> {
     let across = at / self.size * 2.0 - 1.0;
     if across.abs().max_element() > 1.0 {
@@ -41,13 +46,16 @@ impl Scene {
   }
 }
 
-/// how far past its edges a triangle counts as crossed, as a part of its size. a line of
-/// sight along the edge two triangles share comes out a rounding error outside one or the
-/// other, and with none of this outside both
+/// The margin past a triangle's edges that counts as crossed.
+///
+/// The margin is a fraction of the triangle's size. A line of sight along the edge two triangles
+/// share comes out a rounding error outside one or the other, and with no margin outside both.
 const EDGE: f32 = 1e-4;
 
-/// how far along a line it goes through a triangle, from zero at `from` to one at
-/// `from + along`, if it does between the two
+/// Returns how far along a line it goes through a triangle.
+///
+/// The distance runs from zero at `from` to one at `from + along`, and is `None` for a line
+/// that does not go through the triangle between the two.
 fn crossing(from: Vec3, along: Vec3, [a, b, c]: [Vec3; 3]) -> Option<f32> {
   let (ab, ac) = (b - a, c - a);
   let across = along.cross(ac);
@@ -78,8 +86,9 @@ mod tests {
   use crate::mesh::Mesh;
   use crate::scene::{Light, Look, Object};
 
-  /// a panel of 400 by 200 with a plate over all of it, and on the plate whatever boxes are
-  /// asked for, each between two corners
+  /// Creates a panel of 400 by 200 with a plate over all of it.
+  ///
+  /// On the plate are the boxes asked for, each between two corners.
   fn scene(lean: Vec2, boxes: &[(Vec3, Vec3)]) -> Scene {
     let plate = (Vec3::new(0.0, 0.0, -4.0), Vec3::new(400.0, 200.0, 0.0));
     let objects = std::iter::once(&plate)
@@ -136,7 +145,7 @@ mod tests {
     let drawn = scene.view().project_point3(Vec3::new(302.0, 122.0, 32.0));
     let at = (Vec2::new(drawn.x, -drawn.y) + 1.0) / 2.0 * scene.size;
     assert_eq!(scene.pick(at), Some(1));
-    // and not where it stands on the panel, which the lean has moved it off
+    // the lean has moved it off where it stands on the panel
     assert_eq!(scene.pick(Vec2::new(302.0, 122.0)), Some(0));
   }
 

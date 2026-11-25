@@ -1,32 +1,33 @@
-//! triangle meshes and the few shapes a panel is built from
+//! Triangle meshes and the few shapes a panel is built from.
 
 use std::f32::consts::TAU;
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3};
 
-/// one corner of a mesh's triangles
+/// One corner of a mesh's triangles.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct Vertex {
-  /// where it is, in the mesh's own space
+  /// The corner's place in the mesh's own space.
   pub position: [f32; 3],
-  /// the way the surface faces there, pointing out of it
+  /// The way the surface faces at the corner, pointing out of it.
   pub normal: [f32; 3],
 }
 
-/// triangles with a normal at every corner. faces that meet at a hard edge do not share
-/// vertices, so each keeps its own normal
+/// A triangle mesh with a normal at every corner.
+///
+/// Faces that meet at a hard edge do not share vertices, so each keeps its own normal.
 #[derive(Clone, Debug, Default)]
 pub struct Mesh {
-  /// the corners of its triangles
+  /// The corners of the triangles.
   pub vertices: Vec<Vertex>,
-  /// the triangles, each as the places of its three corners among `vertices`
+  /// The triangles, each as the places of its three corners in [`Mesh::vertices`].
   pub indices: Vec<u32>,
 }
 
 impl Mesh {
-  /// a box between two corners, flat on every side
+  /// Creates a box between two corners, flat on every side.
   pub fn cuboid(min: Vec3, max: Vec3) -> Self {
     let mut mesh = Self::default();
     for axis in 0..3 {
@@ -55,10 +56,11 @@ impl Mesh {
     mesh
   }
 
-  /// a profile of (radius, height) points turned around the z axis. the profile runs from the
-  /// bottom outside edge upward and in toward the axis, and every stretch between two points
-  /// is its own band with a hard edge to the next. `segments` is how many sides the turn has,
-  /// and `smooth` rounds the shading across them
+  /// Creates a profile of (radius, height) points turned around the z axis.
+  ///
+  /// The profile runs from the bottom outside edge upward and in toward the axis, and every
+  /// stretch between two points is its own band with a hard edge to the next. `segments` is how
+  /// many sides the turn has, and `smooth` rounds the shading across them.
   pub fn lathe(profile: &[[f32; 2]], segments: u32, smooth: bool) -> Self {
     let mut mesh = Self::default();
     let around = |step: f32| {
@@ -88,12 +90,13 @@ impl Mesh {
     mesh
   }
 
-  /// a closed band of surface through rings of points: `point(ring, angle)` places the point
-  /// of a ring at an angle around the z axis, for `rings` rings from the bottom outside up
-  /// and in, each of `segments` points. where neighboring faces turn from each other by less
-  /// than the angle whose cosine is `crease` the shading rounds over the edge between them,
-  /// and anything sharper stays a hard edge. this is [`Mesh::lathe`] for shapes that are not
-  /// the same all the way around
+  /// Creates a closed band of surface through rings of points.
+  ///
+  /// `point(ring, angle)` places the point of a ring at an angle around the z axis, for `rings`
+  /// rings from the bottom outside up and in, each of `segments` points. Where neighboring faces
+  /// turn from each other by less than the angle whose cosine is `crease` the shading rounds
+  /// over the edge between them, and anything sharper stays a hard edge. It does the work of
+  /// [`Mesh::lathe`] for shapes that vary around the axis.
   pub fn rings(
     rings: usize,
     segments: u32,
@@ -169,11 +172,12 @@ impl Mesh {
     mesh
   }
 
-  /// an outline pulled sideways into a solid standing on z zero: `outline` is points of
-  /// (y, height) running from front to back without turning around, and the solid reaches
-  /// `half_width(height)` to each side of x zero, so that it can narrow on the way up.
-  /// edges of the outline that turn by less than the angle whose cosine is `crease` shade
-  /// as one curve
+  /// Creates an outline pulled sideways into a solid standing on z zero.
+  ///
+  /// `outline` is points of (y, height) running from front to back without turning around, and
+  /// the solid reaches `half_width(height)` to each side of x zero, so that it can narrow on the
+  /// way up. Edges of the outline that turn by less than the angle whose cosine is `crease`
+  /// shade as one curve.
   pub fn extruded(outline: &[Vec2], half_width: impl Fn(f32) -> f32, crease: f32) -> Self {
     let mut mesh = Self::default();
     let spans = outline.len().saturating_sub(1);
@@ -215,7 +219,7 @@ impl Mesh {
           Vec3::new(side * far, to.x, to.y),
           Vec3::new(side * floor, to.x, 0.0),
         ];
-        // a side that narrows on the way up leans back, the more the taller it is
+        // a side that narrows on the way up leans back by how much it narrows over its height
         let tall = from.y.max(to.y).max(f32::EPSILON);
         let lean = (floor - near.min(far)) / tall;
         mesh.quad(corners, Vec3::new(side, 0.0, lean).normalize());
@@ -224,8 +228,10 @@ impl Mesh {
     mesh
   }
 
-  /// the mesh moved by a transform, to bake a part into place before merging. the transform
-  /// is a rotation and a move, with at most an even scale
+  /// Returns the mesh moved by a transform.
+  ///
+  /// It bakes a part into place before merging. `transform` is a rotation and a move, with at
+  /// most an even scale.
   #[must_use]
   pub fn transformed(mut self, transform: Mat4) -> Self {
     for vertex in &mut self.vertices {
@@ -238,7 +244,7 @@ impl Mesh {
     self
   }
 
-  /// both meshes as one
+  /// Returns both meshes as one.
   #[must_use]
   pub fn merged(mut self, other: &Self) -> Self {
     let base = self.vertices.len() as u32;
@@ -331,7 +337,7 @@ mod tests {
       if normal.z > 0.5 {
         assert!((normal.z - 1.0).abs() < 1e-4, "{position} faces {normal}");
       } else {
-        // rounded, so a wall corner faces straight out from the axis and not along a face
+        // rounded, so a wall corner faces straight out from the axis
         let outward = Vec3::new(position.x, position.y, 0.0).normalize();
         assert!(outward.dot(normal) > 0.9999, "{position} faces {normal}");
       }

@@ -1,4 +1,4 @@
-//! what a frame shows: objects on a panel, one light, and how crude the picture is
+//! The scene a frame shows: objects on a panel, its lights and its look.
 
 use std::sync::Arc;
 
@@ -7,75 +7,122 @@ use glam::{Mat4, Vec2, Vec3};
 use crate::material::Material;
 use crate::mesh::Mesh;
 
-/// a panel seen from straight above.
+/// A panel seen from straight above.
 ///
-/// x and y are the panel's own points with the origin at its top left and y running down, the
-/// way a ui lays out, so an object at (x, y) sits under a widget at (x, y). z is the height off
-/// the panel toward the viewer
+/// The x and y axes are the panel's own points with the origin at its top left and y running
+/// down, the way a UI lays out, so an object at (x, y) sits under a widget at (x, y). The z axis
+/// is the height off the panel toward the viewer.
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::Arc;
+///
+/// use potpot::glam::{Mat4, Vec2, Vec3};
+/// use potpot::{Light, Look, Material, Mesh, Object, Scene};
+///
+/// // a box 20 high under a view that leans, so that its front shows
+/// let scene = Scene {
+///   size: Vec2::new(400.0, 200.0),
+///   heights: [-10.0, 40.0],
+///   lean: Vec2::new(0.0, -0.5),
+///   light: Light::default(),
+///   look: Look::default(),
+///   objects: vec![Object {
+///     mesh: Arc::new(Mesh::cuboid(
+///       Vec3::new(100.0, 50.0, 0.0),
+///       Vec3::new(140.0, 90.0, 20.0),
+///     )),
+///     transform: Mat4::IDENTITY,
+///     material: Material::matte(Vec3::ONE),
+///   }],
+///   lamps: Vec::new(),
+/// };
+/// // the top is drawn 10 points up the picture from where the box stands
+/// assert_eq!(scene.pick(Vec2::new(120.0, 45.0)), Some(0));
+/// assert_eq!(scene.pick(Vec2::new(120.0, 95.0)), None);
+/// ```
 #[derive(Clone, Debug)]
 pub struct Scene {
-  /// the panel's width and height
+  /// The panel's width and height in points.
   pub size: Vec2,
-  /// the lowest and highest z anything reaches
+  /// The lowest and highest z anything reaches.
   pub heights: [f32; 2],
-  /// how far a point slides across the picture for each unit of its height. zero looks
-  /// straight down, anything else leans the view so that sides show
+  /// How far a point slides across the picture per unit of its height.
+  ///
+  /// Zero looks straight down. Any other value leans the view so that sides show.
   pub lean: Vec2,
-  /// the light over the whole panel
+  /// The light over the whole panel.
   pub light: Light,
-  /// how crude the picture is
+  /// How crude the picture is.
   pub look: Look,
-  /// everything on the panel. [`Scene::pick`] names one by its place here
+  /// Everything on the panel.
+  ///
+  /// [`Scene::pick`] names an object by its place here.
   pub objects: Vec<Object>,
-  /// small lights on the panel itself, like what a lit button throws on what is around it.
-  /// only the first [`LAMPS`] shine
+  /// Small lights on the panel itself.
+  ///
+  /// A lit button throws such a light on what is around it. Only the first [`LAMPS`] shine.
   pub lamps: Vec<Lamp>,
 }
 
-/// how many lamps a scene can have lit at once
+/// The most lamps a scene lights at once.
 pub const LAMPS: usize = 32;
 
-/// a small light at a point, which shines on what is near it. what stands between it and a
-/// surface shadows that surface, going by how high things are seen from straight above
+/// A small light at a point, which shines on what is near it.
+///
+/// What stands between it and a surface shadows that surface, going by how high things are seen
+/// from straight above.
 #[derive(Clone, Copy, Debug)]
 pub struct Lamp {
-  /// where it is, in the scene's x, y and z
+  /// The lamp's place, in the scene's x, y and z.
   pub at: Vec3,
-  /// its color and how bright it is, as linear light, which may be more than one
+  /// The lamp's color and brightness, as linear light.
+  ///
+  /// The values may be more than one.
   pub color: Vec3,
-  /// how far its light gets before it has faded to nothing
+  /// The distance at which its light has faded to nothing.
   pub reach: f32,
-  /// how far from its middle the thing that shines reaches, which is how large the lamp
-  /// shows in a mirror. nothing that near the lamp shadows it
+  /// How far from its middle the thing that shines reaches.
+  ///
+  /// The lamp shows that large in a mirror. Nothing that near the lamp shadows it.
   pub radius: f32,
 }
 
-/// the one light over the whole panel, which casts the shadows
+/// The one light over the whole panel, which casts the shadows.
 #[derive(Clone, Copy, Debug)]
 pub struct Light {
-  /// from the panel toward the light
+  /// The direction from the panel toward the light.
   pub toward: Vec3,
-  /// its color and how bright it is, as linear light
+  /// The light's color and brightness, as linear light.
   pub color: Vec3,
-  /// the light that reaches every surface, shadowed or not
+  /// The light that reaches every surface, shadowed or not.
   pub ambient: Vec3,
-  /// how much brighter the panel is at the edge nearest the light than in its middle, and
-  /// as much dimmer at the far edge, the way a lamp close by lights unevenly
+  /// How much brighter the panel is at the edge nearest the light.
+  ///
+  /// The edge nearest the light is that much brighter than the panel's middle and the far edge
+  /// as much dimmer, the way a lamp close by lights unevenly.
   pub falloff: f32,
-  /// how much the light that reaches every surface is kept out of corners and from under
-  /// things, which grounds everything on the panel with a soft dark edge. zero is none
+  /// How much the ambient light is kept out of corners.
+  ///
+  /// The light that reaches every surface is kept out of corners and from under things, which
+  /// grounds everything on the panel with a soft dark edge. Zero is none.
   pub occlusion: f32,
-  /// how much of the light that comes off surfaces lands on what is next to them, which
-  /// tints a thing with the color of its neighbors and lightens the sides of things that
-  /// face away from the light. zero is none and costs nothing, and it takes about three
-  /// to show plainly
+  /// How much light off surfaces lands on what is next to them.
+  ///
+  /// The light tints a thing with the color of its neighbors and lightens the sides of things
+  /// that face away from the light. Zero is none and costs nothing, and it takes about three to
+  /// show plainly.
   pub bounce: f32,
-  /// how wide the edges of shadows are, as if the light were that much bigger. one is
-  /// nearly a point, and a studio's wide soft light is five or more
+  /// The width of shadow edges, as if the light were that much bigger.
+  ///
+  /// One is nearly a point, and a studio's wide soft light is five or more.
   pub softness: f32,
-  /// how far off the light and the viewer are, in widths of the panel, for what shines: up
-  /// close a flat glossy face has its highlight in one place and fades away from it, as it
-  /// does in a photograph. zero puts both infinitely far, and such a face shines evenly
+  /// How far off the light is for what shines, in panel lengths.
+  ///
+  /// A panel length is the panel's longer side, and the viewer is twice as far off as the light.
+  /// Up close a flat glossy face has its highlight in one place and fades away from it, as it
+  /// does in a photograph. Zero puts both infinitely far, and such a face shines evenly.
   pub nearness: f32,
 }
 
@@ -94,24 +141,31 @@ impl Default for Light {
   }
 }
 
-/// how the picture is degraded on its way to the window
+/// The way the picture is degraded on its way to the window.
 #[derive(Clone, Copy, Debug)]
 pub struct Look {
-  /// window pixels to one rendered pixel along each axis. one is sharp, more is blockier
+  /// The window pixels to one rendered pixel along each axis.
+  ///
+  /// One is sharp, more is blockier.
   pub pixel_size: f32,
-  /// the steps each color channel is cut to, with an ordered dither between them. fewer
-  /// than two leaves the colors alone
+  /// The steps each color channel is cut to.
+  ///
+  /// An ordered dither goes between them. Fewer than two leaves the colors alone.
   pub color_steps: u32,
-  /// whether shadow edges are softened
+  /// Whether shadow edges are softened.
   pub soft_shadows: bool,
-  /// whether the edges of shapes are smoothed. an old render's are not
+  /// Whether the edges of shapes are smoothed.
+  ///
+  /// An old render leaves them rough.
   pub antialias: bool,
-  /// how much the brightest parts of the picture spill a haze over what is around them
+  /// How much the parts that light themselves spill a haze around them.
   pub bloom: f32,
-  /// how much darker the picture is toward its corners than in its middle
+  /// How much darker the picture is toward its corners than in its middle.
   pub vignette: f32,
-  /// how far the picture is blurred, from zero for not at all to one for the softness of a
-  /// bitmap that was drawn larger and scaled down
+  /// How far the picture is blurred.
+  ///
+  /// Zero is no blur, and one is the softness of a bitmap that was drawn larger and scaled
+  /// down.
   pub soften: f32,
 }
 
@@ -129,31 +183,38 @@ impl Default for Look {
   }
 }
 
-/// one thing on the panel: a shape, where it goes and what it is made of
+/// One thing on the panel: a shape, its place and its material.
 #[derive(Clone, Debug)]
 pub struct Object {
-  /// the object's shape. objects of one allocation share it on the gpu, where it stays for
-  /// as long as scenes keep using it, so a shape is best made once and kept
+  /// The object's shape.
+  ///
+  /// Objects of one allocation share it on the GPU. A [`Renderer`](crate::Renderer) keeps it
+  /// there while the scene it prepared last uses it, so a shape is best made once and kept.
   pub mesh: Arc<Mesh>,
-  /// where the mesh goes. a rotation and a move, with at most an even scale
+  /// The place of the mesh.
+  ///
+  /// It is a rotation and a move, with at most an even scale.
   pub transform: Mat4,
-  /// what its surface is made of
+  /// The material of its surface.
   pub material: Material,
 }
 
 impl Scene {
-  /// the direction from the panel toward the viewer
+  /// Returns the direction from the panel toward the viewer.
   pub(crate) fn toward_viewer(&self) -> Vec3 {
     Vec3::new(-self.lean.x, -self.lean.y, 1.0).normalize()
   }
 
-  /// panel points to clip space, the nearest height at depth zero
+  /// Returns the matrix from panel points to clip space.
+  ///
+  /// The nearest height lands on depth zero.
   pub(crate) fn view(&self) -> Mat4 {
     self.seen_leaning(self.lean)
   }
 
-  /// panel points to clip space as seen from straight above whatever the lean, for the map
-  /// of how high everything on the panel is
+  /// Returns the matrix from panel points to clip space from straight above.
+  ///
+  /// The height map and the bounce map are drawn through it.
   pub(crate) fn overhead(&self) -> Mat4 {
     self.seen_leaning(Vec2::ZERO)
   }
@@ -170,7 +231,9 @@ impl Scene {
     ])
   }
 
-  /// panel points to the shadow map's clip space, as the light sees the whole panel
+  /// Returns the matrix from panel points to the shadow map's clip space.
+  ///
+  /// It is the whole panel as the light sees it.
   pub(crate) fn light_view(&self) -> Mat4 {
     let toward = self.light.toward.normalize();
     let right = Vec3::Y.cross(toward).normalize();
@@ -243,8 +306,8 @@ mod tests {
     let low = view.project_point3(Vec3::new(200.0, 100.0, -10.0));
     let high = view.project_point3(Vec3::new(200.0, 100.0, 40.0));
     assert!((low.z - 1.0).abs() < 1e-5 && high.z.abs() < 1e-5);
-    // 40 up at half a point of lean each is 20 points down the picture, a fifth of its
-    // clip height
+    // 40 up at half a point of lean each is 20 points down the picture, a tenth of its
+    // height, which is 0.2 in clip space
     assert!((high.y - -0.2).abs() < 1e-5, "{high}");
   }
 

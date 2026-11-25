@@ -1,22 +1,26 @@
 use super::Action::{Begin, End, Focus, Redraw, Set, WantClipboard};
 use super::*;
 
-/// how many letters the readouts of the bench have room for
+/// The number of letters the readouts of the bench have room for.
 const ROOM: usize = 9;
 
-/// a panel with every control at its default, the shifts in the middle of their turn and
-/// the mix at the end of its own, and events arriving a hundredth of a second apart
+/// A panel with every control at its default.
+///
+/// The shifts are in the middle of their turn and the mix at the end of its own, and events
+/// arrive a hundredth of a second apart.
 struct Bench {
   interaction: Interaction,
-  /// where the controls stand, which is their defaults unless a test says otherwise
+  /// The values the controls stand at.
+  ///
+  /// They are the defaults unless a test says otherwise.
   values: [f32; 4],
-  /// how many times its own size the window is
+  /// The number of times its own size the window is.
   scale: f32,
   now: Instant,
 }
 
-/// the bench's controls: two shifts of 24 semitones either way and a mix in hundredths,
-/// all three turning smoothly, and a shift like the others that moves in whole semitones
+// the bench's controls: two shifts of 24 semitones either way and a mix in hundredths,
+// all three turning smoothly, and a shift like the others that moves in whole semitones
 const PITCH: usize = 0;
 const FORMANT: usize = 1;
 const MIX: usize = 2;
@@ -85,7 +89,8 @@ fn a_control_turns_the_parameter_it_names_and_not_the_one_at_its_own_place() {
     (readings[1].text.as_str(), readings[1].unit.as_str()),
     ("0.00", " st")
   );
-  // a double click on the second control resets the pitch, which is the first parameter
+  // a click with the reset key on the second control resets the pitch, which is the first
+  // parameter
   let press = |over| Event::Press {
     button: Button::Left,
     at: [10.0, 10.0],
@@ -181,7 +186,7 @@ fn each_readout_holds_and_shows_what_its_own_control_says_it_can() {
     for letter in letters.chars() {
       panel.handle(Event::Key(Key::Letter(letter)), moment);
     }
-    let text = panel.edit().expect("a value being typed").text.clone();
+    let text = panel.edit().expect("a value is being typed").text.clone();
     panel.handle(Event::Key(Key::Escape), moment);
     text
   };
@@ -252,7 +257,9 @@ impl Bench {
     self.after(Duration::from_millis(10), event)
   }
 
-  /// a place on the panel, and where that is in the window at the bench's scale
+  /// Returns a place on the panel and where that is in the window.
+  ///
+  /// The window is at the bench's scale.
   fn place(&self, at: Point) -> (Point, Point) {
     (at, at.map(|across| across * self.scale))
   }
@@ -311,7 +318,7 @@ impl Bench {
     }
   }
 
-  /// a double click on a readout, which begins typing its value
+  /// Double clicks a readout, which begins typing its value.
   fn edit(&mut self, control: usize) {
     let readout = Some(Target::Readout(control));
     assert_eq!(self.press(readout, 100.0), []);
@@ -321,16 +328,18 @@ impl Bench {
   }
 
   fn typed(&self) -> (&str, usize, bool) {
-    let edit = self.interaction.edit().expect("a value being typed");
+    let edit = self.interaction.edit().expect("a value is being typed");
     (&edit.text, edit.caret, !edit.selected().is_empty())
   }
 }
 
-/// the value a list of actions sets, which has to be the only thing they do
+/// Returns the value a list of actions sets.
+///
+/// Setting it has to be the only thing they do.
 fn set(actions: &[Action], control: usize) -> f32 {
   match actions {
     [Set(set, value)] if *set == control => *value,
-    other => panic!("not one value for {control:?}: {other:?}"),
+    other => panic!("the actions set one value for {control:?}: {other:?}"),
   }
 }
 
@@ -381,7 +390,7 @@ fn a_drag_stops_at_the_end_of_the_turn_and_comes_back_at_once() {
   assert!(close(set(&bench.drag(-30.0, false), PITCH), 0.9));
 }
 
-/// the value of the bench's shifts that is so many semitones
+/// Returns the value of the bench's shifts for `plain` semitones.
 fn semitones(plain: f32) -> f32 {
   (plain + 24.0) / 48.0
 }
@@ -541,10 +550,12 @@ fn less_than_a_line_on_a_stepped_control_tells_the_host_nothing() {
   assert_eq!(bench.press(None, 100.0), []);
 }
 
-/// the grip, in the far corner of the bench's panel, ten points in from both edges
+/// A point of the grip, in the far corner of the bench's panel.
+///
+/// It is ten points in from both edges.
 const GRIP: Point = [SIZE[0] - 10.0, SIZE[1] - 10.0];
 
-/// the pointer moved to a place in the window
+/// Moves the pointer to a place in the window.
 fn pull(bench: &mut Bench, to: Point) -> Vec<Action> {
   // the same place in the window is fewer of the panel's points the larger it has become
   let at = to.map(|across| across / bench.scale);
@@ -591,7 +602,7 @@ fn pulling_the_grip_scales_the_window_to_reach_the_pointer() {
   // back in across by more than it is still out down, the window shrinks to there
   let scaled = |actions: Vec<Action>| match actions[..] {
     [Action::Scale(scale)] => scale,
-    _ => panic!("not one scale: {actions:?}"),
+    _ => panic!("the actions are one scale: {actions:?}"),
   };
   assert!(close(
     scaled(pull(&mut bench, [GRIP[0] - 100.0, GRIP[1] + 25.0])),
@@ -614,9 +625,8 @@ fn a_window_that_has_followed_the_pointer_asks_for_no_other_size() {
   grab(&mut bench);
   let to = [GRIP[0] + 51.0, GRIP[1]];
   assert_eq!(pull(&mut bench, to), [Action::Scale(1.102)]);
-  // the window becomes about that size, but the panel fitted into its whole pixels is a
-  // hair wider or narrower, so the same place in the window is a little way off on the
-  // panel. the host then moves the pointer to where it already is
+  // the panel fitted into the window's whole pixels is a hair wider or narrower than that, so
+  // the host moving the pointer to where it already is puts it a little way off on the panel
   for (scale, off) in [(1.1019999, 0.4), (1.1020001, -0.4), (1.102, 0.0)] {
     bench.scale = scale;
     let moved = Event::Move {
@@ -631,7 +641,7 @@ fn a_window_that_has_followed_the_pointer_asks_for_no_other_size() {
 
 #[test]
 fn the_grip_held_anywhere_on_it_does_not_jump_the_window() {
-  // at a window half as large again, held three points off the grip's middle
+  // at a window half as large again, held three points off `GRIP` each way
   let mut bench = Bench::new();
   bench.scale = 1.5;
   let (held, on_screen) = bench.place([GRIP[0] + 3.0, GRIP[1] - 3.0]);
@@ -999,7 +1009,7 @@ fn a_double_click_that_goes_on_moving_resets_and_does_not_drag() {
   );
 }
 
-/// the menu opened on something and one of its rows pressed
+/// Opens the menu on a target and presses one of its rows.
 fn choose(bench: &mut Bench, on: Target, item: Item) -> Vec<Action> {
   bench.after(Duration::from_secs(1), Event::Tick);
   assert_eq!(bench.right(Some(on)), [Redraw]);
@@ -1015,7 +1025,7 @@ fn the_arrows_with_extend_select_from_where_the_caret_was() {
   bench.key(Key::Left { extend: true });
   bench.key(Key::Left { extend: true });
   assert_eq!((selected(&bench), bench.typed().1), (3..5, 3));
-  // back over where it began, the selection turns around
+  // a step back toward where it began makes the selection a letter shorter
   bench.key(Key::Right { extend: true });
   assert_eq!(selected(&bench), 4..5);
   bench.key(Key::Home { extend: true });
@@ -1297,8 +1307,10 @@ fn a_press_off_the_menu_or_escape_puts_it_away_and_does_nothing_else() {
   assert!(bench.interaction.menu().is_none());
 }
 
-/// the bench with its mix made a fader that slides to the right, a hundred points for
-/// its whole turn, and standing in the middle
+/// Creates the bench with its mix made a fader.
+///
+/// The fader slides to the right, a hundred points for its whole turn, and stands in the
+/// middle.
 fn fader() -> Bench {
   let mut bench = Bench::new();
   bench.interaction.controls[MIX].feel.drag = Drag::Along {
@@ -1332,7 +1344,7 @@ fn a_fader_is_dragged_along_its_own_way_and_no_other() {
   assert_eq!(bench.release(), [End(MIX)]);
 }
 
-/// the bench with its mix made a button of a kind, which is off
+/// Creates the bench with its mix made a button that is off.
 fn button(push: Push) -> Bench {
   let mut bench = Bench::new();
   bench.interaction.controls[MIX].touch = Touch::Press(push);
@@ -1407,7 +1419,7 @@ fn a_stepped_switch_goes_one_step_on_with_each_click_and_around_from_the_end() {
     assert_eq!(bench.release(), []);
     match actions[..] {
       [Begin(MIX), Set(MIX, value), End(MIX)] => value,
-      _ => panic!("not one whole gesture: {actions:?}"),
+      _ => panic!("the actions are one whole gesture: {actions:?}"),
     }
   };
   // clicks as close together as a double click are still one step each

@@ -1,4 +1,4 @@
-//! knobs: a grip under a top, with the markers that lie on them
+//! Knobs, each a grip under a top, and the markers that lie on them.
 
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
@@ -8,29 +8,37 @@ use super::grip::Grip;
 use super::{CREASE, PAINT, ROLL, TOP_RINGS};
 use crate::mesh::Mesh;
 
-/// the sweep of most hardware knobs, three quarters of a turn
+/// The sweep of most hardware knobs, in radians.
+///
+/// The sweep is three quarters of a turn.
 pub const KNOB_SWEEP: f32 = 1.5 * PI;
 
-/// the levels a grip that changes on its way up is cut into
+/// The count of levels cut into a grip that changes on its way up.
 const LEVELS: usize = 10;
 
-/// one ring of a knob's surface
+/// One ring of a knob's surface.
 #[derive(Clone, Copy)]
 struct Ring {
   radius: f32,
-  /// none for a ring that lies on the top's face, wherever that is
+  /// The ring's height in points, or `None` to lie on the top's face.
   height: Option<f32>,
-  /// how much of the grip's shape the ring takes, down to none for a plain circle
+  /// The share of the grip's shape the ring takes.
+  ///
+  /// Zero is a plain circle.
   shaped: f32,
-  /// how far up the grip it is, for the grips that change on the way
+  /// The ring's place up the grip, for the grips that change on the way.
   level: f32,
-  /// how far the ring has rounded off toward the largest circle inside the grip's outline,
-  /// which a scooped or ridged grip's top does on its way to the middle
+  /// The amount the ring has rounded off toward a circle.
+  ///
+  /// The circle is the largest one inside the grip's outline. The top of a scooped or ribbed grip
+  /// rounds off toward it on the way to the middle.
   rounded: f32,
 }
 
-/// a flat strip `half_width` to each side of a path of points, each given as how far out
-/// toward negative y and how high, standing just off the surface the path follows
+/// Returns a flat strip `half_width` to each side of a path.
+///
+/// Each point of `path` is how far out toward negative y and how high. The strip stands just off
+/// the surface the path follows.
 fn ribbon(path: &[Vec2], half_width: f32) -> Mesh {
   // the way out of the surface at each point: its two neighbors' direction turned a quarter
   let facing = |index: usize| {
@@ -64,63 +72,70 @@ fn ribbon(path: &[Vec2], half_width: f32) -> Mesh {
   ribbon
 }
 
-/// a knob, described by its parts. the named ones, like [`Knob::fluted`], are starting
-/// points whose fields can be set to anything else.
+/// A knob, described by its parts.
 ///
-/// every knob points up the panel, toward negative y, before it turns
+/// The named constructors, like [`Knob::fluted`], are starting points whose fields can be set to
+/// anything else.
+///
+/// Every knob points up the panel, toward negative y, before it turns.
 #[derive(Clone, Copy, Debug)]
 pub struct Knob {
-  /// the widest the knob gets, at its skirt if it has one
+  /// The knob's widest radius, at its skirt if it has one, in points.
   pub radius: f32,
-  /// how high the rim of its top stands, along z
+  /// The height of the rim of its top along z, in points.
   pub height: f32,
-  /// how much narrower the grip is than a skirt under it, as a share of the radius. zero is
-  /// a knob with straight sides and no skirt
+  /// The grip's inset from a skirt under it, as a share of the radius.
+  ///
+  /// Zero is a knob with straight sides and no skirt.
   pub skirt: f32,
-  /// the outline of its side
+  /// The outline of its side.
   pub grip: Grip,
-  /// the shape of its face
+  /// The shape of its face.
   pub top: Top,
-  /// how much narrower the grip is at its top than at its foot, as a share of its radius,
-  /// for a knob that is a cone
+  /// The grip's narrowing from foot to top, as a share of its radius.
+  ///
+  /// A knob with a taper is a cone.
   pub taper: f32,
-  /// how the side meets the top
+  /// The way the side meets the top.
   pub edge: Edge,
 }
 
-/// the edge between a knob's side and its top
+/// The edge between a knob's side and its top.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Edge {
-  /// a hard corner
+  /// A hard corner.
   Sharp,
-  /// one flat cut across the corner, this share of the height tall and as wide
+  /// One flat cut across the corner.
+  ///
+  /// The cut is this share of the height tall and as wide.
   Chamfered(f32),
-  /// a quarter round of this share of the height
+  /// A quarter round of this share of the height.
   Rolled(f32),
 }
 
-/// the face of a knob
+/// The face of a knob.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Top {
-  /// level all over
+  /// A face level all over.
   Flat,
-  /// hollowed like a shallow bowl, `depth` of the height deep at the middle
+  /// A face hollowed like a shallow bowl.
   Dished {
-    /// how far down the middle is, as a share of the height
+    /// The depth of the middle, as a share of the height.
     depth: f32,
   },
-  /// raised to a round crown, `rise` of the height higher at the middle
+  /// A face raised to a round crown.
   Domed {
-    /// how far up the middle is, as a share of the height
+    /// The rise of the middle, as a share of the height.
     rise: f32,
   },
-  /// flat but for one fingertip-sized divot near the rim on the side the knob points at,
-  /// which is the only marker such a knob needs
+  /// A flat face with one fingertip-sized divot near the rim.
+  ///
+  /// The divot is on the side the knob points at, and is the only marker such a knob needs.
   Dimpled,
 }
 
 impl Knob {
-  /// a plain round knob on a skirt
+  /// Creates a plain round knob on a skirt.
   pub fn round(radius: f32, height: f32) -> Self {
     Self {
       radius,
@@ -134,7 +149,7 @@ impl Knob {
     }
   }
 
-  /// scooped sides, straight down to the panel
+  /// Creates a knob with scooped sides, straight down to the panel.
   pub fn fluted(radius: f32, height: f32) -> Self {
     Self {
       skirt: 0.0,
@@ -146,7 +161,9 @@ impl Knob {
     }
   }
 
-  /// scooped sides over a wide skirt, the kind with the scale printed on the skirt
+  /// Creates a knob with scooped sides over a wide skirt.
+  ///
+  /// It is the kind with the scale printed on the skirt.
   pub fn skirted(radius: f32, height: f32) -> Self {
     Self {
       skirt: 0.32,
@@ -159,7 +176,7 @@ impl Knob {
     }
   }
 
-  /// fine ridges all around and a domed top
+  /// Creates a knob with fine ridges all around and a domed top.
   pub fn knurled(radius: f32, height: f32) -> Self {
     Self {
       skirt: 0.0,
@@ -169,7 +186,7 @@ impl Knob {
     }
   }
 
-  /// a soft-looking knob with a bowl for a top
+  /// Creates a soft-looking knob with a bowl for a top.
   pub fn dished(radius: f32, height: f32) -> Self {
     Self {
       skirt: 0.0,
@@ -178,7 +195,7 @@ impl Knob {
     }
   }
 
-  /// a low wide knob turned by a fingertip in its divot
+  /// Creates a low wide knob turned by a fingertip in its divot.
   pub fn dimpled(radius: f32, height: f32) -> Self {
     Self {
       skirt: 0.0,
@@ -187,7 +204,7 @@ impl Knob {
     }
   }
 
-  /// a few flat sides
+  /// Creates a knob with a few flat sides.
   pub fn faceted(radius: f32, height: f32) -> Self {
     Self {
       skirt: 0.0,
@@ -198,7 +215,7 @@ impl Knob {
     }
   }
 
-  /// a round body drawn out to a point
+  /// Creates a round body drawn out to a point.
   pub fn chicken_head(radius: f32, height: f32) -> Self {
     Self {
       skirt: 0.0,
@@ -207,7 +224,9 @@ impl Knob {
     }
   }
 
-  /// a tall handle across a low round base, the kind a toe can nudge
+  /// Creates a tall handle across a low round base.
+  ///
+  /// It is the kind a toe can nudge.
   pub fn bar(radius: f32, height: f32) -> Self {
     Self {
       skirt: 0.12,
@@ -216,7 +235,7 @@ impl Knob {
     }
   }
 
-  /// a small round knob with a long handle sticking out of it
+  /// Creates a small round knob with a long handle sticking out.
   pub fn lever(radius: f32, height: f32) -> Self {
     Self {
       skirt: 0.0,
@@ -228,7 +247,7 @@ impl Knob {
     }
   }
 
-  /// a tall pointer blade on a small base, like a DM-2300
+  /// Creates a tall pointer blade on a small base, like a DM-2300.
   pub fn ridge(radius: f32, height: f32) -> Self {
     Self {
       skirt: 0.0,
@@ -240,7 +259,9 @@ impl Knob {
     }
   }
 
-  /// six deep scoops on a cone with a cut edge, the pedal knob with a hexagon's outline
+  /// Creates six deep scoops on a cone with a cut edge.
+  ///
+  /// It is the pedal knob with a hexagon's outline.
   pub fn hex(radius: f32, height: f32) -> Self {
     Self {
       skirt: 0.0,
@@ -255,7 +276,9 @@ impl Knob {
     }
   }
 
-  /// a straight cylinder with round ribs and a cut edge, made for a face of another material
+  /// Creates a straight cylinder with round ribs and a cut edge.
+  ///
+  /// It is made for a face of another material.
   pub fn ribbed(radius: f32, height: f32) -> Self {
     Self {
       skirt: 0.0,
@@ -269,7 +292,9 @@ impl Knob {
     }
   }
 
-  /// a ribbed cone widening down to the panel, like an amplifier's
+  /// Creates a ribbed cone widening down to the panel.
+  ///
+  /// It is like an amplifier's knob.
   pub fn conical(radius: f32, height: f32) -> Self {
     Self {
       skirt: 0.0,
@@ -284,7 +309,7 @@ impl Knob {
     }
   }
 
-  /// the radius of the grip's round parts
+  /// Returns the radius of the grip's round parts.
   fn grip_radius(&self) -> f32 {
     match self.grip {
       // the point reaches the full radius and the rest stays inside it
@@ -295,12 +320,12 @@ impl Knob {
     }
   }
 
-  /// the radius of the grip's round parts at its top
+  /// Returns the radius of the grip's round parts at its top.
   fn crown_radius(&self) -> f32 {
     self.grip_radius() * (1.0 - self.taper)
   }
 
-  /// how tall and how wide the cut or roll between the side and the top is
+  /// Returns how tall and how wide the edge's cut or roll is.
   fn edge_size(&self) -> f32 {
     match self.edge {
       Edge::Sharp => 0.0,
@@ -311,18 +336,22 @@ impl Knob {
     }
   }
 
-  /// the radius where the edge ends and the top's face begins
+  /// Returns the radius where the edge ends and the face begins.
   fn face_radius(&self) -> f32 {
     self.crown_radius() - self.edge_size()
   }
 
-  /// the height of the top's face at a point of the knob, for laying markers on it
+  /// Returns the height of the top's face at a point of the knob.
+  ///
+  /// A marker laid on the face lies at this height.
   pub fn top_at(&self, at: Vec2) -> f32 {
     self.top_height(at, (at.length() / self.face_radius()).min(1.0))
   }
 
-  /// the height of the top's face at a point that is `out` of the way from its middle to
-  /// its rim, which on a grip that is not round is not a matter of distance
+  /// Returns the height of the top's face at a point.
+  ///
+  /// The point is `out` of the way from the face's middle to its rim. On a grip that is not round,
+  /// distance from the middle does not give `out`.
   fn top_height(&self, at: Vec2, out: f32) -> f32 {
     match self.top {
       Top::Flat => self.height,
@@ -338,14 +367,16 @@ impl Knob {
     }
   }
 
-  /// where a dimpled top's divot is, and how wide
+  /// Returns the middle and the radius of a dimpled top's divot.
   fn dimple(&self) -> (Vec2, f32) {
     let face = self.face_radius();
     (Vec2::new(0.0, -face * 0.52), face * 0.36)
   }
 
-  /// the rings of the knob's surface from the panel up and in to the middle of its top, and
-  /// which of them is the foot of the grip
+  /// Returns the rings of the knob's surface and the grip's foot.
+  ///
+  /// The rings run from the panel up and in to the middle of the top. The index is of the ring that
+  /// is the foot of the grip.
   fn rings(&self) -> (Vec<Ring>, usize) {
     let (grip, crown, face) = (self.grip_radius(), self.crown_radius(), self.face_radius());
     let shoulder = self.height - self.edge_size();
@@ -431,8 +462,9 @@ impl Knob {
     (rings, foot)
   }
 
-  /// the point of a ring at an angle around the knob. `crests` leaves out a knurled grip's
-  /// grooves, for what lies over them
+  /// Returns the point of a ring at an angle around the knob.
+  ///
+  /// `crests` leaves out a knurled grip's grooves, for what lies over them.
   fn surface(&self, ring: Ring, angle: f32, crests: bool) -> Vec3 {
     let mut out = 1.0 + (self.grip.at(angle, ring.level) - 1.0) * ring.shaped;
     match self.grip {
@@ -456,7 +488,7 @@ impl Knob {
     at.extend(height)
   }
 
-  /// the knob itself, without a marker
+  /// Returns the mesh of the knob itself, without a marker.
   pub fn body(&self) -> Mesh {
     let (rings, _) = self.rings();
     // a faceted knob keeps every edge between its sides hard, however many it has
@@ -470,8 +502,10 @@ impl Knob {
     })
   }
 
-  /// a line painted on the knob where it points: across the top from partway out, over the
-  /// shoulder and down the side
+  /// Returns a line painted on the knob where it points.
+  ///
+  /// The line runs across the top, over the shoulder and down the side. It starts at the middle of
+  /// the top on a grip with a handle, a point or a blade, and partway out on any other.
   pub fn line(&self) -> Mesh {
     let (rings, foot) = self.rings();
     let face = self.face_radius();
@@ -501,9 +535,10 @@ impl Knob {
     ribbon(&path, half_width)
   }
 
-  /// a thin disc lying in the top's face and following its shape, for a face of another
-  /// material than the body, like an aluminum insert. `inset` is how much of the face it
-  /// covers, by radius
+  /// Returns a thin disc lying in the top's face.
+  ///
+  /// The disc follows the face's shape, for a face of another material than the body, like an
+  /// aluminum insert. `inset` is the share of the face it covers, by radius.
   pub fn cap(&self, inset: f32) -> Mesh {
     let face = self.face_radius();
     Mesh::rings(
@@ -524,7 +559,7 @@ impl Knob {
     )
   }
 
-  /// a small raised dot on the top near the rim
+  /// Returns a small raised dot on the top near the rim.
   pub fn dot(&self) -> Mesh {
     let face = self.face_radius();
     let (at, radius) = (Vec2::new(0.0, -face * 0.68), self.radius * 0.09);
@@ -538,8 +573,9 @@ impl Knob {
   }
 }
 
-/// where a knob sits and how far it has turned. `turn` runs from zero to one over `sweep`
-/// radians, centered on pointing up the panel
+/// Returns the transform of a knob at a place and a turn.
+///
+/// `turn` runs from zero to one over `sweep` radians, centered on pointing up the panel.
 pub fn knob_transform(x: f32, y: f32, turn: f32, sweep: f32) -> Mat4 {
   Mat4::from_translation(Vec3::new(x, y, 0.0)) * Mat4::from_rotation_z((turn - 0.5) * sweep)
 }
@@ -577,7 +613,7 @@ mod tests {
         widest = widest.max(position.truncate().length());
         assert!(
           position.z >= 0.0,
-          "{knob:?} goes under the panel at {position}"
+          "{knob:?} stands on the panel at {position}"
         );
         assert!(
           Vec3::from(vertex.normal).is_normalized(),
@@ -609,7 +645,7 @@ mod tests {
       let positions: Vec<Vec3> = (line.vertices.iter())
         .map(|vertex| vertex.position.into())
         .collect();
-      assert!(!positions.is_empty(), "{knob:?} has no line");
+      assert!(!positions.is_empty(), "{knob:?} has a line");
       for position in &positions {
         // it is a narrow strip up the panel from the middle, no further out than the knob
         assert!(
@@ -650,8 +686,7 @@ mod tests {
       for vertex in &knob.cap(0.85).vertices {
         let position = Vec3::from(vertex.position);
         let over = position.z - knob.top_at(position.truncate());
-        // a grip that is not round shapes its top by rings and not by distance, which
-        // `top_at` only comes near
+        // a grip that is not round shapes its top by rings, which `top_at` only comes near
         let near = if knob.grip == Grip::Smooth {
           0.0..0.5
         } else {

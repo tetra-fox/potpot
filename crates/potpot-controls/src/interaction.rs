@@ -1,43 +1,56 @@
-//! what the pointer and the keys do to a panel of controls, apart from any window, any way of
-//! drawing and any plugin: events go in with the time they came at, and what to tell the host
-//! and the window comes out. a control is known here by its place among the panel's, and by
-//! the [`Dial`] the panel's owner describes it with
+//! Pointer and key handling for a panel of controls.
+//!
+//! The handling stands apart from any window, any way of drawing and any plugin: events go in
+//! with the time they came at, and what to tell the host and the window comes out. A
+//! [`Control`] is known here by its place among the panel's controls, and the panel's owner
+//! describes each parameter with a [`Dial`].
 
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use crate::Point;
 
-/// two presses this close in time and place are a double click
+/// The longest time between the two presses of a double click.
 const DOUBLE_TIME: Duration = Duration::from_millis(400);
+/// The furthest apart in points the presses of a double click are.
 const DOUBLE_REACH: f32 = 4.0;
-/// a turn of the wheel this long after the last belongs to a new gesture
+/// The rest after which a turn of the wheel is a new gesture.
 const WHEEL_REST: Duration = Duration::from_millis(400);
-/// a count of steps or of lines this close to a whole one is that one: sums of their parts
-/// come out a hair off
+/// The distance within which a count of steps or lines is whole.
+///
+/// Sums of their parts come out a hair off.
 const SLACK: f32 = 1e-4;
-/// the way the pointer is dragged to turn a control, and how far that turns it
+
+/// The way the pointer is dragged to turn a control.
+///
+/// Each way also says how far the drag turns the control.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Drag {
-  /// up the panel turns it on and down turns it back, by `turn` of its whole turn for each
-  /// point
+  /// A drag up and down the panel.
+  ///
+  /// Up turns the control on and down turns it back, by `turn` of its whole turn for each
+  /// point.
   Up {
-    /// the part of the whole turn one point is
+    /// The part of the whole turn that one point is.
     turn: f32,
   },
-  /// along a line across the panel, the way a fader slides: toward `way` turns it on and
-  /// away from it turns it back, by `turn` of its whole turn for each point
+  /// A drag along a line across the panel, the way a fader slides.
+  ///
+  /// Toward `way` turns the control on and away from it turns it back, by `turn` of its whole
+  /// turn for each point.
   Along {
-    /// the way that turns it on, one point long, across and down
+    /// The way that turns it on, one point long, across and down.
     way: Point,
-    /// the part of the whole turn one point is
+    /// The part of the whole turn that one point is.
     turn: f32,
   },
 }
 
 impl Drag {
-  /// how far the pointer has gone the way that turns the control on, in points
+  /// Returns how far the pointer has gone the way that turns it on.
+  ///
+  /// The distance is in points.
   fn travel(self, from: Point, to: Point) -> f32 {
     match self {
       Self::Up { .. } => from[1] - to[1],
@@ -45,7 +58,7 @@ impl Drag {
     }
   }
 
-  /// how far one point of that turns it
+  /// Returns how far one point of that turns the control.
   fn turn(self) -> f32 {
     match self {
       Self::Up { turn } | Self::Along { turn, .. } => turn,
@@ -53,19 +66,23 @@ impl Drag {
   }
 }
 
-/// what a button that is pressed does
+/// The way a button that is pressed behaves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Push {
-  /// each push turns it over: in and on, then out and off. it stays most of the way in
-  /// while it is on
+  /// A button that each push turns over.
+  ///
+  /// One push takes it in and on, the next out and off. It stays most of the way in while it
+  /// is on.
   Latching,
-  /// it is on only while it is held
+  /// A button that is on while held.
   Momentary,
 }
 
 impl Push {
-  /// how far in such a button is, from zero for out to one for all the way: all the way
-  /// while it is `held`, and most of the way while a latching one is `on`
+  /// Returns how far in such a button is.
+  ///
+  /// The depth runs from zero for out to one for all the way. The button is all the way in
+  /// while it is `held`, and most of the way while a latching one is `on`.
   pub fn depth(self, on: bool, held: bool) -> f32 {
     match (held, self, on) {
       (true, ..) => 1.0,
@@ -74,46 +91,59 @@ impl Push {
     }
   }
 
-  /// whether such a button is on after a push is let go, given whether it was on before. a
-  /// momentary one is never on once it is let go
+  /// Returns whether such a button is on after a push is let go.
+  ///
+  /// `was_on` is whether it was on before. A momentary one is off once it is let go.
   pub fn released(self, was_on: bool) -> bool {
     self == Push::Latching && !was_on
   }
 }
 
-/// what the left button does to a control
+/// The effect of the left button on a control.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Touch {
-  /// it is dragged, the way its [`Feel`] says, and a double click puts it at its default
+  /// A control that is dragged.
+  ///
+  /// It is dragged the way its [`Feel`] says, and a double click puts it at its default.
   Turn,
-  /// it is pressed like a button, and its parameter is at the end of its turn while it is
-  /// on and at the start while it is off
+  /// A control that is pressed like a button.
+  ///
+  /// Its parameter is at the end of its turn while it is on and at the start while it is off.
   Press(Push),
-  /// each click moves it one step on, and from the end of its turn back to the start
+  /// A control that each click moves one step on.
+  ///
+  /// From the end of its turn a click moves it back to the start.
   Step,
 }
 
-/// how a control answers the pointer and the wheel. it starts as [`Feel::default`] and is
-/// changed a field at a time
+/// The way a control answers the pointer and the wheel.
+///
+/// A feel starts as [`Feel::default`] and is changed a field at a time.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Feel {
-  /// how it is dragged
+  /// The way it is dragged.
   pub drag: Drag,
-  /// a control that moves in steps is dragged at least this many points for each of them.
-  /// one with few steps is dragged further for each, at the pace of a control without any
+  /// The least points a stepped control is dragged for each step.
+  ///
+  /// One with few steps is dragged further for each, at the pace of a control without any.
   pub points_per_step: f32,
-  /// how much less it moves while the fine key is held
+  /// The part of its pace it keeps while the fine key is held.
   pub fine: f32,
-  /// how far one line of the wheel turns a control that has no step, as a part of its whole
-  /// turn
+  /// The turn one line of the wheel gives a control that has no step.
+  ///
+  /// It is a part of the control's whole turn.
   pub wheel: f32,
 }
 
 impl Default for Feel {
-  /// two hundred points up for the whole turn, five at least to a step, a tenth of that
-  /// with the fine key, and twenty lines of the wheel for the whole turn
+  /// Returns a feel that is dragged up the panel.
+  ///
+  /// - Two hundred points up make the whole turn.
+  /// - A step takes five points at least.
+  /// - The fine key gives a tenth of that pace.
+  /// - Twenty lines of the wheel make the whole turn.
   fn default() -> Self {
     Self {
       drag: Drag::Up { turn: 1.0 / 200.0 },
@@ -124,27 +154,35 @@ impl Default for Feel {
   }
 }
 
-/// what there is to know of one parameter, for the controls that turn it. its value is a part
-/// of its whole turn, from zero to one, and its plain value is that in the units it is read
-/// and written in. it can be handed to another thread, which is where some systems have a
-/// window's
+/// The description of one parameter, for the controls that turn it.
+///
+/// Its value is a part of its whole turn, from zero to one, and its plain value is that in the
+/// units it is read and written in.
+///
+/// A dial is [`Send`]: on some systems a window runs on another thread than the one that
+/// opened it, and the dial is handed to that thread.
 #[non_exhaustive]
 pub struct Dial {
-  /// the value a reset gives it
+  /// The value a reset gives it.
   pub default: f32,
-  /// the coarse step it moves by, in plain units: dragged or wheeled without the fine key it
-  /// lands on whole steps only. none turns smoothly
+  /// The coarse step it moves by, in plain units.
+  ///
+  /// Dragged or wheeled without the fine key it lands on whole steps only. `None` turns
+  /// smoothly.
   pub step: Option<f32>,
-  /// a value in plain units
+  /// The conversion of a value to plain units.
   pub plain: Box<dyn Fn(f32) -> f32 + Send>,
-  /// a plain value as a part of the turn. one past either end comes out as that end
+  /// The conversion of a plain value to a part of the turn.
+  ///
+  /// A plain value past either end comes out as that end.
   pub turn: Box<dyn Fn(f32) -> f32 + Send>,
-  /// a value as it is written, without its unit
+  /// The writing of a value, without its unit.
   pub write: Box<dyn Fn(f32) -> String + Send>,
-  /// the unit it is in, as it is written straight after a value: with a space before it if
-  /// one belongs there
+  /// The unit it is in, as it is written straight after a value.
+  ///
+  /// It starts with a space if one belongs there.
   pub unit: String,
-  /// the value that text stands for, if it is one
+  /// The reading of the value that text stands for, if it is one.
   pub read: Read,
 }
 
@@ -161,8 +199,10 @@ impl std::fmt::Debug for Dial {
 }
 
 impl Dial {
-  /// a parameter that turns smoothly and has no unit, from its ways between a value and its
-  /// plain value, and between a value and its text. `step` and `unit` are set after
+  /// Creates a parameter that turns smoothly and has no unit.
+  ///
+  /// `plain` and `turn` are its ways between a value and its plain value, and `write` and
+  /// `read` those between a value and its text. `step` and `unit` are set after.
   pub fn new(
     default: f32,
     plain: impl Fn(f32) -> f32 + Send + 'static,
@@ -181,9 +221,11 @@ impl Dial {
     }
   }
 
-  /// a control over a straight run of plain values from the first of `range` to the second,
-  /// at `default` to begin with. it is written with so many `decimals` and `unit` after it,
-  /// and read with or without the unit
+  /// Creates a parameter over a straight run of plain values.
+  ///
+  /// The run is from the first of `range` to the second, and `default` is the plain value a
+  /// reset gives. A value is written with `decimals` decimals and `unit` after it, and read
+  /// with or without the unit.
   pub fn linear(
     range: [f32; 2],
     default: f32,
@@ -208,8 +250,9 @@ impl Dial {
     }
   }
 
-  /// the nearest value that is a whole number of steps, or the value itself for a control
-  /// without any
+  /// Returns the nearest value that is a whole number of steps.
+  ///
+  /// A control without steps keeps the value itself.
   fn snapped(&self, value: f32) -> f32 {
     match self.step {
       Some(step) => (self.turn)(((self.plain)(value) / step).round() * step),
@@ -217,12 +260,14 @@ impl Dial {
     }
   }
 
-  /// how far one step is as a part of the turn
+  /// Returns how far one step is as a part of the turn.
   fn step_turn(&self, step: f32) -> f32 {
     ((self.turn)((self.plain)(0.0) + step) - (self.turn)((self.plain)(0.0))).abs()
   }
 
-  /// how far a point of dragging turns it, under a control that feels like `feel`
+  /// Returns how far a point of dragging turns it.
+  ///
+  /// `feel` is the feel of the control that is dragged.
   fn turn_per_point(&self, feel: Feel) -> f32 {
     match self.step {
       Some(step) => (feel.drag.turn()).min(self.step_turn(step) / feel.points_per_step),
@@ -230,9 +275,12 @@ impl Dial {
     }
   }
 
-  /// the value some lines of the wheel on from another. with the fine key it is a part of a
-  /// step further, and without it the next whole steps that way, one for each of its lines,
-  /// which are whole
+  /// Returns the value some lines of the wheel on from another.
+  ///
+  /// A dial without a step turns `feel.wheel` of its whole turn for each line, and `feel.fine`
+  /// of that with the fine key. A stepped one goes `feel.fine` of a step for each line with the
+  /// fine key, and without it to the next whole steps that way, one for each of its lines,
+  /// which are whole.
   fn wheeled(&self, value: f32, lines: f32, fine: bool, feel: Feel) -> f32 {
     let turned = match self.step {
       None => value + lines * feel.wheel * if fine { feel.fine } else { 1.0 },
@@ -251,7 +299,9 @@ impl Dial {
     turned.clamp(0.0, 1.0)
   }
 
-  /// the value one step on from another, which from the end of the turn is its start
+  /// Returns the value one step on from another.
+  ///
+  /// From the end of the turn that is its start.
   fn stepped_on(&self, value: f32, feel: Feel) -> f32 {
     if value > 1.0 - 1e-4 {
       0.0
@@ -261,26 +311,29 @@ impl Dial {
   }
 }
 
-/// one of a panel's controls: something on it that is turned, with a readout of its own. a
-/// control is known by its place among the panel's controls, and names the parameter it
-/// turns by that one's place among the panel's parameters. the two orders are not the same
-/// thing: a parameter may have no control, or more than one
+/// One of a panel's controls.
+///
+/// A control is something on the panel that is turned, with a readout of its own. It is known
+/// by its place among the panel's controls, and names the parameter it turns by that one's
+/// place among the panel's parameters. The two orders are separate: a parameter may have no
+/// control, or more than one.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct Control {
-  /// the parameter it turns
+  /// The parameter it turns.
   pub parameter: usize,
-  /// how it answers the pointer and the wheel
+  /// The way it answers the pointer and the wheel.
   pub feel: Feel,
-  /// what its readout can show of a value typed into it
+  /// What its readout can show of a value typed into it.
   pub readout: Readout,
-  /// what the left button does to it
+  /// The effect of the left button on it.
   pub touch: Touch,
 }
 
 impl Control {
-  /// a control on a parameter, with a readout, that is dragged and feels as
-  /// [`Feel::default`] does
+  /// Creates a dragged control on a parameter, with a readout.
+  ///
+  /// It feels as [`Feel::default`] does.
   pub fn new(parameter: usize, readout: Readout) -> Self {
     Self {
       parameter,
@@ -291,19 +344,20 @@ impl Control {
   }
 }
 
-/// what a control's readout can show of a value that is typed into it
+/// What a control's readout can show of a value typed into it.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct Readout {
-  /// how many letters it has room for
+  /// The number of letters it has room for.
   pub room: usize,
-  /// whether it has a letter for something typed
+  /// The test of whether it has a letter for something typed.
   pub shows: fn(char) -> bool,
 }
 
 impl Readout {
-  /// a readout with room for so many letters, which shows a space and whatever
-  /// [`crate::stroke`] has a letter for
+  /// Creates a readout with room for `room` letters.
+  ///
+  /// It shows a space and whatever [`stroke`](crate::stroke) has a letter for.
   pub fn new(room: usize) -> Self {
     Self {
       room,
@@ -312,209 +366,240 @@ impl Readout {
   }
 }
 
-/// what a control shows, as the panel's look is handed it
+/// What a control shows, as the panel's look is handed it.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Reading {
-  /// where its parameter stands, as a part of its whole turn
+  /// The place its parameter stands at, as a part of its whole turn.
   pub value: f32,
-  /// what its readout says: the value as it is written, or what has been typed so far
-  /// while one is being typed
+  /// The text of its readout.
+  ///
+  /// It is the value as it is written, or what has been typed so far while one is being typed.
   pub text: String,
-  /// the unit that goes after it, which is nothing while a value is typed
+  /// The unit that goes after the text.
+  ///
+  /// It is empty while a value is typed.
   pub unit: String,
 }
 
-/// what a point of the panel belongs to
+/// The part of a panel that a point belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Target {
-  /// the control at this place among the panel's: the part of it that is turned
+  /// The turned part of the control at this place among the panel's.
   Control(usize),
-  /// the window that control's value is written in
+  /// The window the value of the control at this place is written in.
   Readout(usize),
-  /// the menu, between and around its rows
+  /// The menu, between and around its rows.
   Menu,
-  /// a row of the menu
+  /// A row of the menu.
   Item(Item),
-  /// what the window is pulled larger and smaller by
+  /// The grip the window is pulled larger and smaller by.
   Grip,
 }
 
-/// the rows of the menu, top to bottom
+/// A row of the menu.
+///
+/// The rows are listed top to bottom.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Item {
-  /// types the control's value
+  /// The row for typing the control's value.
   Edit,
-  /// puts the control at its default
+  /// The row that puts the control at its default.
   Reset,
-  /// puts the control's value on the clipboard
+  /// The row that puts the control's value on the clipboard.
   Copy,
-  /// sets the control to the value on the clipboard
+  /// The row that sets the control to the value on the clipboard.
   Paste,
 }
 
 impl Item {
-  /// every row, top to bottom
+  /// Every row, top to bottom.
   pub const ALL: [Self; 4] = [Self::Edit, Self::Reset, Self::Copy, Self::Paste];
 }
 
-/// a button of the pointer that means something to a panel
+/// A button of the pointer that means something to a panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Button {
-  /// turns, presses and picks
+  /// The button that turns, presses and picks.
   Left,
-  /// asks for a control's menu
+  /// The button that asks for a control's menu.
   Right,
 }
 
-/// a key as a value being typed takes it. the caret's moves take the selection along from
-/// where it began when `extend` is set
+/// A key as a value being typed takes it.
+///
+/// The caret's moves take the selection along from where it began when `extend` is set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key {
-  /// a letter to type
+  /// A letter to type.
   Letter(char),
-  /// sets what was typed
+  /// The key that sets what was typed.
   Enter,
-  /// gives up what was typed
+  /// The key that gives up what was typed.
   Escape,
-  /// takes out the letter before the caret, or what is selected
+  /// The key that takes out the letter before the caret or the selection.
   Backspace,
-  /// takes out the letter after the caret, or what is selected
+  /// The key that takes out the letter after the caret or the selection.
   Delete,
-  /// the caret one letter back
+  /// The key that moves the caret back.
+  ///
+  /// The caret moves one letter. With letters selected and `extend` unset, it goes to the start
+  /// of the selection.
   Left {
-    /// whether the selection goes along
+    /// Whether the selection goes along.
     extend: bool,
   },
-  /// the caret one letter on
+  /// The key that moves the caret on.
+  ///
+  /// The caret moves one letter. With letters selected and `extend` unset, it goes to the end
+  /// of the selection.
   Right {
-    /// whether the selection goes along
+    /// Whether the selection goes along.
     extend: bool,
   },
-  /// the caret to the start
+  /// The key that moves the caret to the start.
   Home {
-    /// whether the selection goes along
+    /// Whether the selection goes along.
     extend: bool,
   },
-  /// the caret to the end
+  /// The key that moves the caret to the end.
   End {
-    /// whether the selection goes along
+    /// Whether the selection goes along.
     extend: bool,
   },
-  /// leaves the field for the next, which sets what was typed
+  /// The key that leaves the field.
+  ///
+  /// Leaving sets what was typed.
   Tab,
-  /// selects all that was typed
+  /// The key that selects all that was typed.
   SelectAll,
-  /// puts what is selected on the clipboard
+  /// The key that puts the selection on the clipboard.
+  ///
+  /// With nothing selected it puts all that was typed there.
   Copy,
-  /// the same, and takes it out
+  /// The key that does the same as [`Key::Copy`] and takes those letters out.
   Cut,
-  /// types the clipboard's text
+  /// The key that types the clipboard's text.
   Paste,
 }
 
-/// what the panel is like at the time an event comes in
+/// The state of the panel at the time an event comes in.
 #[derive(Clone, Copy, Debug)]
 pub struct Moment<'a> {
-  /// when the event came
+  /// The time the event came.
   pub now: Instant,
-  /// where each parameter stands
+  /// The value each parameter stands at.
   pub values: &'a [f32],
-  /// how many times its own size the window is
+  /// The number of times its own size the window is.
   pub scale: f32,
 }
 
-/// places are in the panel's points apart from `window`, and `over` is what is drawn there
+/// An event for a panel to handle.
+///
+/// Places are in the panel's points apart from `window`, and `over` is what is drawn there.
 #[derive(Clone, Debug)]
 pub enum Event {
-  /// the pointer moved
+  /// The pointer moved.
   Move {
-    /// where to
+    /// The place it moved to.
     at: Point,
-    /// the same place in the window's own points from its top left corner, which stays put
-    /// when the window changes size
+    /// The same place in the window's own points.
+    ///
+    /// It is measured from the window's top left corner, which stays put when the window
+    /// changes size.
     window: Point,
-    /// what is drawn there
+    /// The target that is drawn there.
     over: Option<Target>,
-    /// whether the key that slows a control down is held
+    /// Whether the key that slows a control down is held.
     fine: bool,
   },
-  /// a button went down
+  /// A button went down.
   Press {
-    /// which
+    /// The button that went down.
     button: Button,
-    /// where the pointer is
+    /// The place of the pointer.
     at: Point,
-    /// the same place in the window's own points, as in [`Event::Move`]
+    /// The same place in the window's own points, as in [`Event::Move`].
     window: Point,
-    /// what is drawn there
+    /// The target that is drawn there.
     over: Option<Target>,
-    /// whether the key that makes a click a reset is held
+    /// Whether the key that makes a click a reset is held.
     reset: bool,
   },
-  /// a button came up
+  /// A button came up.
   Release(Button),
-  /// the wheel turned by so many lines, away from the user counting up
+  /// The wheel turned.
+  ///
+  /// It turned by so many lines, away from the user counting up.
   Wheel {
-    /// what is drawn under the pointer
+    /// The target that is drawn under the pointer.
     over: Option<Target>,
-    /// how far, a part of a line for a wheel that turns smoothly
+    /// The number of lines it turned.
+    ///
+    /// A wheel that turns smoothly gives a part of a line.
     lines: f32,
-    /// whether the key that slows a control down is held
+    /// Whether the key that slows a control down is held.
     fine: bool,
   },
-  /// a key went down while the panel takes keys
+  /// A key went down while the panel takes keys.
   Key(Key),
-  /// the clipboard's text, in answer to [`Action::WantClipboard`]. none if it has no text
+  /// The clipboard's text came.
+  ///
+  /// It answers [`Action::WantClipboard`], and is `None` if the clipboard has no text.
   Clipboard(Option<String>),
-  /// the keys went to another window
+  /// The keys went to another window.
   Unfocused,
-  /// time passed
+  /// Time passed.
   Tick,
-  /// the window is going away
+  /// The window is going away.
   Closed,
 }
 
-/// what is to be done about an event, by whoever has the host and the window
+/// Something to be done about an event.
+///
+/// Whoever has the host and the window does it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
-  /// the host is told a gesture on a parameter begins, then its values, then that it ends.
-  /// the parameter is known by its place among the panel's parameters, which is not its
-  /// control's among the controls
+  /// A gesture on a parameter begins.
+  ///
+  /// The host is told a gesture on a parameter begins, then its values, then that it ends.
+  /// The parameter is known by its place among the panel's parameters, which is separate
+  /// from its control's among the controls.
   Begin(usize),
-  /// the parameter is set to a value
+  /// The parameter is set to a value.
   Set(usize, f32),
-  /// the gesture on the parameter is over
+  /// The gesture on the parameter is over.
   End(usize),
-  /// the window takes the keys
+  /// The window takes the keys.
   Focus,
-  /// the panel looks different though no value changed
+  /// The panel looks different though no value changed.
   Redraw,
-  /// the text goes on the clipboard
+  /// The text goes on the clipboard.
   Copy(String),
-  /// the clipboard's text is to come back as [`Event::Clipboard`]
+  /// The clipboard's text is to come back as [`Event::Clipboard`].
   WantClipboard,
-  /// the window is to be this many times its own size
+  /// The window is to be this many times its own size.
   Scale(f32),
 }
 
-/// a value being typed
+/// A value being typed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Edit {
-  /// the control it is for
+  /// The control it is for.
   pub control: usize,
-  /// what has been typed
+  /// The text that has been typed.
   pub text: String,
-  /// how many letters are before the caret
+  /// The number of letters before the caret.
   pub caret: usize,
-  /// where the selection began. it reaches from there to the caret, and with both at one
-  /// place nothing is selected
+  /// The place the selection began.
+  ///
+  /// It reaches from there to the caret, and with both at one place nothing is selected.
   pub anchor: usize,
 }
 
 impl Edit {
-  /// the places of the letters that are selected
+  /// Returns the places of the letters that are selected.
   pub fn selected(&self) -> Range<usize> {
     self.anchor.min(self.caret)..self.anchor.max(self.caret)
   }
@@ -523,12 +608,14 @@ impl Edit {
     self.text.chars().count()
   }
 
-  /// where in the text the letter after so many others starts
+  /// Returns where in the text the letter after `letter` others starts.
   fn byte(&self, letter: usize) -> usize {
     (self.text.char_indices().nth(letter)).map_or(self.text.len(), |(byte, _)| byte)
   }
 
-  /// what copying takes: the selection, or with nothing selected all there is
+  /// Returns the letters that copying takes.
+  ///
+  /// They are the selection, or with nothing selected all there is.
   fn taken(&self) -> Range<usize> {
     let selected = self.selected();
     if selected.is_empty() {
@@ -542,7 +629,7 @@ impl Edit {
     self.text[self.byte(letters.start)..self.byte(letters.end)].to_owned()
   }
 
-  /// takes letters out and leaves the caret where they were
+  /// Takes letters out and leaves the caret where they were.
   fn remove(&mut self, letters: Range<usize>) {
     let bytes = self.byte(letters.start)..self.byte(letters.end);
     self.text.replace_range(bytes, "");
@@ -550,8 +637,9 @@ impl Edit {
     self.anchor = letters.start;
   }
 
-  /// puts text in at the caret in place of what is selected: as much of it as the readout
-  /// has room for, of the letters it can show
+  /// Puts text in at the caret in place of what is selected.
+  ///
+  /// As much of it goes in as the readout has room for, of the letters it can show.
   fn put(&mut self, text: &str, room: usize, shows: fn(char) -> bool) {
     self.remove(self.selected());
     for letter in text.chars().filter(|&letter| shows(letter)) {
@@ -572,51 +660,58 @@ impl Edit {
   }
 }
 
-/// what the clipboard's text is wanted for
+/// The use the clipboard's text is wanted for.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Paste {
-  /// to go into the value being typed for a control
+  /// Text to go into the value being typed for a control.
   Typed(usize),
-  /// to be a control's value
+  /// Text to be a control's value.
   Value(usize),
 }
 
-/// the menu of a control, while it is up
+/// The menu of a control, while it is up.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Menu {
-  /// the control it is for
+  /// The control it is for.
   pub control: usize,
-  /// where on the picture it was asked for
+  /// The place on the picture it was asked for at.
   pub at: Point,
-  /// the row the pointer is on
+  /// The row the pointer is on.
   pub hovered: Option<Item>,
 }
 
 #[derive(Debug)]
 enum State {
   Idle,
-  /// the left button went down on a knob. the host hears of it once the value changes
+  /// The left button went down on a knob.
+  ///
+  /// The host hears of it once the value changes.
   Drag {
     control: usize,
-    /// where the pointer has taken the knob, which between two steps is not where it shows
+    /// The value the pointer has taken the knob to.
+    ///
+    /// Between two steps the knob shows another value.
     turned: f32,
-    /// the value last shown
+    /// The value last shown.
     value: f32,
-    /// where the pointer last was
+    /// The place the pointer last was.
     from: Point,
-    /// whether the fine key was held at the last move
+    /// Whether the fine key was held at the last move.
     fine: bool,
     begun: bool,
   },
-  /// the left button went down on the grip. `grab` is where the pointer was then in the
-  /// window's own points, `from` the scale the window had, and `scale` the one last asked for
+  /// The left button went down on the grip.
+  ///
+  /// `grab` is where the pointer was then in the window's own points, `from` the scale the
+  /// window had, and `scale` the one last asked for.
   Resize {
     grab: Point,
     from: f32,
     scale: f32,
   },
-  /// the left button is down on a control that is pressed. `on` is whether it was on
-  /// before
+  /// The left button is down on a control that is pressed.
+  ///
+  /// `on` is whether it was on before.
   Held {
     control: usize,
     push: Push,
@@ -626,45 +721,74 @@ enum State {
   Menu(Menu),
 }
 
-/// the wheel turning a control
+/// The wheel turning a control.
 #[derive(Debug)]
 struct Wheel {
   control: usize,
-  /// the value it last set. none until it sets one, which is when the host hears of it
+  /// The value it last set.
+  ///
+  /// It is `None` until the wheel sets one, which is when the host hears of it.
   set: Option<f32>,
-  /// the part of a line it has turned a control that moves in steps, short of a whole one
+  /// The part of a line it has turned a stepped control, short of one.
   gathered: f32,
-  /// when it last moved
+  /// The time it last moved.
   last: Instant,
 }
 
-/// the state of a panel's controls: what is being dragged, typed or picked from the menu
+/// The state of a panel's controls.
+///
+/// It holds what is being dragged, typed or picked from the menu.
+///
+/// # Examples
+///
+/// ```
+/// use std::time::Instant;
+///
+/// use potpot_controls::interaction::{
+///   Action, Control, Dial, Event, Interaction, Moment, Readout, Target,
+/// };
+///
+/// // a mix in hundredths, and one control that turns it
+/// let dial = Dial::linear([0.0, 100.0], 100.0, None, 0, "%");
+/// let knob = Control::new(0, Readout::new(4));
+/// let mut panel = Interaction::new(vec![dial], vec![knob], [200.0, 100.0], [1.0, 2.0]);
+///
+/// let readings = panel.readings(&[0.25]);
+/// assert_eq!((readings[0].text.as_str(), readings[0].unit.as_str()), ("25", "%"));
+///
+/// // one line of the wheel turns it a twentieth of its whole turn
+/// let moment = Moment { now: Instant::now(), values: &[0.25], scale: 1.0 };
+/// let wheel = Event::Wheel { over: Some(Target::Control(0)), lines: 1.0, fine: false };
+/// assert_eq!(panel.handle(wheel, moment), [Action::Begin(0), Action::Set(0, 0.3)]);
+/// ```
 #[derive(Debug)]
 pub struct Interaction {
-  /// what there is to know of each parameter
+  /// The description of each parameter.
   dials: Vec<Dial>,
   controls: Vec<Control>,
-  /// the panel's width and height in its points
+  /// The panel's width and height in its points.
   size: Point,
   state: State,
-  /// the last press of the left button, for telling a double click
+  /// The last press of the left button, for telling a double click.
   pressed: Option<(Instant, Point, Target)>,
-  /// what the wheel is turning, until it rests
+  /// The control the wheel is turning, until it rests.
   wheel: Option<Wheel>,
-  /// what the clipboard was asked for, until its text comes
+  /// The use the clipboard was asked for, until its text comes.
   awaiting: Option<Paste>,
-  /// the least and the most times its own size the window is pulled to
+  /// The least and the most times its own size the window is pulled to.
   scales: [f32; 2],
 }
 
 impl Interaction {
-  /// the behaviour of a panel `size` across and down with these controls on parameters the
-  /// dials describe. the grip pulls the window from the first of `scales` times its own
-  /// size to the second
+  /// Creates the behaviour of a panel of controls.
+  ///
+  /// The panel is `size` across and down, with `controls` on parameters that `dials`
+  /// describe. The grip pulls the window from the first of `scales` times its own size to
+  /// the second.
   ///
   /// # Panics
   ///
-  /// if a control names a parameter that `dials` has none for
+  /// Panics if a control names a parameter that `dials` has none for.
   pub fn new(dials: Vec<Dial>, controls: Vec<Control>, size: Point, scales: [f32; 2]) -> Self {
     assert!(
       controls
@@ -684,8 +808,13 @@ impl Interaction {
     }
   }
 
-  /// what each control shows with the parameters at `values`, in the controls' order.
-  /// `values` has one for every parameter
+  /// Returns what each control shows, in the controls' order.
+  ///
+  /// `values` is where the parameters are, with one for every parameter.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `values` has none for the parameter of a control.
   pub fn readings(&self, values: &[f32]) -> Vec<Reading> {
     (self.controls.iter().enumerate())
       .map(|(place, control)| {
@@ -706,7 +835,7 @@ impl Interaction {
       .collect()
   }
 
-  /// the value being typed, if one is
+  /// Returns the value being typed, if one is.
   pub fn edit(&self) -> Option<&Edit> {
     match &self.state {
       State::Edit(edit) => Some(edit),
@@ -714,7 +843,7 @@ impl Interaction {
     }
   }
 
-  /// the menu, if it is up
+  /// Returns the menu, if it is up.
   pub fn menu(&self) -> Option<&Menu> {
     match &self.state {
       State::Menu(menu) => Some(menu),
@@ -722,7 +851,7 @@ impl Interaction {
     }
   }
 
-  /// the control that is pressed and held down, if one is
+  /// Returns the control that is pressed and held down, if one is.
   pub fn held(&self) -> Option<usize> {
     match self.state {
       State::Held { control, .. } => Some(control),
@@ -730,12 +859,23 @@ impl Interaction {
     }
   }
 
-  /// whether keys mean something to the panel right now
+  /// Returns whether keys mean something to the panel.
   pub fn takes_keys(&self) -> bool {
     matches!(self.state, State::Edit(_) | State::Menu(_))
   }
 
-  /// takes an event in, and gives what is to be done about it, in order
+  /// Takes an event in and returns what is to be done about it.
+  ///
+  /// The actions are in the order they are to be done in.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the event is over a control that the panel has none of.
+  ///
+  /// Panics if the values of `moment` have none for the parameter of a control.
+  ///
+  /// Panics if the pointer moves while the grip is held and the first of the `scales` given
+  /// to [`Interaction::new`] is larger than the second or either is not a number.
   pub fn handle(&mut self, event: Event, moment: Moment) -> Vec<Action> {
     let mut actions = Vec::new();
     match event {
@@ -785,9 +925,10 @@ impl Interaction {
     actions
   }
 
-  /// what the left button has open is over with no release of it: a drag or a pull at the
-  /// grip ends and a momentary button goes off, and a latching one was not let go, so it
-  /// stays as it was
+  /// Ends what the left button has open, with no release of it.
+  ///
+  /// A drag or a pull at the grip ends and a momentary button goes off. A latching one was
+  /// not let go, so it stays as it was.
   fn cut_short(&mut self, actions: &mut Vec<Action>) {
     if let State::Held {
       push: Push::Latching,
@@ -801,7 +942,9 @@ impl Interaction {
     self.let_go(actions);
   }
 
-  /// the left button is up, or as good as: a drag, a press or a pull at the grip is over
+  /// Ends a drag, a press or a pull at the grip.
+  ///
+  /// The left button is up, or as good as.
   fn let_go(&mut self, actions: &mut Vec<Action>) {
     match self.state {
       State::Drag { control, begun, .. } => {
@@ -849,9 +992,8 @@ impl Interaction {
           parameter, feel, ..
         } = self.controls[*control];
         let dial = &self.dials[parameter];
-        // with the fine key the knob goes on from where it shows, so that pressing the key
-        // moves nothing, and every move adds its own part of a turn, so that the key changes
-        // the pace from here on and not the place
+        // with the fine key the knob goes on from where it shows, so pressing the key moves
+        // nothing. every move adds its own part of a turn, so the key changes only the pace
         if now_fine && !*fine {
           *turned = *value;
         }
@@ -876,10 +1018,8 @@ impl Interaction {
         actions.push(Action::Set(parameter, shown));
       }
       State::Resize { grab, from, scale } => {
-        // the corner goes as far as the pointer has gone since it took hold, across or down,
-        // whichever is further, and the panel's shape gives the other. it is measured in the
-        // window's own points and not the panel's, which shift as the window changes size,
-        // so a window that has caught up with the pointer asks for no other size
+        // the further of across and down since the pointer took hold sets the scale. measured
+        // in the window's own points, since the panel's shift as the window changes size
         let reach = |axis: usize| *from + (window[axis] - grab[axis]) / self.size[axis];
         let (across, down) = (reach(0), reach(1));
         let further = if (across - *from).abs() >= (down - *from).abs() {
@@ -963,7 +1103,7 @@ impl Interaction {
         }
         self.commit(actions);
       }
-      // the release of the press before never came, which baseview leaves out when windows
+      // the release of the press before never came, which baseview leaves out when Windows
       // takes the pointer away
       State::Drag { .. } | State::Held { .. } | State::Resize { .. } => self.cut_short(actions),
       State::Idle => {}
@@ -1106,8 +1246,9 @@ impl Interaction {
     actions.push(Action::Set(parameter, value));
   }
 
-  /// the wheel is no longer turning what it was, which ends the gesture if the host has
-  /// heard of one
+  /// Rests the wheel from the control it was turning.
+  ///
+  /// The gesture ends if the host has heard of one.
   fn rest_wheel(&mut self, actions: &mut Vec<Action>) {
     if let Some(Wheel {
       control,
@@ -1186,8 +1327,9 @@ impl Interaction {
     actions.push(Action::Redraw);
   }
 
-  /// the clipboard's text has come, for whatever it was last wanted for. text that came
-  /// with space or line ends around it is taken without them
+  /// Takes the clipboard's text for the use it was last wanted for.
+  ///
+  /// Text that came with space or line ends around it is taken without them.
   fn pasted(&mut self, text: Option<String>, actions: &mut Vec<Action>) {
     let (Some(wanted), Some(text)) = (self.awaiting.take(), text) else {
       return;
@@ -1221,8 +1363,10 @@ impl Interaction {
     actions.extend([Action::Focus, Action::Redraw]);
   }
 
-  /// ends typing, with what was typed as the control's value if it reads as one and with
-  /// the value left alone if it does not
+  /// Ends typing.
+  ///
+  /// What was typed becomes the control's value if it reads as one, and the value is left
+  /// alone if it does not.
   fn commit(&mut self, actions: &mut Vec<Action>) {
     let State::Edit(edit) = &self.state else {
       return;
@@ -1235,7 +1379,7 @@ impl Interaction {
     actions.push(Action::Redraw);
   }
 
-  /// the value of a control that text stands for, if it reads as one
+  /// Returns the value of a control that text stands for, if any.
   fn read(&self, control: usize, text: &str) -> Option<f32> {
     // a comma is the decimal point of many keyboards' number pads
     let read = (self.dials[self.controls[control].parameter].read)(&text.replace(',', "."));
@@ -1251,7 +1395,7 @@ impl Interaction {
   }
 }
 
-/// a parameter set to a value as one whole gesture
+/// Returns the actions of setting a parameter as one whole gesture.
 fn gesture(parameter: usize, value: f32) -> [Action; 3] {
   [
     Action::Begin(parameter),

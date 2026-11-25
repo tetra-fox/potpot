@@ -1,4 +1,6 @@
-//! what the shaders are told each frame, laid out the way scene.wgsl and present.wgsl read it
+//! The values the shaders are told each frame.
+//!
+//! Each is laid out the way `scene.wgsl` and `present.wgsl` read it.
 
 use std::mem::size_of;
 
@@ -18,19 +20,19 @@ pub(super) struct Globals {
   ambient: [f32; 4],
   shadows: [f32; 4],
   overhead: [[f32; 4]; 4],
-  /// the panel's width and height, and the lowest and highest anything on it reaches
+  /// The panel's width and height, and the lowest and highest anything on it reaches.
   panel: [f32; 4],
-  /// each lamp's place with its reach, and then its color with its radius
+  /// Each lamp's place with its reach, and then its color with its radius.
   lamps: [[[f32; 4]; 2]; LAMPS],
 }
 
 impl Globals {
-  /// whether light comes off surfaces onto their neighbors at all
+  /// Returns whether light comes off surfaces onto their neighbors at all.
   pub(super) fn bounces(&self) -> bool {
     self.ambient[3] > 0.0
   }
 
-  /// the lowest anything on the panel reaches
+  /// Returns the lowest anything on the panel reaches.
   pub(super) fn lowest(&self) -> f32 {
     self.panel[2]
   }
@@ -71,7 +73,7 @@ impl Globals {
   }
 }
 
-/// one object's place and material, read once per instance
+/// One object's place and material, read once per instance.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(super) struct Placed {
@@ -83,8 +85,9 @@ pub(super) struct Placed {
 }
 
 impl Placed {
-  /// the four columns of the model and then the four of the material, after the two
-  /// locations a vertex takes
+  /// The four columns of the model and then the four of the material.
+  ///
+  /// They come after the two locations a vertex takes.
   const ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
     2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4,
     6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4
@@ -120,13 +123,18 @@ impl Placed {
   }
 }
 
-/// how the picture is degraded on its way to the target
+/// The way the picture is degraded on its way to the target.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(super) struct Present {
-  /// the color steps, one when the target encodes srgb itself, the bloom and the vignette
+  /// The options of the present pass, one in each component.
+  ///
+  /// - The color steps
+  /// - One when the target encodes sRGB itself
+  /// - The bloom
+  /// - The vignette
   options: [f32; 4],
-  /// x how far the picture is blurred
+  /// How far the picture is blurred, in x.
   more: [f32; 4],
 }
 
@@ -154,16 +162,17 @@ mod tests {
   use crate::mesh::Vertex;
   use crate::renderer::pipelines::{VERTEX_ATTRIBUTES, present_source, scene_source};
 
-  /// a shader as wgpu will take it, which is parsed and then checked, with what the check
-  /// found out about it
+  /// Returns a shader as `wgpu` takes it, parsed and then checked.
+  ///
+  /// What the check found out about the shader comes with it.
   fn shader(source: &str) -> (naga::Module, ModuleInfo) {
-    let module = naga::front::wgsl::parse_str(source).expect("the shader to parse");
+    let module = naga::front::wgsl::parse_str(source).expect("the shader parses");
     let info = naga::valid::Validator::new(
       naga::valid::ValidationFlags::all(),
       naga::valid::Capabilities::empty(),
     )
     .validate(&module)
-    .expect("the shader to be valid");
+    .expect("the shader is valid");
     (module, info)
   }
 
@@ -177,7 +186,7 @@ mod tests {
     (members, *span as usize)
   }
 
-  /// each field of a shader's struct and where it starts, and the size of the whole
+  /// Returns each field of a shader's struct with its start, and the struct's size.
   fn fields(module: &naga::Module, name: &str) -> (Vec<(String, usize)>, usize) {
     let (members, size) = members(module, name);
     let fields = (members.iter())
@@ -186,8 +195,9 @@ mod tests {
     (fields, size)
   }
 
-  /// asserts that a shader's struct takes the attributes of a vertex buffer, one field
-  /// each, in order, at the same locations and of the same sizes
+  /// Asserts that a shader's struct takes the attributes of a vertex buffer.
+  ///
+  /// Each field takes one attribute, in order, at the same location and of the same size.
   fn assert_takes(module: &naga::Module, name: &str, attributes: &[wgpu::VertexAttribute]) {
     let (members, _) = members(module, name);
     assert_eq!(members.len(), attributes.len(), "{name}");
@@ -206,9 +216,11 @@ mod tests {
     fields.map(|(name, at)| (name.to_owned(), at)).into()
   }
 
-  /// each backend is handed the shaders in a language of its own, which naga writes them
-  /// in when a pipeline is made. a shader one of them cannot be written in fails there, on
-  /// the user's machine, so all of them are written here
+  /// Writes every shader in the language of every backend.
+  ///
+  /// Each backend is handed the shaders in a language of its own, which `naga` writes them in
+  /// when a pipeline is made. A shader that cannot be written in one of them fails there, on
+  /// the user's machine.
   #[test]
   fn every_shader_can_be_written_for_every_backend() {
     use naga::back::{hlsl, msl, spv};

@@ -1,40 +1,46 @@
-//! what every panel has besides its controls, whatever it looks like: the menu a control is
-//! asked for, and the grip the window is pulled larger and smaller by. each is a place to
-//! hit and flat shapes to draw, with a plain look that a panel may change the measures and
-//! colors of
+//! The menu and the grip of a panel.
+//!
+//! Every panel has both besides its controls, whatever it looks like: the menu a control is
+//! asked for, and the grip the window is pulled larger and smaller by. Each is a place to hit
+//! and flat shapes to draw, with a plain look whose measures and colors a panel may change.
 
 use crate::Point;
 use crate::flat::{Color, Flat};
 use crate::interaction::{Item, Menu, Target};
 
-/// the menu: a flat list drawn over the picture, with a row for each item. it starts as
-/// [`MenuLook::default`] and is changed a field at a time
+/// The look of the menu.
+///
+/// The menu is a flat list drawn over the picture, with a row for each item. Its measures are
+/// in the panel's points. A look starts as [`MenuLook::default`] and is changed a field at a
+/// time.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct MenuLook {
-  /// how wide and tall a row is
+  /// The width and height of a row.
   pub row: Point,
-  /// the edge around the rows
+  /// The width of the edge around the rows.
   pub edge: f32,
-  /// the room between every two pairs of rows, which a line across divides them in
+  /// The room between every two pairs of rows.
+  ///
+  /// A line across divides the pairs in it.
   pub divide: f32,
-  /// how tall the letters are
+  /// The height of the letters.
   pub letters: f32,
-  /// how wide their strokes are
+  /// The width of their strokes.
   pub weight: f32,
-  /// how far in from a row's left they start
+  /// The distance from a row's left to where they start.
   pub inset: f32,
-  /// what the menu is filled with
+  /// The color the menu is filled with.
   pub ground: Color,
-  /// its outline and the lines across it
+  /// The color of its outline and the lines across it.
   pub line: Color,
-  /// its letters
+  /// The color of its letters.
   pub ink: Color,
-  /// the row the pointer is on
+  /// The color of the row the pointer is on.
   pub mark: Color,
-  /// the letters of that row
+  /// The color of the letters of that row.
   pub marked_ink: Color,
-  /// what the rows say, in the order of [`Item::ALL`]
+  /// The text of the rows, in the order of [`Item::ALL`].
   pub labels: [&'static str; 4],
 }
 
@@ -58,12 +64,12 @@ impl Default for MenuLook {
 }
 
 impl MenuLook {
-  /// how far down from the first row's top a row's top is
+  /// Returns how far down from the first row's top a row's top is.
   fn row_down(&self, row: usize) -> f32 {
     row as f32 * self.row[1] + (row / 2) as f32 * self.divide
   }
 
-  /// how wide and tall the whole menu is
+  /// Returns the width and height of the whole menu.
   pub fn size(&self) -> Point {
     [
       self.row[0] + 2.0 * self.edge,
@@ -71,9 +77,11 @@ impl MenuLook {
     ]
   }
 
-  /// where the menu's top left corner goes when it is asked for at a point of a panel of
-  /// `panel` size: at the point, or with the menu to the other side of the point where it
-  /// would run off the panel
+  /// Returns where the menu's top left corner goes.
+  ///
+  /// `at` is the point the menu is asked for at, on a panel of `panel` size. The corner goes
+  /// at the point, or with the menu to the other side of the point where it would run off the
+  /// panel.
   pub fn corner(&self, at: Point, panel: Point) -> Point {
     let size = self.size();
     let turned = |axis: usize| {
@@ -86,7 +94,9 @@ impl MenuLook {
     [turned(0), turned(1)]
   }
 
-  /// what of a menu with its corner at a place is at a point, if any of it is
+  /// Returns the part of the menu at a point, if any of it is.
+  ///
+  /// `corner` is the place of the menu's top left corner.
   pub fn target_at(&self, corner: Point, at: Point) -> Option<Target> {
     let (size, within) = (self.size(), [at[0] - corner[0], at[1] - corner[1]]);
     if !(0..2).all(|axis| (0.0..size[axis]).contains(&within[axis])) {
@@ -100,8 +110,10 @@ impl MenuLook {
     Some(row.map_or(Target::Menu, |(item, _)| Target::Item(item)))
   }
 
-  /// the menu as flat shapes on a panel of `panel` size, with lines as wide as `pixel`,
-  /// which is one of the window's
+  /// Adds the menu to a [`Flat`] as shapes.
+  ///
+  /// The menu is on a panel of `panel` size. Its lines are as wide as `pixel`, which is one
+  /// of the window's pixels.
   pub fn shapes(&self, flat: &mut Flat, menu: &Menu, panel: Point, pixel: f32) {
     let (corner, size) = (self.corner(menu.at, panel), self.size());
     let far = [corner[0] + size[0], corner[1] + size[1]];
@@ -149,18 +161,19 @@ impl MenuLook {
   }
 }
 
-/// the grip the window is pulled larger and smaller by, drawn flat in its far corner. its
-/// measures are in the screen's points and not the panel's, so that it is the same size
-/// however large the window is. it starts as [`GripLook::default`] and is changed a field at
-/// a time
+/// The look of the grip in the window's far corner.
+///
+/// The window is pulled larger and smaller by the grip, which is drawn flat. Its measures are
+/// in the screen's points, so that it is the same size however large the window is. A look
+/// starts as [`GripLook::default`] and is changed a field at a time.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct GripLook {
-  /// how wide and tall the corner it takes up is
+  /// The width and height of the corner it takes up.
   pub reach: f32,
-  /// how wide its lines are
+  /// The width of its lines.
   pub weight: f32,
-  /// what they are drawn in
+  /// The color they are drawn in.
   pub ink: Color,
 }
 
@@ -175,13 +188,16 @@ impl Default for GripLook {
 }
 
 impl GripLook {
-  /// whether a point of a panel of `panel` size, shown at so many times its size, is on the
-  /// grip
+  /// Returns whether a point of a panel is on the grip.
+  ///
+  /// The panel is of `panel` size and shown at `scale` times its size.
   pub fn holds(&self, at: Point, panel: Point, scale: f32) -> bool {
     (0..2).all(|axis| at[axis] > panel[axis] - self.reach / scale && at[axis] <= panel[axis])
   }
 
-  /// the grip: three lines slanting across the corner, each shorter than the last toward it
+  /// Adds the grip to a [`Flat`] as shapes.
+  ///
+  /// The grip is three lines slanting across the corner, each shorter than the last toward it.
   pub fn shapes(&self, flat: &mut Flat, panel: Point, scale: f32) {
     for nth in 1..=3u8 {
       // from the foot of the window to its side, the same way in from the corner on both
@@ -232,7 +248,7 @@ mod tests {
         let corner = menu.corner([f32::from(x), f32::from(y)], PANEL);
         assert!(
           (0..2).all(|axis| corner[axis] >= 0.0 && corner[axis] + size[axis] <= PANEL[axis]),
-          "asked for at {x} {y}, the menu at {corner:?} is off the panel"
+          "the menu asked for at {x} {y} is on the panel: {corner:?}"
         );
       }
     }

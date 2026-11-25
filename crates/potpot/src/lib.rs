@@ -1,9 +1,36 @@
-//! a small lit 3d scene renderer on wgpu, for plugin panels that look like rendered hardware.
+//! A small lit 3D scene renderer on wgpu, for skeuomorphic plugin panels.
 //!
-//! a [`Scene`] is a panel seen from above with [`Object`]s on it, one light casting shadows,
-//! and a [`Look`] that can make the picture as blocky and banded as an old render. a
-//! [`Renderer`] draws it onto any wgpu texture, and again only when it has changed, and
-//! [`Scene::pick`] tells which object is seen at a point of the picture.
+//! A [`Scene`] is a panel seen from above with [`Object`]s on it, one [`Light`] casting shadows,
+//! and a [`Look`] that can make the picture as blocky and banded as an old render. A
+//! [`Renderer`] draws it onto a `wgpu` texture, and again only when it has changed.
+//! [`Scene::pick`] returns the object seen at a point of the picture.
+//!
+//! # Examples
+//!
+//! ```
+//! use std::sync::Arc;
+//!
+//! use potpot::glam::{Mat4, Vec2, Vec3};
+//! use potpot::{Light, Look, Material, Mesh, Object, Scene};
+//!
+//! // a cylinder 10 high, standing at (100, 60)
+//! let knob = Object {
+//!   mesh: Arc::new(Mesh::lathe(&[[12.0, 0.0], [12.0, 10.0], [0.0, 10.0]], 32, true)),
+//!   transform: Mat4::from_translation(Vec3::new(100.0, 60.0, 0.0)),
+//!   material: Material::glossy(Vec3::splat(0.1)),
+//! };
+//! let scene = Scene {
+//!   size: Vec2::new(200.0, 120.0),
+//!   heights: [0.0, 20.0],
+//!   lean: Vec2::ZERO,
+//!   light: Light::default(),
+//!   look: Look::default(),
+//!   objects: vec![knob],
+//!   lamps: Vec::new(),
+//! };
+//! assert_eq!(scene.pick(Vec2::new(104.0, 63.0)), Some(0));
+//! assert_eq!(scene.pick(Vec2::new(20.0, 20.0)), None);
+//! ```
 
 mod material;
 mod mesh;

@@ -1,11 +1,18 @@
-//! a panel of four knobs drawn with nothing but flat shapes, in a window of its own with no
-//! host: the least there is to write to have working controls. `cargo run -p potpot-window
-//! --example flat`.
+//! A panel of four knobs drawn with flat shapes alone.
 //!
-//! everything the pointer and the keys do comes with the window: dragging and the wheel,
-//! the fine key, a double click to reset, typing a value into a readout, the menu on the
-//! right button and the grip in the corner. what is written here is the table of controls
-//! and how they are drawn.
+//! It opens in a window of its own with no host, and is the least there is to write to have
+//! working controls. `just flat` runs it.
+//!
+//! Everything the pointer and the keys do comes with the window:
+//!
+//! - dragging and the wheel
+//! - the fine key
+//! - a double click to reset
+//! - typing a value into a readout
+//! - the menu on the right button
+//! - the grip in the corner
+//!
+//! The example holds the table of controls and how they are drawn.
 
 use std::f32::consts::PI;
 
@@ -13,17 +20,17 @@ use potpot_window::controls::flat::{Color, Flat};
 use potpot_window::controls::interaction::{Control, Dial, Feel, Readout, Target};
 use potpot_window::{Gpu, Opening, Param, Settings, Skin, View, wgpu};
 
-/// the panel's width and height in its own points
+/// The panel's width and height in its own points.
 const SIZE: [f32; 2] = [420.0, 300.0];
-/// how far down the knobs' middles, their names and their readouts are
+// how far down the knobs' middles, their names and their readouts are
 const KNOB_Y: f32 = 120.0;
 const NAME_Y: f32 = 178.0;
 const READOUT_Y: f32 = 214.0;
 const RADIUS: f32 = 30.0;
-/// half a readout's width and height
+/// Half a readout's width and height.
 const READOUT: [f32; 2] = [38.0, 12.0];
 const LETTERS: f32 = 9.0;
-/// how wide the strokes of all the lettering are
+/// The width of the strokes of all the lettering.
 const WEIGHT: f32 = 1.2;
 
 const GROUND: Color = [0.11, 0.12, 0.14, 1.0];
@@ -32,23 +39,27 @@ const LINE: Color = [0.42, 0.45, 0.5, 1.0];
 const INK: Color = [0.9, 0.91, 0.93, 1.0];
 const MARK: Color = [0.3, 0.75, 0.95, 1.0];
 
-/// one knob: where it is, and what it turns
+/// One knob: where it is and what it turns.
 struct Knob {
   name: &'static str,
   x: f32,
-  /// the plain values at the two ends of its turn
+  /// The plain values at the two ends of its turn.
   range: [f32; 2],
   default: f32,
   step: Option<f32>,
   decimals: usize,
   unit: &'static str,
-  /// how many letters can be typed into its readout
+  /// The number of letters that can be typed into its readout.
   room: usize,
   feel: Feel,
 }
 
-/// the panel's knobs, left to right: one in whole semitones, one smooth that the wheel
-/// moves slowly, one in steps of five, and one that the fine key slows down a great deal
+/// Returns the panel's knobs, left to right.
+///
+/// - The first moves in whole semitones.
+/// - The second is smooth, and the wheel moves it slowly.
+/// - The third moves in steps of five.
+/// - The fine key slows the fourth down a great deal.
 fn knobs() -> [Knob; 4] {
   // how each answers the pointer and the wheel: as usual, with a wheel that moves it a
   // hundredth of its turn for each line, and with a fine key that slows it fifty times
@@ -116,8 +127,9 @@ impl Knob {
   }
 }
 
-/// the look: nothing of the graphics device's is needed for flat shapes, so all it keeps is
-/// where the knobs are
+/// The look of the panel.
+///
+/// Flat shapes need nothing of the graphics device, so it keeps only the knobs.
 struct Look {
   knobs: [Knob; 4],
 }

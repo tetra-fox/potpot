@@ -1,11 +1,12 @@
-//! the marks printed around a knob or beside a fader
+//! The marks printed around a knob or beside a fader.
 
 use glam::{Mat4, Vec3};
 
 use crate::mesh::Mesh;
 
-/// how far out one mark of a scale reaches and half its width: every `long_every`th is half
-/// as long again as the rest, and wider
+/// Returns the reach and the half width of one mark of a scale.
+///
+/// Every `long_every`th mark is half as long again as the others, and wider.
 fn mark(index: u32, long_every: u32, inner: f32, outer: f32) -> (f32, f32) {
   if long_every > 0 && index.is_multiple_of(long_every) {
     (outer + (outer - inner) * 0.5, 1.0)
@@ -14,9 +15,11 @@ fn mark(index: u32, long_every: u32, inner: f32, outer: f32) -> (f32, f32) {
   }
 }
 
-/// the scale around a knob: `count` thin marks lying on the panel, spread over `sweep`
-/// radians the way [`super::knob_transform`] turns, from `inner` to `outer` away from the center.
-/// every `long_every`th mark is half as long again
+/// Returns the scale around a knob.
+///
+/// The scale is `count` thin marks lying on the panel, spread over `sweep` radians the way
+/// [`knob_transform`](super::knob_transform) turns, from `inner` to `outer` away from the center.
+/// Every `long_every`th mark is half as long again.
 pub fn ticks(count: u32, sweep: f32, inner: f32, outer: f32, long_every: u32) -> Mesh {
   let mut ticks = Mesh::default();
   for tick in 0..count {
@@ -35,9 +38,11 @@ pub fn ticks(count: u32, sweep: f32, inner: f32, outer: f32, long_every: u32) ->
   ticks
 }
 
-/// the scale beside a fader: `count` thin marks lying on the panel down the length of its
-/// `travel`, on both sides of the slot from `inner` to `outer` away from it. every
-/// `long_every`th mark is half as long again
+/// Returns the scale beside a fader.
+///
+/// The scale is `count` thin marks lying on the panel down the length of the fader's `travel`, on
+/// both sides of the slot from `inner` to `outer` away from it. Every `long_every`th mark is half
+/// as long again.
 pub fn fader_ticks(count: u32, travel: f32, inner: f32, outer: f32, long_every: u32) -> Mesh {
   let mut ticks = Mesh::default();
   for tick in 0..count {
@@ -59,10 +64,12 @@ pub fn fader_ticks(count: u32, travel: f32, inner: f32, outer: f32, long_every: 
   ticks
 }
 
-/// the dashed ring around a knob that old soft synths draw: `count` short bars lying on the
-/// panel end to end around the origin at `radius`, over `sweep` radians the way
-/// [`super::knob_transform`] turns. each is `width` across, and `fill` is how much of its share of
-/// the ring a bar takes, the rest being the gap to the next
+/// Returns the dashed ring around a knob that old soft synths draw.
+///
+/// The ring is `count` short bars lying on the panel end to end around the origin at `radius`, over
+/// `sweep` radians the way [`knob_transform`](super::knob_transform) turns. Each bar is `width`
+/// across. `fill` is the share of its part of the ring a bar takes, and the gap to the next bar
+/// takes what is left.
 pub fn dashes(count: u32, sweep: f32, radius: f32, width: f32, fill: f32) -> Mesh {
   let mut ring = Mesh::default();
   let share = sweep / count.max(1) as f32;

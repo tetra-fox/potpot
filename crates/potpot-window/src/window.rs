@@ -1,5 +1,7 @@
-//! the open window: the panel drawn and put in it, and baseview's events turned into what
-//! the panel is told
+//! The open window.
+//!
+//! The panel is drawn and put in it, and baseview's events are turned into what the panel is
+//! told.
 
 use std::cell::{Cell, RefCell, RefMut};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -26,62 +28,78 @@ use crate::open::{Param, Remembered, Settings, Shared, ToWindow};
 use crate::screen::Screen;
 use crate::skin::{Gpu, Skin, View};
 
-/// how often the panel is told that time has passed, and what the window shows is checked
-/// against what it should
+/// The time between two tellings of the panel that time has passed.
+///
+/// What the window shows is checked against what it should as often.
 const TICK: Duration = Duration::from_millis(50);
-/// what shows of the window around the panel when the window is not the panel's shape
+/// The color of the window around the panel.
+///
+/// It shows when the window has another shape than the panel's.
 const AROUND: wgpu::Color = wgpu::Color {
   r: 0.004,
   g: 0.004,
   b: 0.005,
   a: 1.0,
 };
-/// the picture's pixels as they are drawn and read back: blue first and in srgb, which is
-/// how a window is given them
+/// The format the picture's pixels are drawn and read back in.
+///
+/// Blue comes first and the colors are in sRGB, which is how a window is given them.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
-/// how long a frame may take the graphics device before it is given up on
+/// The longest a frame may take the graphics device before it is given up on.
 const DRAWN_WITHIN: Duration = Duration::from_secs(1);
-/// how many pixels of a wheel that scrolls by them count as one line
+/// The number of pixels of a wheel that scrolls by them that count as one line.
 const PIXELS_PER_LINE: f32 = 20.0;
 
-/// how many ticks a window keeps a size of another shape than the panel's before it is
-/// asked to take the panel's
+/// The number of ticks a window keeps a size of another shape than the panel's.
+///
+/// After that many it is asked to take the panel's.
 const SETTLED: u32 = 4;
 
-/// how many pixels a window's side may be from the panel's shape and be left alone, which
-/// rounding a size to whole pixels can put it
+/// The most pixels a window's side may be from the panel's shape.
+///
+/// A window that near the shape is left alone. Rounding a size to whole pixels can put it
+/// that far off.
 const NEAR: u32 = 2;
 
 pub(crate) struct Window<S> {
   context: WindowContext,
   settings: Settings,
-  /// each parameter's ways to the host, in the panel's order
+  /// Each parameter's ways to the host, in the panel's order.
   hosts: Vec<Host>,
   remembered: Arc<Remembered>,
   shared: Arc<Shared>,
-  /// what whoever opened the window has to tell it
+  /// The messages of whoever opened the window.
   told: mpsc::Receiver<ToWindow>,
   tick: TimerHandle,
-  /// whether the window is its own, with a frame the window manager resizes it by
+  /// Whether the window is its own, with a frame the window manager resizes it by.
   top_level: bool,
-  /// a size of another shape than the panel's that the window has, and for how many ticks.
-  /// window managers can give one whatever they were hinted: kwin does when it maximizes
+  /// A misshapen size the window has, and for how many ticks.
+  ///
+  /// A misshapen size has another shape than the panel's. Window managers can give one
+  /// whatever they were hinted: KWin does when it maximizes.
   misshapen: Cell<Option<([u32; 2], u32)>>,
-  /// whether baseview has asked for a frame yet, before which it is not to be asked for one
+  /// Whether baseview has asked for a frame yet.
+  ///
+  /// Before it has, it is not to be asked for one.
   started: Cell<bool>,
-  /// the size the window was last given, until the state has taken it in
+  /// The size the window was last given, until the state has taken it in.
   sized: Cell<Option<WindowSize>>,
-  /// the system's clipboard, from the first use of it on. on x11 what was copied is there
-  /// for other programs only for as long as this is kept
+  /// The system's clipboard, from the first use of it on.
+  ///
+  /// On X11 what was copied is there for other programs only for as long as this is kept.
   clipboard: RefCell<Option<arboard::Clipboard>>,
+  /// The state, which is only ever taken with [`Window::state`].
+  ///
   /// baseview calls a handler through a shared reference, always on the window's one
-  /// thread. it can call one while another is still running, when something the first one
-  /// does has the system deliver more: so the state is only ever taken with
-  /// [`Window::state`], which gives nothing rather than panic when it is in use
+  /// thread. It can call one while another is still running, when something the first one
+  /// does has the system deliver more. [`Window::state`] gives nothing when the state is in
+  /// use, where a plain borrow would panic.
   state: RefCell<State<S>>,
 }
 
-/// a parameter as the host has it: where it stands, and how a gesture on it is told
+/// A parameter as the host has it.
+///
+/// It holds where the parameter stands and how a gesture on it is told.
 struct Host {
   value: Box<dyn Fn() -> f32 + Send>,
   begin: Box<dyn Fn() + Send>,
@@ -92,47 +110,56 @@ struct Host {
 struct State<S> {
   device: wgpu::Device,
   queue: wgpu::Queue,
-  /// what frames are drawn on, made at the first frame of each size the window takes
+  /// The canvas frames are drawn on.
+  ///
+  /// It is made at the first frame of each size the window takes.
   canvas: Option<Canvas>,
   screen: Screen,
-  /// the window's width and height in pixels
+  /// The window's width and height in pixels.
   window: [u32; 2],
   skin: S,
-  /// draws what is over the skin's picture
+  /// The renderer of what is over the skin's picture.
   flat: FlatRenderer,
   interaction: Interaction,
-  /// what was set from here and has yet to reach the parameters
+  /// The values set from here that have yet to reach the parameters.
   sent: Sent,
-  /// where the pointer last was, in the panel's points
+  /// The last place of the pointer, in the panel's points.
   pointer: Point,
-  /// and the same in the window's own points
+  /// The last place of the pointer, in the window's own points.
   on_window: Point,
-  /// the display's scale factor, which the window's size in pixels is that much more than
-  /// its size in the screen's points
+  /// The display's scale factor.
+  ///
+  /// The window's size in pixels is that many times its size in the screen's points.
   display_scale: f64,
-  /// what the frame last put in the window shows. none if it has had no frame since it was
-  /// sized or shown
+  /// The contents of the frame last put in the window.
+  ///
+  /// It is `None` if the window has had no frame since it was sized or shown.
   shown: Option<Frame>,
-  /// how many times the panel's size the window is to become, once for each frame at most
+  /// The multiple of the panel's size the window is to become.
+  ///
+  /// The window becomes it once for each frame at most.
   wanted_scale: Option<f32>,
-  /// the first thing the graphics device reported going wrong once the window was open,
-  /// which wgpu would otherwise panic over
+  /// The first fault the graphics device reported once the window was open.
+  ///
+  /// wgpu would otherwise panic over it.
   fault: Arc<OnceLock<String>>,
-  /// whether drawing has been given up for as long as this window is open. the window
-  /// keeps the last picture it had
+  /// Whether drawing has been given up for as long as this window is open.
+  ///
+  /// The window keeps the last picture it had.
   stopped: bool,
 }
 
-/// gives up drawing, and says why the once
+/// Gives up drawing, and logs why the first time.
 fn stop(stopped: &mut bool, why: impl std::fmt::Display) {
   if !std::mem::replace(stopped, true) {
     error!("the editor has stopped drawing: {why}");
   }
 }
 
-/// what building something with the device brought up, if anything went wrong with it.
+/// Returns what `build` makes with the device, or what went wrong with it.
+///
 /// wgpu reports a shader or pipeline it cannot build, and memory it cannot get, to whoever
-/// is listening for each kind, and panics if nobody is
+/// is listening for each kind, and panics if nobody is.
 fn built<T>(device: &wgpu::Device, build: impl FnOnce() -> T) -> Result<T, wgpu::Error> {
   let kinds = [
     wgpu::ErrorFilter::Validation,
@@ -150,29 +177,30 @@ fn built<T>(device: &wgpu::Device, build: impl FnOnce() -> T) -> Result<T, wgpu:
   wrong.map_or(Ok(built), Err)
 }
 
-/// everything a frame shows that can change from one to the next
+/// Everything a frame shows that can change between frames.
 #[derive(Clone, Debug, PartialEq)]
 struct Frame {
-  /// where each parameter stands
+  /// The value of each parameter.
   values: Vec<f32>,
-  /// the window's width and height in pixels
+  /// The window's width and height in pixels.
   window: [u32; 2],
-  /// how many times the panel's size it is drawn at
+  /// The multiple of the panel's size it is drawn at.
   scale: f32,
   edit: Option<Edit>,
   menu: Option<Menu>,
-  /// the control that is held down
+  /// The control that is held down.
   held: Option<usize>,
 }
 
-/// what a frame is drawn on and read back from, for one size of window. there is no
-/// swapchain on the window: under wine, making one again for each size the window takes
-/// while it is dragged keeps the host's thread in the graphics driver
+/// The target a frame is drawn on and read back from, for one size of window.
+///
+/// There is no swapchain on the window: under Wine, making one again for each size the
+/// window takes while it is dragged keeps the host's thread in the graphics driver.
 struct Canvas {
   size: [u32; 2],
   texture: wgpu::Texture,
   view: wgpu::TextureView,
-  /// the frame's pixels once it is drawn, in rows of `row` bytes
+  /// The frame's pixels once it is drawn, in rows of `row` bytes.
   read: wgpu::Buffer,
   row: u32,
 }
@@ -211,8 +239,10 @@ impl Canvas {
   }
 }
 
-/// whether a frame has to be drawn: when none is in the window, or the one that is shows
-/// anything other than what the panel is like now
+/// Returns whether a frame has to be drawn.
+///
+/// One has to be when none is in the window, or the one that is shows anything other than
+/// what the panel is like now.
 fn due(
   shown: Option<&Frame>,
   values: &[f32],
@@ -230,21 +260,24 @@ fn due(
   })
 }
 
-/// how many times its own size a panel of `size` is drawn at in a window of so many pixels,
-/// on a display with `display_scale` of them to a point
+/// Returns the multiple of its own size a panel of `size` is drawn at.
+///
+/// The window is `window` pixels, on a display with `display_scale` of them to a point.
 fn scale_in(window: [u32; 2], display_scale: f64, size: Point) -> f32 {
   let [_, _, width, _] = fitted(window, size);
   (f64::from(width) / display_scale) as f32 / size[0]
 }
 
 impl<S: Skin> State<S> {
-  /// how many times its own size a panel of `size` is drawn at
+  /// Returns the multiple of its own size a panel of `size` is drawn at.
   fn scale(&self, size: Point) -> f32 {
     scale_in(self.window, self.display_scale, size)
   }
 
-  /// where each parameter stands: at what was last set from here if that has yet to reach
-  /// it, or else where it is. the parameters are looked at afresh
+  /// Returns where each parameter stands.
+  ///
+  /// That is at what was last set from here if that has yet to reach it, or else where it
+  /// is. The parameters are looked at afresh.
   fn values(&mut self, hosts: &[Host]) -> Vec<f32> {
     (hosts.iter().enumerate())
       .map(|(parameter, host)| {
@@ -255,7 +288,7 @@ impl<S: Skin> State<S> {
       .collect()
   }
 
-  /// whether what is in the window is not what the panel is like now
+  /// Returns whether the window's picture differs from what the panel is like now.
   fn stale(&mut self, hosts: &[Host], size: Point) -> bool {
     let (values, window, scale) = (self.values(hosts), self.window, self.scale(size));
     let (edit, menu) = (self.interaction.edit(), self.interaction.menu());
@@ -271,8 +304,9 @@ impl<S: Skin> State<S> {
     )
   }
 
-  /// what of the panel is at one of its points: the menu while it is up, the grip, or
-  /// whatever the skin has there
+  /// Returns the [`Target`] at one of the panel's points.
+  ///
+  /// That is the menu while it is up, the grip, or whatever the skin has there.
   fn target_at(&self, settings: &Settings, at: Point) -> Option<Target> {
     let menu = self.interaction.menu().and_then(|menu| {
       let corner = settings.menu.corner(menu.at, settings.size);
@@ -311,9 +345,8 @@ impl<S: Skin> Window<S> {
       error!("the window manager could not be told the editor's shape: {error}");
     }
 
-    // direct3d 12 is started only where nothing else can draw. under wine it runs on vulkan
-    // anyway, and wine's shader compiler cannot build any shader with a sampler as naga
-    // writes it for direct3d, so there the editor does not open without vulkan
+    // direct3d 12 is tried last. wine runs it on vulkan anyway, and its shader compiler builds
+    // no shader with a sampler as naga writes it for direct3d, so there the editor needs vulkan
     let adapter = match adapter_of(wgpu::Backends::VULKAN | wgpu::Backends::METAL) {
       Ok(adapter) => adapter,
       Err(first) => adapter_of(wgpu::Backends::DX12).map_err(|second| {
@@ -342,9 +375,8 @@ impl<S: Skin> Window<S> {
     let values: Vec<f32> = hosts.iter().map(|host| (host.value)()).collect();
     let [_, _, width, height] = fitted(window, settings.size);
     let scale = scale_in(window, size.scale_factor, settings.size);
-    // the editor opens only if the device can build everything it is drawn with, and lay
-    // out the panel as it is. what goes wrong after that is kept for the next frame to
-    // find, and drawing stops there
+    // the editor opens only if the device can build all it is drawn with and lay out the panel
+    // as it is. what goes wrong after that is kept for the next frame to find, and drawing stops
     let (skin, flat) = built(&device, || {
       let gpu = Gpu {
         device: &device,
@@ -418,9 +450,11 @@ impl<S: Skin> Window<S> {
     })
   }
 
-  /// asks for the largest window of the panel's shape that fits in the one there is, once
-  /// a window of its own has kept another shape for [`SETTLED`] ticks. each size is asked
-  /// about once, so a window manager that holds the window to it is not asked again
+  /// Asks for the largest window of the panel's shape that fits in this one.
+  ///
+  /// It asks once a window of its own has kept another shape for [`SETTLED`] ticks. Each
+  /// size is asked about once, so a window manager that holds the window to it is not asked
+  /// again.
   fn reshape(&self) {
     if !self.top_level {
       return;
@@ -448,24 +482,26 @@ impl<S: Skin> Window<S> {
     }
   }
 
-  /// asks baseview for a frame, once it has drawn its first.
+  /// Asks baseview for a frame, once it has drawn its first.
   ///
-  /// baseview 0.4.2 on x11 asks the server to tell it of the next frame as soon as a redraw
+  /// baseview 0.4.2 on X11 asks the server to tell it of the next frame as soon as a redraw
   /// is requested, but only starts listening for the answer when the window is mapped
   /// (`PresentState::handle_present_notify` and `handle_window_mapped` in its
-  /// `platform/x11/present.rs`). a request made before that is never answered, and every
-  /// later one is dropped for waiting on it, so the window is never drawn at all. it asks
-  /// for the first frame itself once the window is mapped.
-  /// TODO: ask at any time once baseview holds a request until it can be answered
+  /// `platform/x11/present.rs`). A request made before that is never answered, and every
+  /// later one is dropped for waiting on it, so the window is never drawn at all. baseview
+  /// asks for the first frame itself once the window is mapped.
   fn redraw(&self) {
+    // TODO: ask at any time once baseview holds a request until it can be answered
     if self.started.get() {
       self.context.request_redraw();
     }
   }
 
-  /// the state, with the size the window was last given taken into it, or nothing while a
-  /// handler further up already has it. what that leaves undone is made up for at the next
-  /// tick, which draws the panel as it then is
+  /// Returns the state, or nothing while a handler further up already has it.
+  ///
+  /// The size the window was last given is taken into the state. What a handler leaves
+  /// undone for want of the state is made up for at the next tick, which draws the panel as
+  /// it then is.
   fn state(&self) -> Option<RefMut<'_, State<S>>> {
     let mut state = self.state.try_borrow_mut().ok()?;
     if let Some(size) = self.sized.take() {
@@ -476,16 +512,17 @@ impl<S: Skin> Window<S> {
     Some(state)
   }
 
-  /// asks for a frame if the one in the window is not what the panel is like now. the
-  /// window is told when to draw by what happens to it, and this makes up for anything it
-  /// was not told: a parameter moved with no report of it, or a frame put off while a handler
-  /// further up had the state
+  /// Asks for a frame if the one in the window is stale.
+  ///
+  /// The window is told when to draw by what happens to it, and this makes up for anything
+  /// it was not told: a parameter moved with no report of it, or a frame put off while a
+  /// handler further up had the state.
   fn refresh(&self) {
     let Some(mut state) = self.state() else {
       return;
     };
-    // a window with no size has nothing to draw
     let stale = state.stale(&self.hosts, self.settings.size);
+    // a window with no size has nothing to draw
     let asks = !state.stopped && stale && !state.window.contains(&0);
     drop(state);
     if asks {
@@ -493,7 +530,7 @@ impl<S: Skin> Window<S> {
     }
   }
 
-  /// tells the panel of something, and then the host and the window of what came of it
+  /// Tells the panel of an event, then the host and the window what came of it.
   fn handle(&self, event: impl FnOnce(&mut State<S>) -> Event) {
     let actions = {
       let Some(mut state) = self.state() else {
@@ -546,9 +583,10 @@ impl<S: Skin> Window<S> {
     }
   }
 
-  /// does something with the system's clipboard, which is opened at the first use of it. the
-  /// state is not held meanwhile: the system may deliver other things to the window while
-  /// it is asked
+  /// Runs `with` on the system's clipboard, which is opened at the first use of it.
+  ///
+  /// The state is not held meanwhile: the system may deliver other things to the window
+  /// while the clipboard is asked.
   fn clipboard<T>(
     &self,
     with: impl FnOnce(&mut arboard::Clipboard) -> Result<T, arboard::Error>,
@@ -567,9 +605,11 @@ impl<S: Skin> Window<S> {
     }
   }
 
-  /// hands the panel the clipboard's text. it is read here and now: on windows and macos
-  /// that is a call into the system, and on x11 a question to the program that owns the
-  /// clipboard, which this window's own thread waits on and no thread of the host's
+  /// Hands the panel the clipboard's text.
+  ///
+  /// The text is read here and now. On Windows and macOS that is a call into the system, and
+  /// on X11 a question to the program that owns the clipboard, which only this window's own
+  /// thread waits on.
   fn read_clipboard(&self) {
     // a clipboard with no text on it is an error to arboard, and nothing to paste here
     let text = self.clipboard(|clipboard| clipboard.get_text()).ok();
@@ -693,7 +733,7 @@ impl<S: Skin> Window<S> {
       drawn_on.texture.size(),
     );
     let submitted = queue.submit([encoder.finish()]);
-    // the frame is waited for here, on the window's thread, which is the host's on windows.
+    // the frame is waited for here, on the window's thread, which the host runs on too on windows.
     // the device takes a millisecond or so for it, and the pixels go in the window at once
     let (mapped, when_mapped) = mpsc::channel();
     (drawn_on.read.slice(..)).map_async(wgpu::MapMode::Read, move |result| {
@@ -862,7 +902,7 @@ impl<S: Skin> Window<S> {
   }
 }
 
-/// a graphics adapter of one of some apis
+/// Returns a graphics adapter of one of `backends`.
 fn adapter_of(backends: wgpu::Backends) -> Result<wgpu::Adapter, wgpu::RequestAdapterError> {
   let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
     backends,
@@ -871,9 +911,10 @@ fn adapter_of(backends: wgpu::Backends) -> Result<wgpu::Adapter, wgpu::RequestAd
   pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
 }
 
-/// tells the window manager that the window keeps the panel's shape, and how small and large
-/// it may be, so that it holds the window to them while its frame is dragged. baseview sets
-/// the sizes alone, and this takes the place of what it set
+/// Tells the window manager the window's shape and how small and large it may be.
+///
+/// The window keeps the panel's shape, and the window manager holds it to these while its
+/// frame is dragged. baseview sets the sizes alone, and this takes the place of what it set.
 #[cfg(target_os = "linux")]
 fn hint_shape(
   context: &WindowContext,
@@ -902,7 +943,7 @@ fn hint_shape(
   Ok(())
 }
 
-/// whether a key that slows a knob down is held
+/// Returns whether a key that slows a knob down is held.
 fn fine(modifiers: keyboard_types::Modifiers) -> bool {
   modifiers.alt() || modifiers.shift()
 }
@@ -915,8 +956,9 @@ fn button_of(button: MouseButton) -> Option<Button> {
   }
 }
 
-/// what a key press means to a value being typed. a key held with one that makes it a
-/// command types nothing
+/// Returns what a key press means to a value being typed.
+///
+/// A key held with one that makes it a command types nothing.
 fn keys(event: &keyboard_types::KeyboardEvent) -> Vec<Key> {
   use keyboard_types::{Key as Pressed, NamedKey};
 
@@ -949,21 +991,23 @@ fn keys(event: &keyboard_types::KeyboardEvent) -> Vec<Key> {
   }
 }
 
-/// the window as baseview has it: every call into it stops at a panic.
+/// The window as baseview has it.
 ///
-/// a panic out of these would unwind into baseview's window procedure on windows, which is
-/// an `extern` function, and that ends the host's whole process. it is caught here, and
+/// Every call into it stops at a panic.
+///
+/// A panic out of these would unwind into baseview's window procedure on Windows, which is
+/// an `extern` function, and that ends the host's whole process. It is caught here, and
 /// from then on the window does nothing: its state may be half changed, so nothing looks
 /// at it again. wgpu itself panics when the device is lost while it is waited on
 /// (`Device::poll` in its `backend/wgpu_core.rs`), and any fault of the editor's own ends
-/// here as well
+/// here as well.
 pub(crate) struct Guarded<S> {
   window: Window<S>,
   broken: Cell<bool>,
 }
 
 impl<S: Skin> Guarded<S> {
-  /// the window, if making it neither fails nor panics
+  /// Creates the window, if making it neither fails nor panics.
   pub(crate) fn new(
     make: impl FnOnce() -> Result<Window<S>, HandlerError>,
   ) -> Result<Self, HandlerError> {
@@ -988,7 +1032,7 @@ impl<S: Skin> Guarded<S> {
   }
 }
 
-/// what a panic was raised with, where that was words
+/// Returns what a panic was raised with, where that was words.
 fn said(panic: &(dyn std::any::Any + Send)) -> String {
   let said = panic.downcast_ref::<&str>().copied();
   said
@@ -1023,11 +1067,13 @@ impl<S: Skin> WindowHandler for Guarded<S> {
 mod tests {
   use super::*;
 
-  /// the first of a panel's parameters
+  /// The first of a panel's parameters.
   const PITCH: usize = 0;
   use potpot_controls::interaction::Item;
 
-  /// a frame of a window of the panel's own size, with nothing typed or chosen
+  /// Returns a frame with nothing typed or chosen.
+  ///
+  /// Its window is of the panel's own size.
   fn frame(values: [f32; 3]) -> Frame {
     Frame {
       values: values.into(),
@@ -1039,7 +1085,9 @@ mod tests {
     }
   }
 
-  /// whether a frame is due in a window showing `shown`, with the panel like `now`
+  /// Returns whether a frame is due.
+  ///
+  /// The window shows `shown` and the panel is like `now`.
   fn is_due(shown: Option<&Frame>, now: &Frame) -> bool {
     let Frame {
       values,

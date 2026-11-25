@@ -1,4 +1,4 @@
-//! lettering in a plain drawn face of capitals and figures, painted flat on a panel
+//! Lettering painted flat on a panel.
 
 use std::f32::consts::PI;
 
@@ -8,12 +8,14 @@ use potpot_controls::stroke;
 use super::PAINT;
 use crate::mesh::{Mesh, Vertex};
 
-/// the sides the half round at each end of a stroke is cut into
+/// The count of sides in the half round at each end of a stroke.
 const END: usize = 4;
 
-/// lettering painted flat on the panel in a plain drawn face of capitals and figures,
-/// centered on the origin: letters `height` tall with strokes `weight` wide. anything it
-/// has no letter for is a space
+/// Returns lettering painted flat on the panel.
+///
+/// The face is a plain drawn one of capitals and figures. The lettering is centered on the origin,
+/// with letters `height` tall and strokes `weight` wide. A character the face has no letter for is
+/// a space.
 pub fn legend(text: &str, height: f32, weight: f32) -> Mesh {
   let mut legend = Mesh::default();
   for line in stroke::lines(text, height) {

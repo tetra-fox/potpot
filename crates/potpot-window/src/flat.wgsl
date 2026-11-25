@@ -33,9 +33,8 @@ fn vertex(
   var corner: Corner;
   var at: vec2<f32>;
   if snap > 0.5 {
-    // a rectangle that lies along the pixels: each corner goes on the nearest pixel edge,
-    // which keeps its sides sharp at any scale. halves all go the same way, so that a line
-    // one pixel wide stays one pixel wide
+    // a rectangle along the pixels: each corner goes on the nearest pixel edge, so its sides are
+    // sharp at any scale. halves all go the same way, so a line one pixel wide stays that wide
     at = floor((middle + side * half) * scale + 0.5);
   } else {
     // a line any way round, with round ends half its width past its two points: drawn a

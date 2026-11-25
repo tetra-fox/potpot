@@ -1,4 +1,4 @@
-//! the bind group layouts and render pipelines, made once for a target's format
+//! The bind group layouts and render pipelines, made once for a target's format.
 
 use std::mem::size_of;
 
@@ -7,20 +7,27 @@ use crate::mesh::Vertex;
 use crate::scene::LAMPS;
 
 pub(super) const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-/// the picture holds srgb-encoded color in a format that does not encode, see scene.wgsl
+/// The format of the picture.
+///
+/// The picture holds sRGB-encoded color in a format that does not encode, for the reason given
+/// in `scene.wgsl`.
 pub(super) const PICTURE: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
-/// linear light in rgb and a height in a, which is not within zero and one
+/// The format of the bounce map.
+///
+/// The map holds linear light in rgb and a height in a, and a height lies outside zero to one.
 pub(super) const BOUNCE: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// the samples of each pixel when edges are smoothed
+/// The samples of each pixel when edges are smoothed.
 pub(super) const SAMPLES: u32 = 4;
 
 pub(super) const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
   wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
 
-/// the srgb curve, which goes ahead of each shader that uses it
+/// The sRGB curve, which goes ahead of each shader that uses it.
 const SRGB_SOURCE: &str = include_str!("srgb.wgsl");
 
-/// scene.wgsl with the length of its array of lamps ahead of it, which is a scene's
+/// Returns `scene.wgsl` with the length of its array of lamps ahead of it.
+///
+/// The length is [`LAMPS`], and the sRGB curve goes ahead of the shader too.
 pub(super) fn scene_source() -> String {
   format!(
     "const LAMPS: u32 = {LAMPS};\n{SRGB_SOURCE}{}",
@@ -28,7 +35,7 @@ pub(super) fn scene_source() -> String {
   )
 }
 
-/// present.wgsl with the srgb curve ahead of it
+/// Returns `present.wgsl` with the sRGB curve ahead of it.
 pub(super) fn present_source() -> String {
   format!("{SRGB_SOURCE}{}", include_str!("present.wgsl"))
 }
@@ -36,11 +43,14 @@ pub(super) fn present_source() -> String {
 #[derive(Debug)]
 pub(super) struct Layouts {
   pub(super) globals: wgpu::BindGroupLayout,
-  /// the shadow map with its sampler, for the pass that draws the bounce map
+  /// The shadow map with its sampler, for the pass that draws the bounce map.
   pub(super) shadow: wgpu::BindGroupLayout,
-  /// the shadow map with its sampler, the height map, and the bounce map with its sampler
+  /// Every map the scene pass reads.
+  ///
+  /// The shadow map comes with its sampler, then the height map, then the bounce map with its
+  /// sampler.
   pub(super) maps: wgpu::BindGroupLayout,
-  /// the picture with its sampler, and how it is degraded
+  /// The picture with its sampler, and how it is degraded.
   pub(super) present: wgpu::BindGroupLayout,
 }
 
@@ -111,13 +121,15 @@ pub(super) struct Pipelines {
   pub(super) shadow: wgpu::RenderPipeline,
   pub(super) height: wgpu::RenderPipeline,
   pub(super) bounce: wgpu::RenderPipeline,
-  /// for one sample a pixel, and for [`SAMPLES`]
+  /// The scene pipelines for one sample a pixel and for [`SAMPLES`].
   pub(super) scene: [wgpu::RenderPipeline; 2],
   pub(super) present: wgpu::RenderPipeline,
 }
 
 impl Pipelines {
-  /// `target` is the format of what the present pipeline draws onto
+  /// Creates every pipeline for a target's format.
+  ///
+  /// `target` is the format of what the present pipeline draws onto.
   pub(super) fn new(device: &wgpu::Device, layouts: &Layouts, target: wgpu::TextureFormat) -> Self {
     let scene_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
       label: Some("potpot scene"),

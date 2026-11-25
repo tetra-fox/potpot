@@ -1,19 +1,19 @@
-//! a window for a panel of [`controls`]: it opens with baseview, in a host's window or on
-//! its own, draws with wgpu whatever [`Skin`] it is given, and sees to everything between
-//! the pointer and the keys and the panel's parameters. the menu, the grip and a value being
-//! typed work the same under any skin.
+//! A baseview window for a panel of controls, drawn with wgpu by a given skin.
 //!
-//! the picture is drawn off the window and put in it as plain pixels, so nothing of the
-//! graphics driver's own window code runs in a host's process.
+//! [`open()`] opens the window with baseview, in a host's window or on its own. A panel is
+//! its [`Settings`], its [`Param`]s and the [`controls`] that turn them, drawn by a [`Skin`].
+//! The window draws the skin with wgpu and sees to everything between the pointer, the keys
+//! and the panel's parameters. The menu, the grip and a value being typed work the same
+//! under any skin.
 //!
-//! a panel is its [`Settings`], a [`Param`] for each control, and a [`Skin`]:
+//! # Examples
 //!
 //! ```no_run
 //! use potpot_window::controls::flat::Flat;
 //! use potpot_window::controls::interaction::{Control, Dial, Readout, Target};
 //! use potpot_window::{Gpu, Opening, Param, Settings, Skin, View, wgpu};
 //!
-//! /// one control, drawn as a bar as long as its value
+//! // one control, drawn as a bar as long as its value
 //! struct Bar;
 //!
 //! impl Skin for Bar {
@@ -35,7 +35,12 @@
 //! ```
 //!
 //! `examples/flat.rs` is a whole panel written this way, and [`nice_plug`] makes one the
-//! editor of a plugin
+//! editor of a plugin.
+//!
+//! # Drawing
+//!
+//! The picture is drawn off the window and put in it as plain pixels, so nothing of the
+//! graphics driver's own window code runs in a host's process.
 
 mod flat;
 #[cfg(feature = "nice-plug")]
@@ -50,3 +55,8 @@ pub use skin::{Gpu, Skin, View};
 // what the types above are made of, so that a skin is built on the same versions
 pub use potpot_controls as controls;
 pub use {baseview, wgpu};
+
+// builds the example in the workspace's README as a doc test
+#[cfg(doctest)]
+#[doc = include_str!("../../../README.md")]
+struct Readme;

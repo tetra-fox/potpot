@@ -1,10 +1,17 @@
-//! a window with every part on it, lamps and meters following the controls: `just demo`.
+//! A window with every kind of control on it, opened by `just demo`.
 //!
-//! everything answers the pointer the way its kind does: knobs and faders are dragged,
-//! buttons are pressed, and the row of keys is one switch that each click moves a step on.
-//! the first six knobs drive the rest: how bright the lamp between the first two is and
-//! what color, whether it is on, how much light bounces between neighbors, where the fader
-//! stands with the meters beside it, and how many of a column of dots are lit
+//! Lamps and meters follow the controls. Each control answers the pointer the way its kind
+//! does: knobs and faders are dragged, buttons are pressed, and the row of keys is one switch
+//! that each click moves a step on.
+//!
+//! The six knobs along the top, from the left:
+//!
+//! - `BRIGHT`: how bright the lamp between the first two knobs is
+//! - `HUE`: the lamp's color
+//! - `LAMP`: whether the lamp is on
+//! - `BOUNCE`: how much light bounces between neighbors
+//! - `LEVEL`: where the fader stands, with the meters beside it
+//! - `DOTS`: how many of a column of dots are lit
 
 use std::f32::consts::FRAC_PI_2;
 use std::sync::Arc;
@@ -17,64 +24,63 @@ use potpot_window::controls::interaction::{Control, Dial, Drag, Push, Readout, T
 use potpot_window::{Gpu, Opening, Param, Settings, Skin, View, wgpu};
 
 const SIZE: [f32; 2] = [900.0, 520.0];
-/// the knobs that drive something, in the order of [`knobs`]
+// the knobs that drive something, in the order of `knobs`
 const BRIGHT: usize = 0;
 const HUE: usize = 1;
 const ON: usize = 2;
 const BOUNCE: usize = 3;
 const LEVEL: usize = 4;
 const DOTS: usize = 5;
-/// how many of the knobs drive something, which are the ones with a readout
+/// The count of knobs that drive something, each with a readout.
 const WIRED: usize = 6;
-/// how many knobs come after those, one of every other style
+/// The count of knobs after those, one of every other style and a second round one.
 const REST: usize = 9;
-/// how many knobs there are, each a control on the parameter at its own place
+/// The count of knobs, each a control on the parameter at its own place.
 const KNOBS: usize = WIRED + REST;
-/// the parameters after the knobs' own: the pad that flashes the lamp, the switch the keys
-/// are, and the fader that lies on its side. each button of [`buttons`] that is on none of
-/// these has one of its own after them
+// the parameters after the knobs' own: the pad that flashes the lamp, the switch the keys are
+// and the fader on its side. each button of `buttons` on none of these has its own after them
 const FLASH: usize = KNOBS;
 const KEYS: usize = KNOBS + 1;
 const SLIDE: usize = KNOBS + 2;
 const BUTTONS: usize = KNOBS + 3;
-/// the controls after the knobs: the fader on the level, the switch beside the lamp, the
-/// fader on its side, and then one for each of [`buttons`]
+// the controls after the knobs: the fader on the level, the switch that turns the lamp on, the
+// fader on its side, and then one for each of `buttons`
 const FADER_CONTROL: usize = KNOBS;
 const SWITCH_CONTROL: usize = KNOBS + 1;
 const SLIDE_CONTROL: usize = KNOBS + 2;
 const BUTTON_CONTROLS: usize = KNOBS + 3;
-/// the most light that bounces, with its knob all the way up
+/// The light that bounces with its knob all the way up.
 const MOST_BOUNCE: f32 = 6.0;
 
-/// the wired knobs' middles down the panel, and the names and readouts under them
+// the wired knobs' middles down the panel, and the names and readouts under them
 const WIRED_Y: f32 = 100.0;
 const NAME_UNDER: f32 = 52.0;
 const READOUT_UNDER: f32 = 76.0;
-/// half a readout's width and height
+/// Half a readout's width and height.
 const READOUT: [f32; 2] = [32.0, 10.0];
 const LETTERS: f32 = 8.0;
-/// how wide their strokes are
+/// The width of the letters' strokes.
 const WEIGHT: f32 = 1.2;
-/// the lamp between the first two knobs
+/// The place of the lamp between the first two knobs.
 const LAMP: Vec2 = Vec2::new(150.0, WIRED_Y);
 const LAMP_SIZE: f32 = 16.0;
 const SWITCH: Vec2 = Vec2::new(398.0, WIRED_Y);
-/// the fader's middle and how far it slides, and the foot of the meters beside it
+// the fader's middle and how far it slides, and the foot of the meters beside it
 const FADER: Vec2 = Vec2::new(690.0, WIRED_Y + 5.0);
 const TRAVEL: f32 = 110.0;
 const METER_FOOT: f32 = FADER.y + TRAVEL / 2.0 + 10.0;
-/// how far across the two ladders of lights and the column of dots are
+// how far across the two ladders of lights and the column of dots are
 const LADDERS: [f32; 2] = [736.0, 752.0];
 const DOTS_X: f32 = 872.0;
-/// how far down the buttons along the bottom are
+/// The distance down the panel to the buttons along the bottom.
 const BUTTONS_Y: f32 = 440.0;
-/// the middle of the fader that lies on its side and how far it slides, and how far down
-/// the row of small lights over it is
+// the middle of the fader that lies on its side and how far it slides, and how far down
+// the row of small lights over it is
 const SLIDE_AT: Vec2 = Vec2::new(678.0, 466.0);
 const SLIDE_TRAVEL: f32 = 100.0;
 const LIGHTS_Y: f32 = 418.0;
 const LIGHT_SIZE: f32 = 11.0;
-/// the color of each light of the row, from the left
+/// The color of each light of the row, from the left.
 const LIGHT_COLORS: [Vec3; 4] = [
   Vec3::new(0.1, 0.9, 0.3),
   Vec3::new(0.1, 0.9, 0.3),
@@ -82,29 +88,31 @@ const LIGHT_COLORS: [Vec3; 4] = [
   Vec3::new(1.0, 0.12, 0.06),
 ];
 const AMBER: Vec3 = Vec3::new(1.0, 0.55, 0.05);
-/// the black of most knobs
+/// The black of knob bodies, knob marks and the readouts' frames.
 const BLACK: Vec3 = Vec3::new(0.035, 0.035, 0.04);
-/// the color of aluminum turned on a lathe
+/// The color of aluminum turned on a lathe.
 const ALUMINUM: Vec3 = Vec3::new(0.78, 0.79, 0.81);
-/// the color of the dark gap around what is set into the panel
+/// The color of the dark gap around what is set into the panel.
 const SEAT: Vec3 = Vec3::splat(0.012);
 
 const INK: Color = [1.0, 0.66, 0.14, 1.0];
 const SELECTED: Color = [0.45, 0.28, 0.05, 1.0];
 
-/// one knob: what it is called, where it is, its shape and what it is made of, and the
-/// parameter it turns
+/// A knob of the panel.
 struct Shown {
   name: &'static str,
   at: Vec2,
   knob: Knob,
   material: Material,
-  /// the color of the line painted on it
+  /// The color of the line painted on it.
   mark: Vec3,
+  /// The parameter it turns.
   dial: Dial,
 }
 
-/// the six wired knobs along the top, and under them one of every other style
+/// Returns the six wired knobs along the top and the rest under them.
+///
+/// The rest are one of every other style and a second round one.
 fn knobs() -> Vec<Shown> {
   let white = Vec3::splat(0.9);
   let percent = || Dial::linear([0.0, 100.0], 50.0, None, 0, "%");
@@ -196,20 +204,27 @@ fn knobs() -> Vec<Shown> {
   knobs
 }
 
-/// a button along the bottom: its shape, how far across it is, the parameter it sets and
-/// where that stands while the button is lit, and what pressing it does
+/// A button along the bottom.
 struct Pressed {
   shape: Button,
+  /// The distance across the panel to it.
   x: f32,
+  /// The parameter it sets.
   parameter: usize,
+  /// Where the parameter stands while the button is lit.
   lit_at: f32,
+  /// What pressing it does.
   touch: Touch,
-  /// the color it lights in, or none for the lamp's
+  /// The color it lights in, or `None` for the lamp's.
   color: Option<Vec3>,
 }
 
-/// a pad that flashes the lamp while it is held, three keys that are one switch of three
-/// places, two pills that stay in, and two round buttons that come back
+/// Returns the buttons along the bottom.
+///
+/// - a pad that flashes the lamp while it is held
+/// - three keys that are one switch of three places
+/// - two pills that stay in
+/// - two round buttons that come back
 fn buttons() -> Vec<Pressed> {
   let on = |shape, x, parameter, push| Pressed {
     shape,
@@ -244,8 +259,10 @@ fn buttons() -> Vec<Pressed> {
   ]
 }
 
-/// every parameter, and every control with the parameter it is on: a knob for each of the
-/// first, then the faders and the switch, then the buttons
+/// Returns every parameter, and every control with the parameter it is on.
+///
+/// The controls are a knob for each of the first parameters, then the faders and the switch,
+/// then the buttons.
 fn wiring() -> (Vec<Dial>, Vec<Control>) {
   let switch = || Dial::linear([0.0, 1.0], 0.0, Some(1.0), 0, "");
   let mut dials: Vec<Dial> = knobs().into_iter().map(|shown| shown.dial).collect();
@@ -286,13 +303,17 @@ fn wiring() -> (Vec<Dial>, Vec<Control>) {
   (dials, controls)
 }
 
-/// where the light at a place in the row over the fader on its side is, from the left
+/// Returns where a light of the row over the fader on its side is.
+///
+/// `place` counts the lights from the left.
 fn light_at(place: usize) -> Vec2 {
   Vec2::new(630.0 + 32.0 * place as f32, LIGHTS_Y)
 }
 
-/// a color all the way around the wheel from red through green and blue back to red, as
-/// bright as a color gets
+/// Returns the color a part of the way around the color wheel.
+///
+/// A whole `turn` goes from red through green and blue back to red. The color is as bright
+/// as a color gets.
 fn hue(turn: f32) -> Vec3 {
   let around = turn * 6.0;
   let color = Vec3::new(
@@ -303,10 +324,11 @@ fn hue(turn: f32) -> Vec3 {
   color.clamp(Vec3::splat(0.04), Vec3::ONE)
 }
 
-/// objects on their way into a scene, and for each of them what a press on it is on
+/// Objects on their way into a scene.
 #[derive(Clone, Default)]
 struct Drawn {
   objects: Vec<Object>,
+  /// What a press on each of the objects is on.
   targets: Vec<Option<Target>>,
 }
 
@@ -331,37 +353,42 @@ impl Drawn {
     self.place(&Arc::new(mesh), transform, material, None);
   }
 
-  /// objects a part made itself, which no press is on
+  /// Adds objects a part made itself, which no press is on.
   fn extend(&mut self, objects: impl Iterator<Item = Object>) {
     self.objects.extend(objects);
     self.targets.resize(self.objects.len(), None);
   }
 }
 
-/// the panel as potpot draws it: its meshes, each made once, and the scene last laid out
+/// The panel as potpot draws it.
+///
+/// It holds its meshes, each made once, and the scene last laid out.
 struct Demo {
   renderer: Renderer,
-  /// the scene last laid out, which is what the pointer is on. none until the first is
+  /// The scene last laid out, which is what the pointer is on.
+  ///
+  /// It is `None` until the first is laid out.
   scene: Option<Scene>,
-  /// what each of the scene's objects is, in the same order
+  /// What each of the scene's objects is, in the same order.
   targets: Vec<Option<Target>>,
-  /// everything that never moves or changes
+  /// Everything that never moves or changes.
   fixed: Drawn,
   knobs: Vec<Shown>,
-  /// each knob's body and the line painted on it
+  /// Each knob's body and the line painted on it.
   turned: Vec<[Arc<Mesh>; 2]>,
   lamp: Arc<Mesh>,
   switch: PushSwitch,
   plunger: Arc<Mesh>,
-  /// the fader's cap and its stripe, and the same turned to lie on their side
+  /// The fader's cap and its stripe.
   cap: [Arc<Mesh>; 2],
+  /// The same cap and stripe turned to lie on their side.
   lying: [Arc<Mesh>; 2],
   light: Arc<Mesh>,
   ladder: Meter,
   dots: Meter,
-  /// one light of the ladder, and one of the dots
+  /// One light of the ladder and one of the dots.
   segments: [Arc<Mesh>; 2],
-  /// the buttons along the bottom, each with its body
+  /// The buttons along the bottom, each with its body.
   buttons: Vec<(Pressed, Arc<Mesh>)>,
 }
 
@@ -489,8 +516,10 @@ impl Demo {
     }
   }
 
-  /// the scene with each parameter where it stands, as a part of its whole turn, and the
-  /// control that is held down, and what each of its objects is
+  /// Returns the scene and what each of its objects is.
+  ///
+  /// `values` is where each parameter stands, as a part of its whole turn, and `held` is the
+  /// control that is held down.
   fn scene(&self, values: &[f32], held: Option<usize>) -> (Scene, Vec<Option<Target>>) {
     // the scene owns this frame's objects, so the ones that never move are copied into it
     let mut drawn = self.fixed.clone();
@@ -531,8 +560,8 @@ impl Demo {
       Some(Target::Control(SWITCH_CONTROL)),
     );
 
-    // each button is lit while its parameter stands where it lights, and in as far as
-    // its kind goes
+    // a button with a color of its own is lit while its parameter stands where it lights,
+    // and the pad is lit as the lamp is. each is in as far as its kind goes
     for (control, (button, body)) in (BUTTON_CONTROLS..).zip(&self.buttons) {
       let Pressed { shape, x, .. } = *button;
       let lit = (values[button.parameter] - button.lit_at).abs() < 0.25;

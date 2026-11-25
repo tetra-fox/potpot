@@ -1,4 +1,4 @@
-//! small round indicator lights
+//! Small round indicator lights.
 
 use glam::Vec3;
 
@@ -8,7 +8,9 @@ use crate::material::Material;
 use crate::mesh::Mesh;
 use crate::scene::Lamp;
 
-/// a small round light with a domed top, like the indicator beside a switch
+/// Returns a small round light with a domed top.
+///
+/// It is like the indicator beside a switch.
 pub fn led(diameter: f32) -> Mesh {
   Button {
     roll: 0.9,
@@ -18,15 +20,19 @@ pub fn led(diameter: f32) -> Mesh {
   .body()
 }
 
-/// the dark ring a small round light sits in, lying on the panel
+/// Returns the dark ring a small round light sits in.
+///
+/// The ring lies on the panel.
 pub fn led_seat(diameter: f32) -> Mesh {
   Outline::new(diameter, diameter, diameter / 2.0)
     .grown(diameter * 0.12)
     .strip()
 }
 
-/// what a small light of a color is made of at a level from zero for dark to one for lit:
-/// dark tinted plastic that glows from its middle
+/// Returns the material of a small light of a color at a level.
+///
+/// `level` runs from zero for dark to one for lit. The [`Material`] is dark tinted plastic that
+/// glows from its middle.
 pub fn led_material(color: Vec3, level: f32, diameter: f32) -> Material {
   let dark = Material::pipe();
   Material {
@@ -36,8 +42,10 @@ pub fn led_material(color: Vec3, level: f32, diameter: f32) -> Material {
   .lit(color, level, diameter * 0.45)
 }
 
-/// the light a small light of a color at a level throws on what is around it, from `at`
-/// over its middle out to `reach` away
+/// Returns the light a small light throws on what is around it.
+///
+/// The [`Lamp`] is for a light of `color` at `level`. It shines from `at`, over the light's middle,
+/// out to `reach` away.
 pub fn led_lamp(at: Vec3, color: Vec3, level: f32, diameter: f32, reach: f32) -> Lamp {
   Lamp {
     at,

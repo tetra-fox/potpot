@@ -1,4 +1,4 @@
-//! the gallery of knob styles
+//! The gallery of knob styles.
 
 use std::sync::Arc;
 
@@ -8,27 +8,28 @@ use potpot::{Look, Material, Object, Scene};
 
 use crate::{ALUMINUM, BLACK, SIZE, framed, lettering, screws};
 
-/// how a knob of the gallery is marked
+/// The way a knob of the gallery is marked.
 #[derive(Clone, Copy)]
 enum Marker {
   Line,
   Dot,
-  /// its own shape says where it points
+  /// No mark, for a knob whose shape says where it points.
   None,
 }
 
-/// a knob of the gallery: what it is called, its shape, what it is made of, what marks it
-/// and in which color, and what its face is inlaid with if anything
+/// A knob of the gallery.
 struct Shown {
   name: &'static str,
   knob: Knob,
   material: Material,
   marker: Marker,
+  /// The color of its mark.
   mark: Vec3,
+  /// What its face is inlaid with, if anything.
   cap: Option<Material>,
 }
 
-/// every knob style in rows of five, each over a scale
+/// Returns every knob style in rows of five, each over a scale.
 pub(super) fn knobs(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let (radius, tall) = (58.0, 42.0);

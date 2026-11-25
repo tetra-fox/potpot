@@ -1,45 +1,55 @@
-//! flat shapes to draw straight onto a panel, over whatever picture it has: rectangles, lines
-//! and lettering in plain colors. this is only the list of them, which anything may draw
+//! Flat shapes to draw straight onto a panel.
+//!
+//! Rectangles, lines and lettering in plain colors go over whatever picture the panel has.
+//! The module holds only the list of them, which anything may draw.
 
 use crate::interaction::Edit;
 use crate::{Point, stroke};
 
-/// a color as it is to look, with how much of what is under it it covers
+/// A color as it is to look, with its cover.
+///
+/// The cover is how much of what is under the color it covers.
 pub type Color = [f32; 4];
 
-/// a rectangle about a middle, lying any way round
+/// A rectangle about a middle, lying any way round.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Shape {
-  /// where its middle is
+  /// The place of its middle.
   pub middle: Point,
-  /// the way its length runs, one long
+  /// The way its length runs, one long.
   pub along: Point,
-  /// how far it reaches from its middle along its length and across it. for a line the
-  /// first is to its two points, which its round ends are past
+  /// The reach from its middle along its length and across it.
+  ///
+  /// For a line the first is the reach to its two points, which its round ends are past.
   pub half: Point,
-  /// what it is filled with
+  /// The color it is filled with.
   pub color: Color,
-  /// whether it is a rectangle whose sides go on the nearest pixel edges, and not a line
-  /// with round ends and smoothed edges
+  /// Whether its sides go on the nearest pixel edges.
+  ///
+  /// A shape with it set is a rectangle. One without is a line with round ends and smoothed
+  /// edges.
   pub snap: bool,
 }
 
-/// shapes to draw, in the order they were added, the later over the earlier. their places
-/// are in the panel's points, from its top left
+/// A list of shapes to draw.
+///
+/// The shapes are drawn in the order they were added, the later over the earlier. Their
+/// places are in the panel's points, from its top left.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Flat {
   shapes: Vec<Shape>,
 }
 
 impl Flat {
-  /// the shapes, first drawn first
+  /// Returns the shapes, first drawn first.
   pub fn shapes(&self) -> &[Shape] {
     &self.shapes
   }
 
-  /// a filled rectangle between two corners. its sides are drawn on pixel edges, so they
-  /// are sharp whatever the scale
+  /// Adds a filled rectangle between two corners.
+  ///
+  /// Its sides are drawn on pixel edges, so they are sharp whatever the scale.
   pub fn rect(&mut self, min: Point, max: Point, color: Color) {
     self.shapes.push(Shape {
       middle: [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0],
@@ -50,8 +60,10 @@ impl Flat {
     });
   }
 
-  /// a line `weight` wide from one point to another, with round ends half its width past
-  /// them. its edges are smoothed, whichever way it runs
+  /// Adds a line `weight` wide from one point to another.
+  ///
+  /// Its round ends reach half its width past the points. Its edges are smoothed, whichever
+  /// way it runs.
   pub fn line(&mut self, from: Point, to: Point, weight: f32, color: Color) {
     let reach = [to[0] - from[0], to[1] - from[1]];
     let length = (reach[0] * reach[0] + reach[1] * reach[1]).sqrt();
@@ -71,15 +83,19 @@ impl Flat {
     });
   }
 
-  /// lettering in the face of [`crate::stroke`], with the top left of its first letter at
-  /// `from`: letters `height` tall with strokes `weight` wide
+  /// Adds lettering with the top left of its first letter at `from`.
+  ///
+  /// The lettering is in the face of [`stroke`], with letters `height` tall and strokes
+  /// `weight` wide.
   pub fn legend(&mut self, text: &str, from: Point, height: f32, weight: f32, color: Color) {
     let corner = stroke::top_left(text.chars().count(), height);
     let middle = [from[0] - corner[0], from[1] - corner[1]];
     self.centered(text, middle, height, weight, color);
   }
 
-  /// the same lettering with the middle of it all at `middle`
+  /// Adds lettering with the middle of it all at `middle`.
+  ///
+  /// The lettering is the same as that of [`Flat::legend`].
   pub fn centered(&mut self, text: &str, middle: Point, height: f32, weight: f32, color: Color) {
     for [start, end] in stroke::lines(text, height) {
       self.line(
@@ -91,9 +107,11 @@ impl Flat {
     }
   }
 
-  /// a value being typed, as lettering in `ink` with its middle at `middle`: what is
-  /// selected on a block of `selected`, two points taller than the letters at either end,
-  /// and the caret as a line one point wide
+  /// Adds a value being typed, with its middle at `middle`.
+  ///
+  /// The text of the [`Edit`] is lettering in `ink`. What is selected lies on a block of
+  /// `selected`, two points taller than the letters at either end, and the caret is a line one
+  /// point wide.
   pub fn typed(
     &mut self,
     edit: &Edit,

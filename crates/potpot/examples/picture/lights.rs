@@ -1,4 +1,4 @@
-//! lit buttons, push switches and level meters
+//! Lit buttons, push switches and level meters.
 
 use std::f32::consts::FRAC_PI_2;
 use std::sync::Arc;
@@ -10,8 +10,10 @@ use potpot_controls::interaction::Push;
 
 use crate::{SEAT, SIZE, framed, screws};
 
-/// rubber buttons, some of them lit, and level meters at a few levels, on a dark panel
-/// under a dimmed light so that what glows shows
+/// Returns rubber buttons and level meters on a dark panel.
+///
+/// Some of the buttons are lit and the meters stand at a few levels. The light is dimmed so
+/// that what glows shows.
 pub(super) fn lights(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let rubber = Material::silicone(Vec3::new(0.62, 0.62, 0.60));
@@ -52,8 +54,6 @@ pub(super) fn lights(look: Look) -> Scene {
   let mut lamps = Vec::new();
   let seat = Material::matte(SEAT);
 
-  // each button with the meshes of its body and its seat, where it is, how far it is lit
-  // and in which color, and how far it is held down
   let mut button = |shape: Button,
                     [body, gap]: &[Arc<potpot::Mesh>; 2],
                     x: f32,
@@ -134,7 +134,8 @@ pub(super) fn lights(look: Look) -> Scene {
     );
   }
 
-  // push switches: out, latched in and lit, and held all the way in, square and then round
+  // push switches out, latched in and held all the way in: square ones that light when
+  // on, then round black ones
   let black = Material::glossy(Vec3::new(0.05, 0.05, 0.055));
   let collar = Material::chrome(Vec3::splat(0.7));
   let switches = [

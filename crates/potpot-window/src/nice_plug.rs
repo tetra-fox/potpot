@@ -1,6 +1,7 @@
-//! the window as a nice-plug editor: the wrapper's calls turned into the window's, sizes
-//! passed to and from the host in the units the host has them in, and the panel's parameters
-//! bound to the plugin's
+//! The window as a nice-plug editor.
+//!
+//! The wrapper's calls are turned into the window's, sizes pass to and from the host in the
+//! units the host has them in, and the panel's parameters are bound to the plugin's.
 
 use std::error::Error;
 use std::fmt;
@@ -19,23 +20,26 @@ use potpot_controls::interaction::{Control, Dial, Feel, Key, Readout};
 use crate::open::{Opening, Param, Remembered, Settings, Shared, Tell, open};
 use crate::skin::{Gpu, Skin};
 
-/// one of a panel's controls bound to one of the plugin's parameters
+/// One of a panel's controls bound to one of the plugin's parameters.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct Bound {
   param: ParamPtr,
-  /// the coarse step the control moves by, in the parameter's plain units. none turns
-  /// smoothly
+  /// The coarse step the control moves by, in the parameter's plain units.
+  ///
+  /// With `None` the control turns smoothly.
   pub step: Option<f32>,
-  /// how the control answers the pointer and the wheel
+  /// The way the control answers the pointer and the wheel.
   pub feel: Feel,
-  /// what the control's readout can show of a value typed into it
+  /// The letters the control's readout can show of a value typed into it.
   pub readout: Readout,
 }
 
 impl Bound {
-  /// a control on `param`, which has to be one of the parameters the editor is made with.
-  /// it turns smoothly and feels as [`Feel::default`] does
+  /// Creates a control on `param`.
+  ///
+  /// `param` has to be one of the parameters the editor is made with. The control turns
+  /// smoothly and feels as [`Feel::default`] does.
   pub fn new(param: &impl nice_plug::params::Param, readout: Readout) -> Self {
     Self {
       param: param.as_ptr(),
@@ -46,26 +50,27 @@ impl Bound {
   }
 }
 
-/// a parameter together with the object it is part of, which is what makes it safe to reach.
+/// A parameter together with the object it is part of.
 ///
-/// the pointer is into `_params`: [`Editor::new`] lets nothing else be bound. `_params` is
-/// held here, so the parameter is alive for as long as this is, wherever this has been handed on
-/// to: the window's thread, a closure still waiting to be called, a clone of one
+/// Holding the object is what makes the parameter safe to reach. The pointer is into
+/// `_params`: [`Editor::new`] lets nothing else be bound. `_params` is held here, so the
+/// parameter is alive for as long as this is, wherever this has been handed on to: the
+/// window's thread, a closure still waiting to be called, a clone of one.
 #[derive(Clone)]
 struct Held {
-  /// never read: it is what keeps `param` alive
+  /// The object that keeps `param` alive, which is never read.
   _params: Arc<dyn Params>,
   param: ParamPtr,
 }
 
 impl Held {
-  /// where the parameter stands, without what the host adds to it
+  /// Returns where the parameter stands, without what the host adds to it.
   fn value(&self) -> f32 {
     // SAFETY: `param` points into `_params`, which `self` keeps alive
     unsafe { self.param.unmodulated_normalized_value() }
   }
 
-  /// what there is to know of it for a control that moves by `step`
+  /// Returns the parameter's [`Dial`] for a control that moves by `step`.
   fn dial(&self, step: Option<f32>) -> Dial {
     let (plain, turn, write, read) = (self.clone(), self.clone(), self.clone(), self.clone());
     let mut dial = Dial::new(
@@ -87,7 +92,9 @@ impl Held {
     dial
   }
 
-  /// the parameter as the window has it, with its ways to the host through `gui`
+  /// Returns the parameter as the window has it.
+  ///
+  /// Its ways to the host go through `gui`.
   fn bound(&self, step: Option<f32>, gui: &GuiContext) -> Param {
     let (value, begin, set, end) = (self.clone(), self.clone(), self.clone(), self.clone());
     let (began, sets, ended) = (gui.clone(), gui.clone(), gui.clone());
@@ -105,11 +112,11 @@ impl Held {
   }
 }
 
-/// the panel's parameters are not all the plugin's own
+/// The error of a panel bound to a parameter outside the plugin's own.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct NotOurs {
-  /// the place among the panel's of the first that is not
+  /// The index among the panel's controls of the first one bound outside.
   pub control: usize,
 }
 
@@ -118,14 +125,54 @@ impl fmt::Display for NotOurs {
     let Self { control } = self;
     write!(
       f,
-      "control {control} of the panel is bound to a parameter that is not the plugin's"
+      "control {control} of the panel is bound to a parameter outside the plugin's own"
     )
   }
 }
 
 impl Error for NotOurs {}
 
-/// a panel as a nice-plug editor, drawn by the skin `S`
+/// A panel as a nice-plug editor, drawn by the skin `S`.
+///
+/// # Examples
+///
+/// ```
+/// # use potpot_window::controls::flat::Flat;
+/// # use potpot_window::controls::interaction::Target;
+/// # use potpot_window::{Gpu, Skin, View, wgpu};
+/// # struct Bar;
+/// # impl Skin for Bar {
+/// #   fn prepare(&mut self, _: &Gpu, _: &View, _: &mut Flat) {}
+/// #   fn draw(&self, _: &mut wgpu::CommandEncoder, _: &wgpu::TextureView, _: [u32; 4]) {}
+/// #   fn target_at(&self, _: [f32; 2]) -> Option<Target> {
+/// #     None
+/// #   }
+/// # }
+/// use std::sync::Arc;
+///
+/// use nice_plug::prelude::{FloatParam, FloatRange, Params};
+/// use potpot_window::controls::interaction::Readout;
+/// use potpot_window::nice_plug::{Bound, Editor};
+/// use potpot_window::{Remembered, Settings};
+///
+/// #[derive(Params)]
+/// struct Gain {
+///   #[id = "gain"]
+///   gain: FloatParam,
+/// }
+///
+/// let params = Arc::new(Gain {
+///   gain: FloatParam::new("Gain", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
+/// });
+/// let editor = Editor::new(
+///   params.clone(),
+///   Settings::new("Gain", [200.0, 100.0]),
+///   vec![Bound::new(&params.gain, Readout::new(4))],
+///   Remembered::new(1.0),
+///   |_| Bar,
+/// )?;
+/// # Ok::<(), potpot_window::nice_plug::NotOurs>(())
+/// ```
 pub struct Editor<S> {
   params: Arc<dyn Params>,
   settings: Settings,
@@ -145,9 +192,14 @@ impl<S> fmt::Debug for Editor<S> {
 }
 
 impl<S: Skin> Editor<S> {
-  /// an editor for a panel whose controls are bound, in the panel's order, to parameters of
-  /// `params`. `skin` makes the panel's look each time the editor is opened. fails if a
-  /// control is bound to a parameter that is not one of `params`' own
+  /// Creates an editor for a panel bound to `params`.
+  ///
+  /// `bound` binds the panel's controls, in the panel's order, to parameters of `params`.
+  /// `skin` makes the panel's look each time the editor is opened.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if a control is bound to a parameter outside `params`' own.
   pub fn new(
     params: Arc<dyn Params>,
     settings: Settings,
@@ -172,8 +224,9 @@ impl<S: Skin> Editor<S> {
   }
 }
 
-/// how many of the host's units go to a point. sizes pass to and from the host in pixels,
-/// apart from on macos, where they are in points
+/// Returns how many of the host's units go to a point.
+///
+/// Sizes pass to and from the host in pixels, apart from on macOS, where they are in points.
 fn per_point(display_scale: f64) -> f64 {
   if cfg!(target_os = "macos") {
     1.0
@@ -182,7 +235,7 @@ fn per_point(display_scale: f64) -> f64 {
   }
 }
 
-/// the size the host is told the editor has, in the host's units
+/// Returns the size the host is told the editor has, in the host's units.
 fn reported(settings: &Settings, remembered: &Remembered, shared: &Shared) -> NativeSize<u32> {
   let size = settings.sized((remembered.get)());
   NativeSize::from_size(size.into(), shared.display_scale())
@@ -252,8 +305,10 @@ impl<S: Skin> nice_plug::editor::Editor for Editor<S> {
     reported(&self.settings, &self.remembered, &self.shared)
   }
 
-  /// the window may be sized at the panel's own shape, from the smallest to the largest it
-  /// is drawn at
+  /// Returns the sizes the window may take.
+  ///
+  /// The window may be sized at the panel's own shape, from the smallest to the largest it
+  /// is drawn at.
   fn resize_hint(&self) -> ResizeHint {
     let Settings { size, scales, .. } = &self.settings;
     ResizeHint {
@@ -268,7 +323,7 @@ impl<S: Skin> nice_plug::editor::Editor for Editor<S> {
   }
 }
 
-/// the host's side of an open window
+/// The host's side of an open window.
 #[derive(Debug)]
 pub struct Handle {
   tell: Tell,
@@ -311,7 +366,7 @@ impl EditorHandle for Handle {
     window: &baseview::Window,
   ) -> Result<(), baseview::Error> {
     // a size the host comes up with is the user's doing, at the host's own frame, and is
-    // what the editor opens at from then on. the window's settling as it opens is not
+    // what the editor opens at from then on. the window's settling as it opens is left out
     let told = reported(&self.settings, &self.remembered, &self.shared);
     let (given, told) = ([new_size.width, new_size.height], [told.width, told.height]);
     let per_point = per_point(window.size().scale_factor);
@@ -403,7 +458,7 @@ impl EditorHandle for Handle {
   }
 }
 
-/// baseview's host callbacks from the ones nice-plug hands an editor
+/// The host callbacks nice-plug hands an editor, as baseview's.
 struct HostCallbacks(Box<dyn nice_plug::editor::HostCallbacks>);
 
 impl baseview::host::HostCallbacks for HostCallbacks {
@@ -454,7 +509,7 @@ mod tests {
     }
   }
 
-  /// a skin that draws nothing
+  /// A skin that draws nothing.
   struct Blank;
 
   impl Skin for Blank {
@@ -493,7 +548,8 @@ mod tests {
       Bound::new(&ours.first, Readout::new(4)),
       Bound::new(&theirs.second, Readout::new(4)),
     ];
-    let refused = editor(Arc::clone(&ours), other).expect_err("a parameter of another's");
+    let refused =
+      editor(Arc::clone(&ours), other).expect_err("a parameter of another plugin is refused");
     assert_eq!(refused.control, 1);
   }
 

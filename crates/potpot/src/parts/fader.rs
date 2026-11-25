@@ -1,53 +1,61 @@
-//! fader caps and the slot they run in
+//! Fader caps and the slot they run in.
 
 use glam::{Mat4, Vec2, Vec3};
 
 use super::{CREASE, PAINT};
 use crate::mesh::Mesh;
 
-/// a fader's cap, described by its parts. it stands with its middle on the origin and slides
-/// along y, and its stripe runs across it
+/// A fader's cap, described by its parts.
+///
+/// The cap stands with its middle on the origin and slides along y, and its stripe runs across it.
 #[derive(Clone, Copy, Debug)]
 pub struct Fader {
-  /// how wide the cap is, across the way it slides
+  /// The cap's width across the way it slides, in points.
   pub width: f32,
-  /// how long it is, along the way it slides
+  /// The cap's length along the way it slides, in points.
   pub length: f32,
-  /// how high it stands at its highest, along z
+  /// The height of its highest point along z, in points.
   pub height: f32,
-  /// its shape from the side
+  /// The cap's shape from the side.
   pub cap: Cap,
-  /// how much narrower the cap is at its top than at its foot, as a share of its width
+  /// The cap's narrowing from foot to top, as a share of its width.
   pub taper: f32,
 }
 
-/// the shape of a fader's cap, seen from its side
+/// The shape of a fader's cap, seen from its side.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Cap {
-  /// hollowed along its length for a fingertip, the mixing console's cap. with `terraces`
-  /// the hollow is cut in that many flat steps down each side instead of one curve
+  /// A cap hollowed along its length for a fingertip.
+  ///
+  /// A mixing console has this cap. With `terraces` above zero the hollow is cut in that many flat
+  /// steps down each side.
   Saddle {
-    /// how many steps down each side, or zero for one curve
+    /// The count of steps down each side, or zero for one curve.
     terraces: u32,
   },
-  /// a block with slanted ends and a flat top, the dj mixer's cap, which is made much wider
-  /// across than it is long
+  /// A block with slanted ends and a flat top.
+  ///
+  /// A DJ mixer has this cap, which is made much wider across than it is long.
   Block,
-  /// round over the top like half a barrel
+  /// A cap round over the top like half a barrel.
   Barrel,
-  /// a low flat body with one fin standing across its middle, a synthesizer slider's cap
+  /// A low flat body with one fin standing across its middle.
+  ///
+  /// A synthesizer's slider has this cap.
   Fin,
-  /// flat steps rising to the middle
+  /// Flat steps rising to the middle.
   Stepped {
-    /// how many of them there are to each side of the middle
+    /// The count of steps to each side of the middle.
     steps: u32,
   },
-  /// a ramp rising in a hollow curve from the front to a tall back, to push with a thumb
+  /// A ramp rising in a hollow curve from the front to a tall back.
+  ///
+  /// A thumb pushes it.
   Wedge,
 }
 
 impl Fader {
-  /// the wide hollow cap of a mixing console
+  /// Creates the wide hollow cap of a mixing console.
   pub fn console(width: f32, length: f32, height: f32) -> Self {
     Self {
       width,
@@ -58,7 +66,7 @@ impl Fader {
     }
   }
 
-  /// a console cap whose hollow is cut in steps
+  /// Creates a console cap whose hollow is cut in steps.
   pub fn terraced(width: f32, length: f32, height: f32) -> Self {
     Self {
       cap: Cap::Saddle { terraces: 5 },
@@ -66,7 +74,9 @@ impl Fader {
     }
   }
 
-  /// the slanted block of a dj mixer, to be made about twice as wide as it is long
+  /// Creates the slanted block of a DJ mixer.
+  ///
+  /// The cap is to be made about twice as wide as it is long.
   pub fn block(width: f32, length: f32, height: f32) -> Self {
     Self {
       cap: Cap::Block,
@@ -75,7 +85,7 @@ impl Fader {
     }
   }
 
-  /// a round-topped cap
+  /// Creates a round-topped cap.
   pub fn barrel(width: f32, length: f32, height: f32) -> Self {
     Self {
       cap: Cap::Barrel,
@@ -84,7 +94,7 @@ impl Fader {
     }
   }
 
-  /// a low cap with a fin, like a synthesizer's sliders
+  /// Creates a low cap with a fin, like a synthesizer's sliders.
   pub fn fin(width: f32, length: f32, height: f32) -> Self {
     Self {
       cap: Cap::Fin,
@@ -93,7 +103,7 @@ impl Fader {
     }
   }
 
-  /// a cap of steps up to its middle
+  /// Creates a cap of steps up to its middle.
   pub fn stepped(width: f32, length: f32, height: f32) -> Self {
     Self {
       cap: Cap::Stepped { steps: 3 },
@@ -102,7 +112,7 @@ impl Fader {
     }
   }
 
-  /// a thumb ramp
+  /// Creates a thumb ramp.
   pub fn wedge(width: f32, length: f32, height: f32) -> Self {
     Self {
       cap: Cap::Wedge,
@@ -110,7 +120,9 @@ impl Fader {
     }
   }
 
-  /// the cap from its side, front to back: how far along and how high
+  /// Returns the cap from its side, front to back.
+  ///
+  /// Each point is how far along and how high.
   fn outline(&self) -> Vec<Vec2> {
     let (half, tall) = (self.length / 2.0, self.height);
     // a small cut across the corner at each end of a top that has no steps, so that it is
@@ -217,12 +229,12 @@ impl Fader {
     }
   }
 
-  /// half the cap's width at a height
+  /// Returns half the cap's width at a height.
   fn half_width(&self, height: f32) -> f32 {
     self.width / 2.0 * (1.0 - self.taper * (height / self.height).clamp(0.0, 1.0))
   }
 
-  /// how high the cap's top is at a place along it from its middle
+  /// Returns the height of the cap's top `along` from its middle.
   fn top_at(&self, along: f32) -> f32 {
     let outline = self.outline();
     (outline.windows(2))
@@ -232,13 +244,14 @@ impl Fader {
       })
   }
 
-  /// the cap itself, without its stripe
+  /// Returns the mesh of the cap itself, without its stripe.
   pub fn body(&self) -> Mesh {
     Mesh::extruded(&self.outline(), |height| self.half_width(height), CREASE)
   }
 
-  /// the stripe painted across the cap's middle, over the top and down both sides, sloped
-  /// the way the top is under it
+  /// Returns the stripe painted across the cap's middle.
+  ///
+  /// The stripe runs over the top and down both sides, sloped the way the top is under it.
   pub fn line(&self) -> Mesh {
     let half_stripe = (self.length * 0.035).max(0.8);
     let (front, back) = (self.top_at(-half_stripe), self.top_at(half_stripe));
@@ -275,14 +288,18 @@ impl Fader {
   }
 }
 
-/// where a fader's cap sits: on a track `travel` long centered on (x, y), at `value` of the
-/// way from its bottom end, down the panel, to its top
+/// Returns the transform of a fader's cap on its track.
+///
+/// The track is `travel` long and centered on (`x`, `y`). The cap sits at `value` of the way from
+/// the track's bottom end, down the panel, to its top.
 pub fn fader_transform(x: f32, y: f32, travel: f32, value: f32) -> Mat4 {
   Mat4::from_translation(Vec3::new(x, y + travel * (0.5 - value), 0.0))
 }
 
-/// the slot a fader runs in, as a dark strip lying on the panel: `travel` long between the
-/// ends the cap's middle reaches, and `width` wide, with round ends
+/// Returns the slot a fader runs in, as a dark strip.
+///
+/// The strip lies on the panel, `travel` long between the ends the cap's middle reaches and `width`
+/// wide, with round ends.
 pub fn fader_slot(travel: f32, width: f32) -> Mesh {
   let half = width / 2.0;
   let strip = Mesh::cuboid(
@@ -323,7 +340,7 @@ mod tests {
         // a riser's two ends are the same place worked out twice, so not to the last bit
         assert!(
           span[1].x >= span[0].x - 1e-4,
-          "{fader:?} turns around at {}",
+          "{fader:?} runs front to back at {}",
           span[1]
         );
       }

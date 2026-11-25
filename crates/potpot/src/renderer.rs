@@ -1,6 +1,8 @@
-//! draws a [`Scene`] with wgpu: a few maps, the lit picture at its own resolution, and that
-//! picture stretched into place on a target. the picture is kept, and drawn again only for a
-//! scene that differs from the one it shows
+//! The drawing of a [`Scene`] with `wgpu`.
+//!
+//! A scene is drawn as a few maps, then the lit picture at its own resolution, then that picture
+//! stretched into place on a target. The picture is kept, and drawn again only for a scene that
+//! differs from the one it shows.
 
 mod picture;
 mod pipelines;
@@ -18,70 +20,110 @@ use self::uniforms::{Globals, Placed, Present};
 use crate::mesh::Mesh;
 use crate::scene::{Object, Scene};
 
-/// the shadow map's width and height
+/// The shadow map's width and height in texels.
 const SHADOW_SIZE: u32 = 2048;
-/// the width and height of the map of how high everything on the panel is
+/// The height map's width and height in texels.
+///
+/// The map holds how high everything on the panel is.
 const HEIGHT_SIZE: u32 = 1024;
-/// the width and height of the map of the light that comes off everything on the panel.
-/// small, since a point catches that light from a few of its texels around it and so from
-/// further off the larger they are
+/// The bounce map's width and height in texels.
+///
+/// The map holds the light that comes off everything on the panel. It is small, since a point
+/// catches that light from a few of its texels around it and so from further off the larger
+/// they are.
 const BOUNCE_SIZE: u32 = 64;
 
-/// a rectangle of a target, in its pixels
+/// A rectangle of a target, in the target's pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Place {
-  /// how far its left edge is from the target's
+  /// The distance from the target's left edge to the rectangle's.
   pub x: f32,
-  /// how far down its top edge is from the target's
+  /// The distance down from the target's top edge to the rectangle's.
   pub y: f32,
-  /// how far across it reaches
+  /// The rectangle's width.
   pub width: f32,
-  /// how far down it reaches
+  /// The rectangle's height.
   pub height: f32,
 }
 
-/// everything on the gpu that drawing scenes takes. [`Renderer::prepare`] draws a scene's
-/// picture and [`Renderer::render`] puts the last one drawn on a target
+/// Everything on the GPU that drawing scenes takes.
+///
+/// [`Renderer::prepare`] draws a scene's picture and [`Renderer::render`] puts the last one
+/// drawn on a target.
+///
+/// # Examples
+///
+/// ```no_run
+/// use potpot::{Place, Renderer, Scene, wgpu};
+///
+/// fn draw(
+///   device: &wgpu::Device,
+///   queue: &wgpu::Queue,
+///   target: &wgpu::TextureView,
+///   scene: &Scene,
+/// ) {
+///   let mut renderer = Renderer::new(device, wgpu::TextureFormat::Bgra8UnormSrgb);
+///   renderer.prepare(device, queue, scene, [800, 400]);
+///
+///   let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+///   let place = Place {
+///     x: 0.0,
+///     y: 0.0,
+///     width: 800.0,
+///     height: 400.0,
+///   };
+///   renderer.render(&mut encoder, target, place, [0, 0, 800, 400]);
+///   queue.submit([encoder.finish()]);
+/// }
+/// ```
 #[derive(Debug)]
 pub struct Renderer {
   pipelines: Pipelines,
   globals: wgpu::Buffer,
   globals_group: wgpu::BindGroup,
   shadow_map: wgpu::TextureView,
-  /// how high everything on the panel is, seen from straight above
+  /// The height of everything on the panel, seen from straight above.
   height_map: wgpu::TextureView,
-  /// the shadow map alone, for the bounce pass to read
+  /// The shadow map alone, for the bounce pass to read.
   shadow_group: wgpu::BindGroup,
-  /// the light that comes off everything on the panel, seen from straight above: what the
-  /// bounce pass draws into, its depth, and what that is resolved into to be read
+  /// The texture the bounce pass draws into.
+  ///
+  /// The pass draws the light that comes off everything on the panel, seen from straight above.
   bounce_samples: wgpu::TextureView,
   bounce_depth: wgpu::TextureView,
+  /// The texture the bounce pass is resolved into to be read.
   bounce_map: wgpu::TextureView,
-  /// every map, for the scene pass to read
+  /// Every map, for the scene pass to read.
   maps_group: wgpu::BindGroup,
   present_layout: wgpu::BindGroupLayout,
   present_options: wgpu::Buffer,
-  /// whether the target encodes srgb itself
+  /// Whether the target encodes sRGB itself.
   target_encodes: bool,
-  /// the widest and tallest a texture of the device can be
+  /// The greatest width and height of a texture of the device.
   max_side: u32,
   picture: Option<Picture>,
   placed: wgpu::Buffer,
-  /// how many objects the placed buffer has room for
+  /// The number of objects the placed buffer has room for.
   placed_room: usize,
-  /// what the three buffers hold, to tell a scene that differs from the one drawn
+  /// The contents of the globals buffer.
+  ///
+  /// The held contents of the three buffers tell a scene that differs from the one drawn.
   held_globals: Globals,
+  /// The contents of the present options buffer.
   held_present: Present,
+  /// The contents of the placed buffer.
   held_placed: Vec<Placed>,
-  /// where a scene's objects are worked out to compare with what is held, kept for its room
+  /// The placed objects of a scene, worked out to compare with the held ones.
+  ///
+  /// The vector is kept for its room.
   next_placed: Vec<Placed>,
-  /// each mesh of the drawn scene, once
+  /// Each mesh of the drawn scene, once.
   meshes: Vec<Loaded>,
-  /// which of the meshes each object of the drawn scene is, in order
+  /// The place in `meshes` of the mesh of each object of the drawn scene, in order.
   draws: Vec<usize>,
 }
 
-/// a mesh on the gpu, and the allocation it came from
+/// A mesh on the GPU, and the allocation it came from.
 #[derive(Debug)]
 struct Loaded {
   from: Arc<Mesh>,
@@ -91,7 +133,9 @@ struct Loaded {
 }
 
 impl Renderer {
-  /// `target` is the format of the textures [`Renderer::render`] will draw onto
+  /// Creates a renderer for targets of one format.
+  ///
+  /// `target` is the format of the textures [`Renderer::render`] draws onto.
   pub fn new(device: &wgpu::Device, target: wgpu::TextureFormat) -> Self {
     let layouts = Layouts::new(device);
     let pipelines = Pipelines::new(device, &layouts, target);
@@ -201,9 +245,10 @@ impl Renderer {
     }
   }
 
-  /// draws the picture of a scene to go over `size` pixels of a target, unless it is the
-  /// picture already drawn: a scene that is in every part the one prepared last costs no
-  /// drawing
+  /// Draws the picture of a scene to go over `size` pixels of a target.
+  ///
+  /// A scene that is in every part the one prepared last has its picture already, and costs no
+  /// drawing.
   pub fn prepare(
     &mut self,
     device: &wgpu::Device,
@@ -267,8 +312,9 @@ impl Renderer {
     self.picture = Some(picture);
   }
 
-  /// puts every mesh the objects use on the gpu once, keeping the ones that are there
-  /// already and dropping the rest
+  /// Puts every mesh the objects use on the GPU once.
+  ///
+  /// The meshes that are there already are kept, and those no object uses are dropped.
   fn load(&mut self, device: &wgpu::Device, objects: &[Object]) {
     let mut before = std::mem::take(&mut self.meshes);
     let found = |meshes: &[Loaded], mesh: &Arc<Mesh>| {
@@ -288,8 +334,9 @@ impl Renderer {
     }
   }
 
-  /// the shadow map, the height map, the bounce map if light bounces, and then the lit
-  /// scene into the picture
+  /// Draws the maps and then the lit scene into the picture.
+  ///
+  /// The maps are the shadow map, the height map, and the bounce map if light bounces.
   fn draw_picture(&self, device: &wgpu::Device, queue: &wgpu::Queue, picture: &Picture) {
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
       label: Some("potpot picture"),
@@ -360,10 +407,11 @@ impl Renderer {
     queue.submit([encoder.finish()]);
   }
 
-  /// stretches the picture last drawn over `place` on the target, leaving everything outside
-  /// `clip` as it was. both are in the target's pixels, `clip` as x, y, width and height,
-  /// and `clip` has to lie on the target. before any scene is prepared there is no picture
-  /// and nothing is drawn
+  /// Stretches the picture last drawn over `place` on the target.
+  ///
+  /// Everything outside `clip` stays as it was. Both are in the target's pixels, `clip` as x, y,
+  /// width and height, and `clip` has to lie on the target. Before any scene is prepared there
+  /// is no picture and nothing is drawn.
   pub fn render(
     &self,
     encoder: &mut wgpu::CommandEncoder,
@@ -438,7 +486,9 @@ impl Loaded {
   }
 }
 
-/// a square texture that a pass draws into, with whatever else is done with it
+/// Creates a square texture that a pass draws into.
+///
+/// `also` is the texture's other usage.
 fn map(
   device: &wgpu::Device,
   label: &str,

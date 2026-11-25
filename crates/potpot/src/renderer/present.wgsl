@@ -3,7 +3,7 @@
 
 struct Present {
   // x the steps each channel is cut to if two or more, y one when the target encodes srgb
-  // itself, z how much the bright parts spill over, w how much the corners darken
+  // itself, z how much what lights itself spills over, w how much the corners darken
   options: vec4<f32>,
   // x how far the picture is blurred
   more: vec4<f32>,

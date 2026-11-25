@@ -1,4 +1,4 @@
-//! a whole soft synth's front
+//! A whole soft synth's front.
 
 use std::sync::Arc;
 
@@ -8,7 +8,9 @@ use potpot::{Light, Look, Material, Object, Scene};
 
 use crate::{SEAT, SIZE, framed, lettering};
 
-/// a panel being put together: what stands where, and what is lit
+/// A panel being put together.
+///
+/// It holds what stands where and what is lit.
 #[derive(Default)]
 struct Build {
   objects: Vec<Object>,
@@ -16,7 +18,7 @@ struct Build {
 }
 
 impl Build {
-  /// a mesh that is placed as often as wanted
+  /// Adds a mesh that is placed as often as wanted.
   fn place(&mut self, mesh: &Arc<potpot::Mesh>, transform: Mat4, material: Material) {
     self.objects.push(Object {
       mesh: Arc::clone(mesh),
@@ -25,20 +27,25 @@ impl Build {
     });
   }
 
-  /// a mesh that goes in one place only
+  /// Adds a mesh that goes in one place only.
   fn put(&mut self, mesh: potpot::Mesh, transform: Mat4, material: Material) {
     self.place(&Arc::new(mesh), transform, material);
   }
 
-  /// lettering centered on a point at a height off the panel
+  /// Adds lettering centered on a point at a height off the panel.
   fn letters(&mut self, text: &str, at: Vec3, tall: f32, material: Material) {
     self.put(lettering(text, tall), Mat4::from_translation(at), material);
   }
 }
 
-/// a soft synth's front in the manner of the mid 2000s: a saturated plastic panel in a rim
-/// with raised and titled sections, soft-touch knobs in dashed rings seen from in front,
-/// small round lights, a lit screen, lettering everywhere, and a wide soft light on it all
+/// Returns a soft synth's front in the manner of the mid 2000s.
+///
+/// - a saturated plastic panel in a rim, with raised and titled sections
+/// - soft-touch knobs in dashed rings, seen from in front
+/// - small round lights
+/// - a lit screen
+/// - lettering everywhere
+/// - a wide soft light on it all
 pub(super) fn synth(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let blue = Vec3::new(0.13, 0.4, 0.74);
@@ -249,7 +256,7 @@ pub(super) fn synth(look: Look) -> Scene {
   let glow = Material::matte(shown).lit(shown, 0.6, 0.0);
   let dim = Material::matte(shown * 0.5).lit(shown * 0.6, 0.3, 0.0);
   let on_glass = 6.1;
-  // a row of tabs, two rows of settings, a grid of steps, and the patch's name in large
+  // a row of tabs, three rows of settings, a grid of steps, and the patch's name in large
   for (tab, name) in ["ARP", "MOD", "LIB", "SYS"].into_iter().enumerate() {
     let x = middle - 102.0 + 68.0 * tab as f32;
     let shade = if tab == 0 { glow } else { dim };

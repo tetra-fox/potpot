@@ -1,21 +1,25 @@
-//! the textures the scene is drawn into before it is stretched onto the target
+//! The textures the scene is drawn into before it is stretched onto the target.
 
 use super::pipelines::{DEPTH, PICTURE, SAMPLES};
 
-/// the picture's textures at one size
+/// The picture's textures at one size.
 #[derive(Debug)]
 pub(super) struct Picture {
   size: [u32; 2],
-  /// what the scene is drawn into when edges are smoothed, to be resolved into `color`
+  /// The texture the scene is drawn into when edges are smoothed.
+  ///
+  /// It is resolved into `color`.
   pub(super) smoothed: Option<wgpu::TextureView>,
   pub(super) color: wgpu::TextureView,
   pub(super) depth: wgpu::TextureView,
-  /// the color with its sampler and the present options, for the present pass to read
+  /// The color with its sampler and the present options, for the present pass to read.
   pub(super) group: wgpu::BindGroup,
 }
 
 impl Picture {
-  /// `layout` is the present layout, and `options` the buffer its third binding reads
+  /// Creates the textures of a picture.
+  ///
+  /// `layout` is the present layout, and `options` the buffer its third binding reads.
   pub(super) fn new(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
@@ -96,7 +100,7 @@ impl Picture {
     }
   }
 
-  /// whether this is the picture a frame of this size and smoothing draws into
+  /// Returns whether a frame of this size and smoothing draws into this picture.
   pub(super) fn fits(&self, size: [u32; 2], smooth: bool) -> bool {
     self.size == size && self.smoothed.is_some() == smooth
   }

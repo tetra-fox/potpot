@@ -1,62 +1,67 @@
-//! the outline of a knob's side
+//! The outline of a knob's side.
 
 use std::f32::consts::{FRAC_PI_2, PI};
 
-/// the side of a knob, where fingers hold it
+/// The side of a knob, where fingers hold it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Grip {
-  /// round and plain
+  /// A round and plain side.
   Smooth,
-  /// this many flat sides
+  /// A side of this many flat faces.
   Faceted(u32),
-  /// this many round-bottomed scoops down the side, each `depth` of the radius deep
+  /// Round-bottomed scoops down the side.
   Fluted {
-    /// how many scoops
+    /// The count of scoops.
     flutes: u32,
-    /// how deep each is, as a share of the radius
+    /// The depth of each scoop, as a share of the radius.
     depth: f32,
   },
-  /// this many fine sharp ridges
+  /// A side of this many fine sharp ridges.
   Knurled(u32),
-  /// this many round ribs with round grooves between them, each `depth` of the radius deep
+  /// Round ribs with round grooves between them.
   Ribbed {
-    /// how many ribs
+    /// The count of ribs.
     ribs: u32,
-    /// how deep the grooves are, as a share of the radius
+    /// The depth of the grooves, as a share of the radius.
     depth: f32,
   },
-  /// drawn out to a point on the side it points at, `reach` of the radius further than the
-  /// rest, like a chicken head knob
+  /// A side drawn out to a point where the knob points.
+  ///
+  /// A chicken head knob has this side.
   Pointed {
-    /// how much further out the point is, as a share of the radius
+    /// The point's reach past the body, as a share of the radius.
     reach: f32,
   },
-  /// a handle standing across the whole knob like a stove dial's, `width` of the radius
-  /// wide, with round ends
+  /// A handle standing across the whole knob, with round ends.
+  ///
+  /// A stove dial has such a handle.
   Bar {
-    /// how wide the handle is, as a share of the radius
+    /// The handle's width, as a share of the radius.
     width: f32,
   },
-  /// a round body with one long handle out to the side it points at, for turning with a
-  /// foot. the body is `body` of the radius and the handle `width` of it wide
+  /// A round body with one long handle out to where the knob points.
+  ///
+  /// A foot turns it by the handle.
   Lever {
-    /// how wide the handle is, as a share of the radius
+    /// The handle's width, as a share of the radius.
     width: f32,
-    /// how far out the body reaches, as a share of the radius
+    /// The body's reach, as a share of the radius.
     body: f32,
   },
-  /// a tall blade that narrows from `width` of the radius at its foot to a thin crest, with
-  /// a long nose sloping down to a point on the side it points at and a short round tail,
-  /// standing on a small round base
+  /// A tall blade standing on a small round base.
+  ///
+  /// The blade narrows from its foot to a thin crest. It has a long nose sloping down to a point on
+  /// the side the knob points at, and a short round tail.
   Ridge {
-    /// how wide the blade is at its foot, as a share of the radius
+    /// The blade's width at its foot, as a share of the radius.
     width: f32,
   },
 }
 
-/// how far out a blade's outline reaches at `angle` from its nose: straight edges running
-/// in to a point `nose` ahead, a round back `tail` behind, and `half` wide to each side of
-/// the center
+/// Returns how far out a blade's outline reaches at an angle.
+///
+/// `angle` is measured from the blade's nose. The outline has straight edges running in to a point
+/// `nose` ahead and a round back `tail` behind, and is `half` wide to each side of the center.
 fn blade_at(angle: f32, nose: f32, tail: f32, half: f32) -> f32 {
   let (across, along) = (angle.sin().abs(), angle.cos());
   if along >= 0.0 {
@@ -67,8 +72,10 @@ fn blade_at(angle: f32, nose: f32, tail: f32, half: f32) -> f32 {
   }
 }
 
-/// how far out a handle reaches at `angle` from the way it runs: a strip `width` wide with
-/// round ends, from the center out to one
+/// Returns how far out a handle reaches at an angle.
+///
+/// `angle` is measured from the way the handle runs. The handle is a strip `width` wide with round
+/// ends, from the center out to one end.
 fn handle_at(angle: f32, width: f32) -> f32 {
   let half = (width / 2.0).min(1.0);
   let (across, along) = (angle.sin().abs(), angle.cos());
@@ -90,8 +97,10 @@ fn handle_at(angle: f32, width: f32) -> f32 {
 }
 
 impl Grip {
-  /// how far out the grip is at an angle, against its plain radius. `level` is how far up the
-  /// grip, from zero at its foot to one at its top, for the grips that change on the way
+  /// Returns how far out the grip is at an angle.
+  ///
+  /// The reach is measured against the grip's plain radius. `level` is how far up the grip, from
+  /// zero at its foot to one at its top, for the grips that change on the way.
   pub(super) fn at(self, angle: f32, level: f32) -> f32 {
     match self {
       Grip::Smooth | Grip::Knurled(_) => 1.0,
@@ -106,9 +115,8 @@ impl Grip {
         1.0 - depth * (0.5 - 0.5 * turned.cos())
       }
       Grip::Fluted { flutes, depth } => {
-        // a scoop takes up most of its share of the turn, and between two scoops a strip
-        // of the round side is left standing. the middle of a strip is turned to where the
-        // knob points, for its line
+        // a scoop takes under half of its share of the turn, which leaves a strip of the round
+        // side between two. a strip's middle is where the knob points, for its line
         let turned = (angle + FRAC_PI_2) * flutes as f32 + PI;
         let across = (turned.cos() - 0.2).max(0.0) / 0.8;
         1.0 - depth * (1.0 - (1.0 - across) * (1.0 - across))
@@ -127,8 +135,8 @@ impl Grip {
           1.0
         }
       }
-      // the angle from the way the knob points, which is up the panel
       Grip::Bar { width } => {
+        // the angle from the way the knob points, which is up the panel
         let from = angle + FRAC_PI_2;
         handle_at(from, width).max(handle_at(from + PI, width))
       }
@@ -148,7 +156,7 @@ impl Grip {
     }
   }
 
-  /// how many points go around a knob with this grip
+  /// Returns how many points go around a knob with this grip.
   pub(super) fn segments(self) -> u32 {
     match self {
       Grip::Faceted(sides) => sides.max(3),

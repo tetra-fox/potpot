@@ -1,4 +1,4 @@
-//! the gallery of fader caps
+//! The gallery of fader caps.
 
 use std::sync::Arc;
 
@@ -8,7 +8,9 @@ use potpot::{Look, Material, Object, Scene};
 
 use crate::{ALUMINUM, BLACK, SIZE, framed, lettering, screws};
 
-/// every fader cap in its slot, the last few a dj mixer's in its colors
+/// Returns every fader cap in its slot.
+///
+/// The last three are a DJ mixer's, in its colors.
 pub(super) fn faders(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let (white, dark) = (Vec3::splat(0.86), Vec3::splat(0.05));

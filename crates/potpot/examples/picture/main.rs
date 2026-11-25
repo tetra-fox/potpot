@@ -1,9 +1,16 @@
-//! renders a panel to a png without a window: `cargo run --example picture -- out.png`
-//! draws every knob style, and `faders`, `lights`, `lamp` or `synth` after the file's name
-//! draws every fader, lit buttons and meters, lamps beside what shows their light, or a
-//! whole soft synth's front in an old manner.
-//! after those, one number is the pixel size and a second the color steps, for the crude
-//! looks
+//! A panel rendered to a PNG file without a window.
+//!
+//! `cargo run --example picture -- out.png` draws every knob style. A name after the file's
+//! name picks the panel:
+//!
+//! - `knobs`: every knob style
+//! - `faders`: every fader
+//! - `lights`: lit buttons and meters
+//! - `lamp`: lamps beside what shows their light
+//! - `synth`: a whole soft synth's front in an old manner
+//!
+//! After those, one number is the pixel size and a second the color steps, for the crude
+//! looks.
 
 mod faders;
 mod knobs;
@@ -24,19 +31,21 @@ use crate::lights::lights;
 use crate::synth::synth;
 
 const SIZE: [u32; 2] = [1024, 640];
-/// the black of most knobs and caps
+/// The black of most knobs and caps.
 const BLACK: Vec3 = Vec3::new(0.035, 0.035, 0.04);
-/// the color of aluminum turned on a lathe
+/// The color of aluminum turned on a lathe.
 const ALUMINUM: Vec3 = Vec3::new(0.78, 0.79, 0.81);
-/// the color of the dark gap around what is set into a panel
+/// The color of the dark gap around what is set into a panel.
 const SEAT: Vec3 = Vec3::splat(0.012);
 
-/// lettering `tall` high, in strokes wide enough to show when it is small
+/// Returns lettering `tall` high.
+///
+/// Its strokes are wide enough to show when it is small.
 fn lettering(text: &str, tall: f32) -> Mesh {
   parts::legend(text, tall, (tall * 0.17).max(1.0))
 }
 
-/// a screw in each corner of the panel, each turned its own way
+/// Returns a screw for each corner, each turned its own way.
 fn screws() -> [Object; 4] {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let screw = Arc::new(parts::screw(8.0));
@@ -54,8 +63,9 @@ fn screws() -> [Object; 4] {
   })
 }
 
-/// the scene of a panel that fills the picture, seen leaning a little, under the plain
-/// light and with no lamps
+/// Returns the scene of a panel that fills the picture.
+///
+/// The panel is seen leaning a little, under the plain light and with no lamps.
 fn framed(look: Look, objects: Vec<Object>) -> Scene {
   Scene {
     size: Vec2::new(SIZE[0] as f32, SIZE[1] as f32),
@@ -78,26 +88,28 @@ fn main() {
     Some(panel) if panel == "lights" => lights,
     Some(panel) if panel == "lamp" => lamp,
     Some(panel) if panel == "synth" => synth,
-    Some(panel) => panic!("no panel called {panel}, only knobs, faders, lights, lamp and synth"),
+    Some(panel) => {
+      panic!("picture: unknown panel {panel}: expected knobs, faders, lights, lamp or synth")
+    }
   };
   let look = Look {
-    pixel_size: arguments
-      .next()
-      .map_or(1.0, |size| size.parse().expect("a pixel size")),
-    color_steps: arguments
-      .next()
-      .map_or(0, |steps| steps.parse().expect("a count of steps")),
+    pixel_size: arguments.next().map_or(1.0, |size| {
+      size.parse().expect("the pixel size is a number")
+    }),
+    color_steps: arguments.next().map_or(0, |steps| {
+      steps.parse().expect("the color steps are a whole number")
+    }),
     ..Look::default()
   };
 
   let instance = wgpu::Instance::default();
   let adapter =
     pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-      .expect("no graphics adapter");
+      .expect("a graphics adapter is found");
   eprintln!("drawing on {}", adapter.get_info().name);
   let (device, queue) =
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-      .expect("no graphics device");
+      .expect("the adapter opens a device");
 
   let format = wgpu::TextureFormat::Rgba8UnormSrgb;
   let target = device.create_texture(&wgpu::TextureDescriptor {
@@ -152,18 +164,18 @@ fn main() {
   );
   queue.submit([encoder.finish()]);
   read.slice(..).map_async(wgpu::MapMode::Read, |result| {
-    result.expect("the picture to map")
+    result.expect("the picture maps")
   });
   device
     .poll(wgpu::PollType::wait_indefinitely())
-    .expect("the device to finish");
+    .expect("the device finishes");
 
-  let file = std::fs::File::create(&path).expect("the png to open");
+  let file = std::fs::File::create(&path).expect("the png file opens");
   let mut png = png::Encoder::new(std::io::BufWriter::new(file), SIZE[0], SIZE[1]);
   png.set_color(png::ColorType::Rgba);
-  let mut writer = png.write_header().expect("the png to start");
+  let mut writer = png.write_header().expect("the png header is written");
   writer
     .write_image_data(&read.slice(..).get_mapped_range())
-    .expect("the png to write");
+    .expect("the png pixels are written");
   eprintln!("wrote {path}");
 }

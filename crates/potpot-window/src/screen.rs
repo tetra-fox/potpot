@@ -1,20 +1,24 @@
-//! puts a finished picture in the window as plain pixels, the way each system has for it
+//! The way each system puts a finished picture in the window as plain pixels.
 
 use baseview::{HandlerError, WindowContext};
 
-/// the window as something pixels can be put in
+/// The window as a place to put pixels.
 pub(super) struct Screen {
   #[cfg(target_os = "windows")]
   window: windows_sys::Win32::Foundation::HWND,
   #[cfg(not(target_os = "windows"))]
   surface: softbuffer::Surface<baseview::PlatformHandle, baseview::PlatformHandle>,
-  /// the picture last shown, which goes in the window again whenever the system wants the
-  /// window painted and nothing on the panel has changed
+  /// The picture last shown.
+  ///
+  /// It goes in the window again whenever the system wants the window painted and nothing on
+  /// the panel has changed.
   kept: Option<Kept>,
 }
 
-/// a picture of `size` pixels: its rows from the top, each `row` bytes long and starting
-/// with a pixel's blue, green, red and one more byte for every pixel across
+/// A picture of `size` pixels.
+///
+/// `pixels` holds its rows from the top. Each row is `row` bytes long and starts with four
+/// bytes for every pixel across: blue, green, red and one more.
 struct Kept {
   size: [u32; 2],
   row: u32,
@@ -22,8 +26,9 @@ struct Kept {
 }
 
 impl Screen {
-  /// shows a picture over the whole window and keeps it. `pixels` holds its rows as
-  /// [`Kept`] has them
+  /// Shows a picture over the whole window and keeps it.
+  ///
+  /// `pixels` holds its rows as [`Kept`] has them.
   pub(super) fn show(
     &mut self,
     size: [u32; 2],
@@ -59,7 +64,7 @@ impl Screen {
     })
   }
 
-  /// puts the picture last shown in the window again, if there has been one
+  /// Puts the picture last shown in the window again, if there has been one.
   pub(super) fn again(&mut self) -> Result<(), HandlerError> {
     use windows_sys::Win32::Graphics::Gdi::{
       BI_RGB, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, GetDC, ReleaseDC, SetDIBitsToDevice,
@@ -135,7 +140,7 @@ impl Screen {
     })
   }
 
-  /// puts the picture last shown in the window again, if there has been one
+  /// Puts the picture last shown in the window again, if there has been one.
   pub(super) fn again(&mut self) -> Result<(), HandlerError> {
     use std::num::NonZeroU32;
 

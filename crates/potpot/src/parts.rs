@@ -1,5 +1,7 @@
-//! shapes of common panel hardware, sized in panel points and centered on the z axis.
-//! every size is more than zero
+//! Shapes of common panel hardware, sized in panel points.
+//!
+//! Each shape is centered on the z axis unless its doc places it elsewhere. Every size is more than
+//! zero.
 
 mod button;
 mod fader;
@@ -24,11 +26,13 @@ pub use panel::{bezel, frame, plate, screw, screw_seat, slab, slot};
 pub use scale::{dashes, fader_ticks, ticks};
 pub use switch::PushSwitch;
 
-/// faces that turn from each other by less than about 35 degrees shade as one curve
+/// The cosine of the turn under which faces shade as one curve.
+///
+/// The turn is about 35 degrees.
 const CREASE: f32 = 0.82;
-/// the rings a shaped top is cut into from its rim to its middle
+/// The count of rings from a shaped top's rim to its middle.
 const TOP_RINGS: usize = 14;
-/// the rings the roll from the side to the top is cut into
+/// The count of rings in the roll from the side to the top.
 const ROLL: usize = 6;
-/// how far paint and inlays stand off the surface they are on
+/// The distance paint and inlays stand off their surface.
 const PAINT: f32 = 0.25;

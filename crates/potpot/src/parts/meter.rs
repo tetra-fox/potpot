@@ -1,4 +1,4 @@
-//! level meters: a ladder of light pipe ends
+//! Level meters, each a ladder of light pipe ends.
 
 use std::sync::Arc;
 
@@ -9,31 +9,36 @@ use crate::material::Material;
 use crate::mesh::Mesh;
 use crate::scene::{Lamp, Object};
 
-/// a level meter: a ladder of lights, green at the bottom, then yellow, then red, each the
-/// end of its own light pipe set nearly flush in the panel. it runs up the panel from its
-/// foot at the origin
+/// A level meter made of a ladder of lights.
+///
+/// The lights are green at the bottom, then yellow, then red, each the end of its own light pipe
+/// set nearly flush in the panel. The meter runs up the panel from its foot at the origin.
 #[derive(Clone, Copy, Debug)]
 pub struct Meter {
-  /// how many lights it has
+  /// The count of lights.
   pub segments: u32,
-  /// how wide each light is, across the meter
+  /// The width of each light across the meter, in points.
   pub width: f32,
-  /// how long each light is, along the meter
+  /// The length of each light along the meter, in points.
   pub length: f32,
-  /// the distance from one light to the next
+  /// The distance from one light to the next, in points.
   pub pitch: f32,
-  /// how wide the dark gap around each window is
+  /// The width of the dark gap around each window, in points.
   pub margin: f32,
-  /// how round each light is, from zero for square corners to one for round
+  /// The roundness of each light, from zero to one.
+  ///
+  /// Zero is square corners and one is round.
   pub corner: f32,
-  /// the share of the lights, from the bottom, where they turn yellow
+  /// The share of the lights, from the bottom, where they turn yellow.
   pub yellow_from: f32,
-  /// and the share where they turn red
+  /// The share of the lights, from the bottom, where they turn red.
   pub red_from: f32,
 }
 
 impl Meter {
-  /// a ladder of `segments` lights, each `width` across, filling `length` of the panel
+  /// Creates a ladder of lights filling a length of the panel.
+  ///
+  /// The ladder has `segments` lights, each `width` across, and fills `length`.
   pub fn ladder(segments: u32, width: f32, length: f32) -> Self {
     let pitch = length / segments.max(1) as f32;
     Self {
@@ -48,7 +53,9 @@ impl Meter {
     }
   }
 
-  /// a ladder of `segments` round lights, each `diameter` across, filling `length`
+  /// Creates a ladder of round lights filling a length.
+  ///
+  /// The ladder has `segments` lights, each `diameter` across, and fills `length`.
   pub fn dots(segments: u32, diameter: f32, length: f32) -> Self {
     Self {
       length: diameter,
@@ -57,8 +64,10 @@ impl Meter {
     }
   }
 
-  /// the shape of one light pipe's end: a low flat rectangle with tight corners and a
-  /// tight rolled edge, which is what catches a glint and where its light comes out
+  /// Returns the shape of one light pipe's end.
+  ///
+  /// The end is a low pad with corners as round as [`Meter::corner`] and a tight rolled edge, which
+  /// is what catches a glint and where its light comes out.
   fn lens(&self) -> Button {
     Button {
       corner: self.corner,
@@ -68,18 +77,21 @@ impl Meter {
     }
   }
 
-  /// one light's window, lying on the origin. every light of the meter is this mesh
+  /// Returns one light's window, lying on the origin.
+  ///
+  /// Every light of the meter is this mesh.
   pub fn segment(&self) -> Mesh {
     self.lens().body()
   }
 
-  /// the dark gap around one window where it is set into the panel
+  /// Returns the dark gap around one window set into the panel.
   pub fn seat(&self) -> Mesh {
     self.lens().seat(self.margin)
   }
 
-  /// the gaps around every window, as objects of the mesh [`Meter::seat`] makes, for a
-  /// meter whose foot is at (x, y)
+  /// Returns the gaps around every window as objects.
+  ///
+  /// Each [`Object`] has the mesh [`Meter::seat`] makes, for a meter whose foot is at (`x`, `y`).
   pub fn seats(&self, seat: &Arc<Mesh>, x: f32, y: f32) -> impl Iterator<Item = Object> {
     (0..self.segments).map(move |index| Object {
       mesh: Arc::clone(seat),
@@ -88,12 +100,16 @@ impl Meter {
     })
   }
 
-  /// where the light at `index` goes for a meter whose foot is at (x, y)
+  /// Returns the transform of the light at `index`.
+  ///
+  /// The meter's foot is at (`x`, `y`).
   fn place(&self, x: f32, y: f32, index: u32) -> Mat4 {
     Mat4::from_translation(Vec3::new(x, y - self.pitch * (index as f32 + 0.5), 0.0))
   }
 
-  /// the color the light at `index`, counted from the bottom, shows when it is lit
+  /// Returns the color the light at `index` shows when lit.
+  ///
+  /// `index` counts from the bottom.
   pub fn color(&self, index: u32) -> Vec3 {
     let up = index as f32 / self.segments.max(1) as f32;
     if up >= self.red_from {
@@ -105,10 +121,12 @@ impl Meter {
     }
   }
 
-  /// the meter's lights as objects of the mesh [`Meter::segment`] makes, for a meter whose
-  /// foot is at (x, y) showing `level` from zero to one. the topmost lit light is as bright
-  /// as the part of it the level covers. `peak`, if there is one, lights the one light at
-  /// that level too, the way a meter holds its highest reading
+  /// Returns the meter's lights as objects.
+  ///
+  /// Each [`Object`] has the mesh [`Meter::segment`] makes, for a meter whose foot is at (`x`, `y`)
+  /// showing `level` from zero to one. The topmost lit light is as bright as the part of it the
+  /// level covers. `peak`, if there is one, lights the one light at that level too, the way a meter
+  /// holds its highest reading.
   pub fn lights(
     &self,
     segment: &Arc<Mesh>,
@@ -140,8 +158,9 @@ impl Meter {
     })
   }
 
-  /// the light the meter throws on what is around it at a level: one lamp at the top of
-  /// its lit part, in the color it has reached
+  /// Returns the light the meter throws around it at a level.
+  ///
+  /// The [`Lamp`] is at the top of the meter's lit part, in the color it has reached.
   pub fn lamp(&self, x: f32, y: f32, level: f32) -> Option<Lamp> {
     let lit = (level.clamp(0.0, 1.0) * self.segments as f32).ceil() as u32;
     let top = lit.checked_sub(1)?;

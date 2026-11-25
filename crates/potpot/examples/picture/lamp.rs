@@ -1,5 +1,7 @@
-//! small lamps beside what shows their light: polished and glossy knobs, posts that stand
-//! in the way, and painted blocks
+//! Small lamps beside what shows their light.
+//!
+//! Their light shows on polished and glossy knobs, posts that stand in the way, and painted
+//! blocks.
 
 use std::sync::Arc;
 
@@ -9,8 +11,10 @@ use potpot::{Lamp, Light, Look, Material, Object, Scene};
 
 use crate::{ALUMINUM, BLACK, SEAT, SIZE, framed};
 
-/// two rows on a pale plate under a dimmed light: a red lamp between a chrome knob and a
-/// glossy one with posts around it, and a lit pad and a blue lamp among knobs and blocks
+/// Returns two rows on a pale plate under a dimmed light.
+///
+/// The first row is a red lamp between a chrome knob and a glossy one, with posts below it.
+/// The second is a lit pad and a blue lamp among knobs and blocks.
 pub(super) fn lamp(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let mut objects = vec![Object {
@@ -35,7 +39,7 @@ pub(super) fn lamp(look: Look) -> Scene {
       70.0,
       Material::satin(Vec3::new(0.74, 0.72, 0.66)),
     ),
-    // and one more of each further off, where the lamp's light is nearly gone
+    // and one more of each further off, past the lamp's reach
     put(knob.body(), 250.0, 170.0, chrome),
     put(knob.body(), 774.0, 170.0, Material::glossy(BLACK)),
   ]);
@@ -100,7 +104,9 @@ fn put(mesh: potpot::Mesh, x: f32, y: f32, material: Material) -> Object {
   }
 }
 
-/// a small round light in its seat, lit in a color, and the lamp that is its light
+/// Returns a small round light in its seat and its lamp.
+///
+/// The light is lit in `color`, and the lamp is its light.
 fn small_lamp(x: f32, y: f32, color: Vec3) -> ([Object; 2], Lamp) {
   let size = 20.0;
   let seat = Material::matte(SEAT);

@@ -17,8 +17,7 @@ struct Globals {
   // and in w how much of the light that comes off surfaces lands on what is next to them
   ambient: vec4<f32>,
   // x is one when shadow edges are softened, y the size of a shadow map texel, z how many
-  // of the lamps are lit
-  // and w how much the light all around is kept out of corners
+  // of the lamps are lit, and w how much the light all around is kept out of corners
   shadows: vec4<f32>,
   // panel points to clip space from straight above
   overhead: mat4x4<f32>,
@@ -45,7 +44,7 @@ struct Lamp {
 @group(1) @binding(4) var bounce_sampler: sampler;
 
 const TAU: f32 = 6.2831853;
-// how many shadow map texels to each side of a point are looked at for a soft shadow edge
+// how many places to each side of a point are looked at for a soft shadow edge
 const SHADOW_SPREAD: i32 = 2;
 // how many rings of places around a point are looked at for what stands over it, and how
 // many places are in each ring
@@ -164,9 +163,8 @@ fn height_over(at: vec2<f32>) -> f32 {
   return globals.panel.w - depth * (globals.panel.w - globals.panel.z);
 }
 
-// how much of the light all around reaches a point, from all of it in the open down to
-// little in a corner: less for everything near that stands higher than the point, and less
-// the nearer and higher it stands
+// how much of the light all around reaches a point: less for everything near that stands
+// higher than the point, and less the nearer and higher it stands
 fn open_share(world: vec3<f32>) -> f32 {
   var closed = 0.0;
   var weight = 0.0;
@@ -186,15 +184,14 @@ fn open_share(world: vec3<f32>) -> f32 {
 }
 
 // how much of a lamp's light gets to a point past what stands between the two, going by
-// the height map along the straight line to the lamp. the lamp's own body is in that map,
-// so the line is followed only up to the lamp's edge. what stands in the way has a softer
-// edge the further it is from the point and the wider the lamp
+// the height map along the straight line to the lamp
 fn lamp_share(world: vec3<f32>, lamp: Lamp) -> f32 {
   let toward = lamp.at.xyz - world;
   let away = length(toward.xy);
   // a texel of the height map can hold the point's own surface
   let texel = max(globals.panel.x, globals.panel.y) / f32(textureDimensions(height_map).x);
   let start = texel * 1.5;
+  // the lamp's own body is in the height map, so the line is followed only up to its edge
   let end = away - lamp.color.w - texel;
   if end <= start {
     return 1.0;
@@ -206,6 +203,8 @@ fn lamp_share(world: vec3<f32>, lamp: Lamp) -> f32 {
     let along = mix(start, end, (f32(step) + shift) / f32(LAMP_STEPS));
     let line = world.z + toward.z * along / away;
     let over = height_over(world.xy + toward.xy / away * along);
+    // what stands in the way has a softer edge the further it is from the point and the
+    // wider the lamp
     let soft = 1.0 + lamp.color.w * along / (away - along);
     blocked = max(blocked, clamp((over - line) / soft, 0.0, 1.0));
   }
@@ -221,9 +220,8 @@ fn lamp_from(world: vec3<f32>, lamp: Lamp) -> vec4<f32> {
   return vec4<f32>(toward / max(away, 0.0001), fade * fade);
 }
 
-// the light a surface gives off for what is next to it to catch: its color under the
-// light, without the shine, the corners or the lamps' shadows, which the little that
-// lands elsewhere does not show
+// the light a surface gives off to what is next to it: its color under the light, without
+// the shine, the corners or the lamps' shadows, which the little that lands does not show
 @fragment
 fn bounce_fragment(lit: Lit) -> @location(0) vec4<f32> {
   let normal = normalize(lit.normal);
@@ -239,9 +237,7 @@ fn bounce_fragment(lit: Lit) -> @location(0) vec4<f32> {
 }
 
 // the light that lands on a point off the surfaces around it, from rings of places in the
-// bounce map: each lights the point by how squarely the point faces it, so a wall catches
-// the floor in front of it, the floor catches what stands on it, and nothing catches
-// itself
+// bounce map, each lighting the point by how squarely the point faces it
 fn bounced(world: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
   let texel = globals.panel.xy / vec2<f32>(textureDimensions(bounce_map));
   let reach = max(texel.x, texel.y);
@@ -257,6 +253,8 @@ fn bounced(world: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
       let aside = vec2<f32>(cos(turn), sin(turn)) * far;
       let tap = textureSampleLevel(bounce_map, bounce_sampler, (world.xy + aside) / globals.panel.xy, 0.0);
       let toward = normalize(vec3<f32>(aside, tap.a - world.z));
+      // a wall catches the floor in front of it, the floor catches what stands on it, and
+      // nothing catches itself
       caught += tap.rgb * max(dot(normal, toward), 0.0) * share;
       weight += share;
     }
@@ -290,13 +288,12 @@ fn rolling(at: vec2<f32>) -> f32 {
 }
 
 // the way a surface faces once its texture has bent it, and in w how much lighter or
-// darker the texture makes that spot. the texture is made from where the spot is on the
-// panel: grain in every direction at about the size of a pixel, brushing in long streaks
-// along x that only tilt the surface across themselves, and the marks of wear
+// darker the texture makes that spot. the texture is made from where the spot is on the panel
 fn textured(normal: vec3<f32>, world: vec3<f32>, texture: vec4<f32>) -> vec4<f32> {
   var bent = normal;
   var shade = 0.0;
   if texture.x > 0.0 {
+    // grain in every direction at about the size of a pixel
     let at = world.xy * 1.1 + world.z * 0.7;
     let fine = vec2<f32>(rolling(at), rolling(at + 37.0)) - 0.5;
     let coarse = vec2<f32>(rolling(at * 0.37 + 11.0), rolling(at * 0.37 + 71.0)) - 0.5;
@@ -304,6 +301,7 @@ fn textured(normal: vec3<f32>, world: vec3<f32>, texture: vec4<f32>) -> vec4<f32
     shade += (fine.x + coarse.y) * 0.035 * texture.x;
   }
   if texture.y > 0.0 {
+    // brushing in long streaks along x that only tilt the surface across themselves
     let streak = rolling(vec2<f32>(world.x * 0.01, world.y * 3.1)) - 0.5;
     let hair = rolling(vec2<f32>(world.x * 0.04 + 9.0, world.y * 7.3)) - 0.5;
     bent.y += (streak * 0.14 + hair * 0.1) * texture.y;
@@ -328,32 +326,35 @@ fn textured(normal: vec3<f32>, world: vec3<f32>, texture: vec4<f32>) -> vec4<f32
   return vec4<f32>(normalize(bent), shade);
 }
 
-// the room around the panel as a mirror would show it, by the way a reflection leaves: a
-// wide lamp on the light's side that reaches from well up the wall nearly to the ceiling,
-// a small dim one across from it, a ceiling paler than the walls, a bright line where the
-// walls meet the floor, and under that line a floor that is dark at its far edge and
-// lighter toward the panel. `normal` is the mirror's own facing, which says what side of
-// the room it looks at when the reflection runs straight up or down. `crisp` is how sharp
-// the edges of all this are, from a blur to a clean cut, and `tinted` how far the room
-// keeps its colors: a blue ceiling, a warm line and a brown floor
+// the room around the panel as a mirror would show it, by the way a reflection leaves.
+// `crisp` is how sharp its edges are, and `tinted` how far the room keeps its colors
 fn room(leaving: vec3<f32>, normal: vec3<f32>, crisp: f32, tinted: f32) -> vec3<f32> {
+  // the mirror's own facing says what side of the room it looks at when the reflection
+  // runs straight up or down
   let aside = normalize(leaving.xy + normal.xy * 0.02 + vec2<f32>(0.00001));
   let side = dot(aside, across_to_light());
   let high = leaving.z;
+  // from a blur to a clean cut
   let edge = mix(0.3, 0.025, crisp);
-  let lamp = smoothstep(0.24 - edge, 0.24 + edge, high) * (1.0 - smoothstep(0.82 - edge, 0.82 + edge, high))
+  // a wide lamp on the light's side, from well up the wall nearly to the ceiling
+  let lamp =smoothstep(0.24 - edge, 0.24 + edge, high) * (1.0 - smoothstep(0.82 - edge, 0.82 + edge, high))
     * smoothstep(0.4 - edge * 2.0, 0.4 + edge * 2.0, side);
+  // a small dim one across from it
   let second = smoothstep(0.3 - edge, 0.3 + edge, high) * (1.0 - smoothstep(0.6 - edge, 0.6 + edge, high))
     * smoothstep(0.8 - edge, 0.8 + edge, -side) * 0.3;
-  let ceiling = smoothstep(0.5, 1.0, high) * 0.42;
+  // a ceiling paler than the walls
+  let ceiling =smoothstep(0.5, 1.0, high) * 0.42;
   // the walls and the line along their foot are brighter on the side the light is on
   let lit_side = 0.5 + 0.5 * side;
   let over = smoothstep(-edge * 0.4, edge * 0.4, high);
-  let line = over * (1.0 - smoothstep(0.07, 0.07 + edge * 2.0, high)) * mix(0.3, 0.95, lit_side);
+  // a bright line where the walls meet the floor
+  let line =over * (1.0 - smoothstep(0.07, 0.07 + edge * 2.0, high)) * mix(0.3, 0.95, lit_side);
   let walls = over * mix(0.04, 0.12, lit_side);
+  // a floor that is dark at its far edge and lighter toward the panel
   let floor = (1.0 - over) * mix(0.015, mix(0.05, 0.24, lit_side * lit_side), smoothstep(-0.05, -0.6, high));
   let shown = lamp + second + max(ceiling, walls) + line + floor + 0.015;
-  let above = mix(vec3<f32>(1.0, 0.96, 0.88), vec3<f32>(0.6, 0.76, 1.0), smoothstep(0.05, 0.6, high));
+  // a blue ceiling, a warm line and a brown floor
+  let above =mix(vec3<f32>(1.0, 0.96, 0.88), vec3<f32>(0.6, 0.76, 1.0), smoothstep(0.05, 0.6, high));
   let hue = mix(vec3<f32>(0.72, 0.56, 0.42), mix(above, vec3<f32>(1.0), lamp), over);
   return shown * mix(vec3<f32>(1.0), hue * 1.12, tinted);
 }
@@ -380,7 +381,7 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
   let normal = rough.xyz;
   let toward_light = globals.toward_light.xyz;
   // what lights a surface comes from one way everywhere, but what shines off it comes from
-  // a light and a viewer at a place, so that the shine is somewhere and not all over
+  // a light and a viewer at a place, which puts the shine in one spot
   var toward_viewer = globals.toward_viewer.xyz;
   var shining = toward_light;
   if globals.toward_viewer.w > 0.0 {

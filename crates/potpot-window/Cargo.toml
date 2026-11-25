@@ -3,7 +3,7 @@ name = "potpot-window"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.100"
-description = "a baseview window for a panel of controls, drawn with wgpu by whatever skin it is given"
+description = "A baseview window for a panel of controls, drawn with wgpu by a given skin"
 license.workspace = true
 publish = false
 
