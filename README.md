@@ -1,6 +1,4 @@
-<div align="center">
 # potpot
-</div>
 
 ![potpot's controls](img/screen.png)
 
