@@ -9,6 +9,10 @@ flat:
 picture *args:
     cargo run -p potpot --example picture -- {{ args }}
 
+# open a window with every part on it, lamps and meters following the controls
+demo:
+    cargo run -p potpot --example demo
+
 test:
     cargo test --workspace
 

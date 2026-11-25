@@ -1224,6 +1224,7 @@ dependencies = [
  "png",
  "pollster",
  "potpot-controls",
+ "potpot-window",
  "wgpu",
 ]
 

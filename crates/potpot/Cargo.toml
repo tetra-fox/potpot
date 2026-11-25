@@ -18,5 +18,7 @@ wgpu.workspace = true
 # machine. the version wgpu itself is on
 naga = { version = "27", features = ["hlsl-out", "msl-out", "spv-out", "wgsl-in"] }
 png = "0.18"
+# the window the demo opens. without the plugin wrapper, which a window of its own has no use for
+potpot-window = { path = "../potpot-window", default-features = false }
 pollster = "0.4"
 wgpu = { workspace = true, features = ["vulkan"] }
