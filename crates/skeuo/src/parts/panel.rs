@@ -4,6 +4,7 @@ use std::f32::consts::FRAC_PI_2;
 
 use glam::{Vec2, Vec3};
 
+use super::CREASE;
 use super::button::Button;
 use super::outline::{Outline, band};
 use crate::mesh::Mesh;
@@ -65,17 +66,19 @@ pub fn bezel(inner: f32, outer: f32, height: f32) -> Mesh {
   })
 }
 
-/// the round head of a screw, `radius` wide, with nothing cut into it
+/// the round head of a screw, `radius` wide, with nothing cut into it: a low dome
 pub fn screw_head(radius: f32) -> Mesh {
-  Mesh::lathe(
-    &[
-      [radius, 0.0],
-      [radius * 0.85, radius * 0.35],
-      [0.0, radius * 0.45],
-    ],
-    16,
-    true,
-  )
+  /// the rings the dome is cut into from its rim to its middle
+  const DOME: usize = 6;
+  let rim = Vec2::new(radius, 0.0);
+  let dome = (0..=DOME).map(|ring| {
+    let (up, out) = (ring as f32 / DOME as f32 * FRAC_PI_2).sin_cos();
+    Vec2::new(radius * out, radius * (0.12 + 0.33 * up))
+  });
+  let profile: Vec<Vec2> = std::iter::once(rim).chain(dome).collect();
+  Mesh::rings(profile.len(), 24, CREASE, |ring, angle| {
+    (Vec2::from_angle(angle) * profile[ring].x).extend(profile[ring].y)
+  })
 }
 
 /// a round-headed screw with a slot, `radius` wide
