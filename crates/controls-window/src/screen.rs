@@ -148,8 +148,9 @@ impl Screen {
     let rows = shown.chunks_exact_mut(size[0] as usize);
     for (shown, drawn) in rows.zip(pixels.chunks_exact(*row as usize)) {
       for (shown, &[blue, green, red, _]) in shown.iter_mut().zip(drawn.as_chunks::<4>().0) {
-        // softbuffer has a pixel as a number with blue lowest and nothing above red
-        *shown = u32::from_le_bytes([blue, green, red, 0]);
+        // softbuffer has a pixel as a number with blue lowest. baseview's x11 window has a
+        // 32 bit visual, where a compositor reads the byte above red as how opaque the pixel is
+        *shown = u32::from_le_bytes([blue, green, red, u8::MAX]);
       }
     }
     shown.present()?;
