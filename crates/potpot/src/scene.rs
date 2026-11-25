@@ -32,7 +32,8 @@ pub struct Scene {
 /// how many lamps a scene can have lit at once
 pub const LAMPS: usize = 32;
 
-/// a small light at a point, which shines on what is near it and casts no shadows
+/// a small light at a point, which shines on what is near it. what stands between it and a
+/// surface shadows that surface, going by how high things are seen from straight above
 #[derive(Clone, Copy, Debug)]
 pub struct Lamp {
   pub at: Vec3,
@@ -40,7 +41,7 @@ pub struct Lamp {
   /// how far its light gets before it has faded to nothing
   pub reach: f32,
   /// how far from its middle the thing that shines reaches, which is how large the lamp
-  /// shows in a mirror
+  /// shows in a mirror. nothing that near the lamp shadows it
   pub radius: f32,
 }
 

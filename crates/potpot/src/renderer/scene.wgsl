@@ -34,6 +34,9 @@ struct Lamp {
 @group(1) @binding(1) var shadow_sampler: sampler_comparison;
 @group(1) @binding(2) var height_map: texture_depth_2d;
 
+// how many places between a point and a lamp are looked at for what blocks the lamp
+const LAMP_STEPS: i32 = 12;
+
 struct Corner {
   @location(0) position: vec3<f32>,
   @location(1) normal: vec3<f32>,
@@ -158,6 +161,33 @@ fn open_share(world: vec3<f32>) -> f32 {
     }
   }
   return 1.0 - clamp(closed / weight * 2.3, 0.0, 0.92);
+}
+
+// how much of a lamp's light gets to a point past what stands between the two, going by
+// the height map along the straight line to the lamp. the lamp's own body is in that map,
+// so the line is followed only up to the lamp's edge. what stands in the way has a softer
+// edge the further it is from the point and the wider the lamp
+fn lamp_share(world: vec3<f32>, lamp: Lamp) -> f32 {
+  let toward = lamp.at.xyz - world;
+  let away = length(toward.xy);
+  // a texel of the height map can hold the point's own surface
+  let texel = max(globals.panel.x, globals.panel.y) / f32(textureDimensions(height_map).x);
+  let start = texel * 1.5;
+  let end = away - lamp.color.w - texel;
+  if end <= start {
+    return 1.0;
+  }
+  // each point starts its steps somewhere else, which turns bands into grain
+  let shift = scatter(world.xy * 7.0 + world.z);
+  var blocked = 0.0;
+  for (var step = 0; step < LAMP_STEPS; step++) {
+    let along = mix(start, end, (f32(step) + shift) / f32(LAMP_STEPS));
+    let line = world.z + toward.z * along / away;
+    let over = height_over(world.xy + toward.xy / away * along);
+    let soft = 1.0 + lamp.color.w * along / (away - along);
+    blocked = max(blocked, clamp((over - line) / soft, 0.0, 1.0));
+  }
+  return 1.0 - blocked;
 }
 
 // a number from zero to one out of a place, the same every time for the same place
@@ -311,8 +341,10 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
     }
     let reaching = toward / max(away, 0.0001);
     let strength = lamp.color.rgb * fade * fade;
-    // a surface turned from the lamp still catches a little of it off everything else
-    let catches = 0.25 + 0.75 * max(dot(normal, reaching), 0.0);
+    let reached = lamp_share(lit.world, lamp);
+    // a surface turned from the lamp or shadowed from it still catches a little of it off
+    // everything else
+    let catches = 0.25 + 0.75 * max(dot(normal, reaching), 0.0) * reached;
     lighting_with_lamps += strength * catches;
     // how wide the lamp looks from here
     let wide = atan2(lamp.color.w, away);
@@ -325,14 +357,14 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
       if spun > 0.0 {
         glint = mix(glint, spun_shine(lit.world, lit.center, lit.axis, between, tightness), spun);
       }
-      glints += strength * glint;
+      glints += strength * glint * reached;
     }
     // the lamp in a mirror is a disc of that width, with an edge as soft as the mirror is
     // dull, and dimmer the more the edge spreads it
     let blur = mix(0.35, 0.02, crisp);
     let off = acos(clamp(dot(leaving, reaching), -1.0, 1.0));
     let disc = (1.0 - smoothstep(wide - blur, wide + blur, off)) * wide * wide / (wide * wide + blur * blur);
-    lamps_mirrored += lamp.color.rgb * fade * disc;
+    lamps_mirrored += lamp.color.rgb * fade * disc * reached;
   }
   let glow = lit.color.a;
   var color = surface * mix(lighting_with_lamps, vec3<f32>(1.0), glow) * (1.0 - 0.7 * metal);
