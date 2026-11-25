@@ -1,17 +1,19 @@
 //! a window with every part on it, lamps and meters following the controls: `just demo`.
 //!
-//! the knobs are the only parts the pointer moves. the first six of them drive the rest:
-//! how bright the lamp between the first two is and what color, whether it is on, how much
-//! light bounces between neighbors, where the fader stands with the meters beside it, and
-//! how many of a row of dots are lit
+//! everything answers the pointer the way its kind does: knobs and faders are dragged,
+//! buttons are pressed, and the row of keys is one switch that each click moves a step on.
+//! the first six knobs drive the rest: how bright the lamp between the first two is and
+//! what color, whether it is on, how much light bounces between neighbors, where the fader
+//! stands with the meters beside it, and how many of a column of dots are lit
 
+use std::f32::consts::FRAC_PI_2;
 use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Button, Fader, Knob, Meter, Push, PushSwitch};
 use potpot::{Lamp, Light, Look, Material, Mesh, Object, Place, Renderer, Scene};
 use potpot_window::controls::flat::{Color, Flat};
-use potpot_window::controls::interaction::{Control, Dial, Edit, Readout, Target};
+use potpot_window::controls::interaction::{Control, Dial, Drag, Edit, Readout, Target, Touch};
 use potpot_window::controls::stroke;
 use potpot_window::{Gpu, Opening, Param, Settings, Skin, View, wgpu};
 
@@ -25,6 +27,20 @@ const LEVEL: usize = 4;
 const DOTS: usize = 5;
 /// how many of the knobs drive something, which are the ones with a readout
 const WIRED: usize = 6;
+/// how many knobs there are, each a control on the parameter at its own place
+const KNOBS: usize = 15;
+/// the parameters after the knobs' own: the pad that flashes the lamp, the switch the keys
+/// are, and the fader that lies on its side. each button of [`buttons`] has one after these
+const FLASH: usize = KNOBS;
+const KEYS: usize = KNOBS + 1;
+const SLIDE: usize = KNOBS + 2;
+const BUTTONS: usize = KNOBS + 3;
+/// the controls after the knobs: the fader on the level, the switch beside the lamp, the
+/// fader on its side, and then one for each of [`buttons`]
+const FADER_CONTROL: usize = KNOBS;
+const SWITCH_CONTROL: usize = KNOBS + 1;
+const SLIDE_CONTROL: usize = KNOBS + 2;
+const BUTTON_CONTROLS: usize = KNOBS + 3;
 /// the most light that bounces, with its knob all the way up
 const MOST_BOUNCE: f32 = 6.0;
 
@@ -43,8 +59,15 @@ const SWITCH: Vec2 = Vec2::new(398.0, WIRED_Y);
 const FADER: Vec2 = Vec2::new(690.0, WIRED_Y + 5.0);
 const TRAVEL: f32 = 110.0;
 const METER_FOOT: f32 = FADER.y + TRAVEL / 2.0;
-/// the pad that is lit in the lamp's color
-const PAD: Vec2 = Vec2::new(80.0, 440.0);
+/// how far down the buttons along the bottom are
+const BUTTONS_Y: f32 = 440.0;
+/// the middle of the fader that lies on its side and how far it slides, and how far down
+/// the row of small lights over it is
+const SLIDE_AT: Vec2 = Vec2::new(678.0, 466.0);
+const SLIDE_TRAVEL: f32 = 100.0;
+const LIGHTS_Y: f32 = 418.0;
+const LIGHT_SIZE: f32 = 11.0;
+const AMBER: Vec3 = Vec3::new(1.0, 0.55, 0.05);
 
 const INK: Color = [1.0, 0.66, 0.14, 1.0];
 const SELECTED: Color = [0.45, 0.28, 0.05, 1.0];
@@ -154,6 +177,93 @@ fn knobs() -> Vec<Shown> {
   knobs
 }
 
+/// a button along the bottom: its shape, how far across it is, the parameter it sets and
+/// where that stands while the button is lit, and what pressing it does
+struct Pressed {
+  shape: Button,
+  x: f32,
+  parameter: usize,
+  lit_at: f32,
+  touch: Touch,
+  /// the color it lights in, or none for the lamp's
+  color: Option<Vec3>,
+}
+
+/// a pad that flashes the lamp while it is held, three keys that are one switch of three
+/// places, two pills that stay in, and two round buttons that come back
+fn buttons() -> Vec<Pressed> {
+  let on = |shape, x, parameter, push| Pressed {
+    shape,
+    x,
+    parameter,
+    lit_at: 1.0,
+    touch: Touch::Press(push),
+    color: Some(AMBER),
+  };
+  let key = |x, lit_at| Pressed {
+    shape: Button::key(60.0, 26.0, 7.0),
+    x,
+    parameter: KEYS,
+    lit_at,
+    touch: Touch::Step,
+    color: Some(AMBER),
+  };
+  let pill = Button::pill(24.0, 54.0, 8.0);
+  let round = Button::round(40.0, 10.0);
+  vec![
+    Pressed {
+      color: None,
+      ..on(Button::pad(60.0, 11.0), 80.0, FLASH, Push::Momentary)
+    },
+    key(170.0, 0.0),
+    key(245.0, 0.5),
+    key(320.0, 1.0),
+    on(pill, 390.0, BUTTONS, Push::Latching),
+    on(pill, 430.0, BUTTONS + 1, Push::Latching),
+    on(round, 495.0, BUTTONS + 2, Push::Momentary),
+    on(round, 555.0, BUTTONS + 3, Push::Momentary),
+  ]
+}
+
+/// every parameter, and every control with the parameter it is on: a knob for each of the
+/// first, then the faders and the switch, then the buttons
+fn wiring() -> (Vec<Dial>, Vec<Control>) {
+  let switch = || Dial::linear([0.0, 1.0], 0.0, Some(1.0), 0, "");
+  let mut dials: Vec<Dial> = knobs().into_iter().map(|shown| shown.dial).collect();
+  dials.push(switch());
+  dials.push(Dial::linear([0.0, 2.0], 0.0, Some(1.0), 0, ""));
+  dials.push(Dial::linear([0.0, 100.0], 60.0, None, 0, "%"));
+  dials.extend((0..4).map(|_| switch()));
+
+  let readout = Readout::new(5);
+  let mut controls: Vec<Control> = (0..KNOBS)
+    .map(|parameter| Control::new(parameter, readout))
+    .collect();
+  // a fader's cap goes as far as the pointer does, along the way it slides
+  let slides = |parameter, way, travel: f32| {
+    let mut control = Control::new(parameter, readout);
+    control.feel.drag = Drag::Along {
+      way,
+      turn: 1.0 / travel,
+    };
+    control
+  };
+  let pressed = |parameter, touch| {
+    let mut control = Control::new(parameter, readout);
+    control.touch = touch;
+    control
+  };
+  controls.push(slides(LEVEL, [0.0, -1.0], TRAVEL));
+  controls.push(pressed(ON, Touch::Press(Push::Latching)));
+  controls.push(slides(SLIDE, [1.0, 0.0], SLIDE_TRAVEL));
+  controls.extend(
+    buttons()
+      .iter()
+      .map(|button| pressed(button.parameter, button.touch)),
+  );
+  (dials, controls)
+}
+
 /// a color all the way around the wheel from red through green and blue back to red, as
 /// bright as a color gets
 fn hue(turn: f32) -> Vec3 {
@@ -216,14 +326,16 @@ struct Demo {
   lamp: Arc<Mesh>,
   switch: PushSwitch,
   plunger: Arc<Mesh>,
-  /// the fader's cap and its stripe
+  /// the fader's cap and its stripe, and the same turned to lie on their side
   cap: [Arc<Mesh>; 2],
+  lying: [Arc<Mesh>; 2],
+  light: Arc<Mesh>,
   ladder: Meter,
   dots: Meter,
   /// one light of the ladder, and one of the dots
   segments: [Arc<Mesh>; 2],
-  pad: Button,
-  pad_body: Arc<Mesh>,
+  /// the buttons along the bottom, each with its body
+  buttons: Vec<(Pressed, Arc<Mesh>)>,
 }
 
 impl Demo {
@@ -305,48 +417,27 @@ impl Demo {
     }
     fixed.extend(dots.seats(&Arc::new(dots.seat()), 872.0, METER_FOOT + 10.0));
 
-    // along the bottom: buttons of each shape, some of them lit, a row of small lights,
-    // and slots that let the air out
-    let rubber = Material::silicone(Vec3::splat(0.62));
-    let pad = Button::pad(60.0, 11.0);
-    fixed.put(pad.seat(3.0), PAD, hole);
-    let amber = Vec3::new(1.0, 0.55, 0.05);
-    let buttons = [
-      (Button::key(60.0, 26.0, 7.0), 170.0, 0.0),
-      (Button::key(60.0, 26.0, 7.0), 245.0, 1.0),
-      (Button::key(60.0, 26.0, 7.0), 320.0, 0.0),
-      (Button::pill(24.0, 54.0, 8.0), 390.0, 0.0),
-      (Button::pill(24.0, 54.0, 8.0), 430.0, 1.0),
-      (Button::round(40.0, 10.0), 495.0, 0.0),
-      (Button::round(40.0, 10.0), 555.0, 0.0),
-    ];
-    for (button, x, level) in buttons {
-      let at = Vec2::new(x, PAD.y);
-      fixed.put(button.seat(2.5), at, hole);
-      fixed.place(
-        &Arc::new(button.body()),
-        parts::button_transform(x, PAD.y, button.height, 0.0),
-        rubber.lit(amber, level, button.glow_radius()),
-        None,
-      );
-    }
-    let lights = [
-      (Vec3::new(1.0, 0.12, 0.06), 1.0),
-      (Vec3::new(1.0, 0.75, 0.1), 0.0),
-      (Vec3::new(0.1, 0.9, 0.3), 1.0),
-      (Vec3::new(0.1, 0.5, 1.0), 0.4),
-    ];
-    for (index, (color, level)) in lights.into_iter().enumerate() {
-      let at = Vec2::new(630.0 + 32.0 * index as f32, PAD.y);
-      fixed.put(parts::led_seat(11.0), at, hole);
-      fixed.put(
-        parts::led(11.0),
-        at,
-        parts::led_material(color, level, 11.0),
-      );
+    // along the bottom: the gaps the buttons sit in, the slot of the fader on its side
+    // under the seats of its row of lights, and slots that let the air out
+    let buttons: Vec<_> = (buttons().into_iter())
+      .map(|button| {
+        fixed.put(button.shape.seat(2.5), Vec2::new(button.x, BUTTONS_Y), hole);
+        let body = Arc::new(button.shape.body());
+        (button, body)
+      })
+      .collect();
+    let on_side = Mat4::from_rotation_z(FRAC_PI_2);
+    fixed.put(
+      parts::fader_slot(SLIDE_TRAVEL, 5.0).transformed(on_side),
+      SLIDE_AT,
+      hole,
+    );
+    for light in 0..4 {
+      let at = Vec2::new(630.0 + 32.0 * light as f32, LIGHTS_Y);
+      fixed.put(parts::led_seat(LIGHT_SIZE), at, hole);
     }
     for slot in 0..6 {
-      let at = Vec2::new(790.0 + 12.0 * slot as f32, PAD.y);
+      let at = Vec2::new(790.0 + 12.0 * slot as f32, BUTTONS_Y);
       fixed.put(parts::slot(5.0, 60.0), at, hole);
     }
 
@@ -364,17 +455,18 @@ impl Demo {
       plunger: Arc::new(switch.plunger()),
       switch,
       cap: [fader.body(), fader.line()].map(Arc::new),
+      lying: [fader.body(), fader.line()].map(|mesh| Arc::new(mesh.transformed(on_side))),
+      light: Arc::new(parts::led(LIGHT_SIZE)),
       segments: [ladder.segment(), dots.segment()].map(Arc::new),
       ladder,
       dots,
-      pad_body: Arc::new(pad.body()),
-      pad,
+      buttons,
     }
   }
 
-  /// the scene with each parameter where it stands, as a part of its whole turn, and what
-  /// each of its objects is
-  fn scene(&self, values: &[f32]) -> (Scene, Vec<Option<Target>>) {
+  /// the scene with each parameter where it stands, as a part of its whole turn, and the
+  /// control that is held down, and what each of its objects is
+  fn scene(&self, values: &[f32], held: Option<usize>) -> (Scene, Vec<Option<Target>>) {
     // the scene owns this frame's objects, so the ones that never move are copied into it
     let mut drawn = self.fixed.clone();
     let mut lamps = Vec::new();
@@ -387,9 +479,14 @@ impl Demo {
       }
     }
 
-    // the lamp, the switch that is in while it is on, and the pad lit in its color
+    // the lamp, as bright as its knob has it while it is on and all the way while the pad
+    // is held, and the switch that is in while it is on
     let on = values[ON] > 0.5;
-    let level = if on { values[BRIGHT] } else { 0.0 };
+    let level = match (values[FLASH] > 0.5, on) {
+      (true, _) => 1.0,
+      (false, true) => values[BRIGHT],
+      (false, false) => 0.0,
+    };
     let color = hue(values[HUE]);
     drawn.place(
       &self.lamp,
@@ -403,23 +500,42 @@ impl Demo {
       reach: 150.0,
       radius: LAMP_SIZE / 2.0,
     });
+    let rubber = Material::silicone(Vec3::splat(0.62));
     let plunger = self.switch.plunger;
+    let depth = Push::Latching.depth(on, held == Some(SWITCH_CONTROL));
     drawn.place(
       &self.plunger,
-      (self.switch).transform(SWITCH.x, SWITCH.y, Push::Latching.depth(on, false)),
-      Material::silicone(Vec3::splat(0.62)).lit(color, level, plunger.glow_radius()),
-      None,
+      self.switch.transform(SWITCH.x, SWITCH.y, depth),
+      rubber.lit(color, level, plunger.glow_radius()),
+      Some(Target::Control(SWITCH_CONTROL)),
     );
-    drawn.place(
-      &self.pad_body,
-      parts::button_transform(PAD.x, PAD.y, self.pad.height, 0.0),
-      Material::silicone(Vec3::splat(0.62)).lit(color, level, self.pad.glow_radius()),
-      None,
-    );
-    lamps.push(self.pad.lamp(PAD.x, PAD.y, color, level));
 
-    // the fader stands where its knob has it, and the meters beside it follow, the second
-    // a little behind the first
+    // each button is lit while its parameter stands where it lights, and in as far as
+    // its kind goes
+    for (control, (button, body)) in (BUTTON_CONTROLS..).zip(&self.buttons) {
+      let Pressed { shape, x, .. } = *button;
+      let lit = (values[button.parameter] - button.lit_at).abs() < 0.25;
+      let depth = match button.touch {
+        Touch::Press(push) => push.depth(lit, held == Some(control)),
+        _ => 0.0,
+      };
+      let (color, level) = match button.color {
+        Some(color) => (color, f32::from(u8::from(lit))),
+        None => (color, level),
+      };
+      drawn.place(
+        body,
+        parts::button_transform(x, BUTTONS_Y, shape.height, depth),
+        rubber.lit(color, level, shape.glow_radius()),
+        Some(Target::Control(control)),
+      );
+      if level > 0.0 {
+        lamps.push(shape.lamp(x, BUTTONS_Y, color, level));
+      }
+    }
+
+    // the fader stands where the level is, and the meters beside it follow, the second a
+    // little behind the first
     let stands = values[LEVEL];
     let cap = parts::fader_transform(FADER.x, FADER.y, TRAVEL, stands);
     let materials = [
@@ -427,7 +543,7 @@ impl Demo {
       Material::matte(Vec3::splat(0.9)),
     ];
     for (mesh, material) in self.cap.iter().zip(materials) {
-      drawn.place(mesh, cap, material, None);
+      drawn.place(mesh, cap, material, Some(Target::Control(FADER_CONTROL)));
     }
     let foot = METER_FOOT + 10.0;
     let [segment, dot] = &self.segments;
@@ -437,6 +553,30 @@ impl Demo {
     }
     drawn.extend(self.dots.lights(dot, 872.0, foot, values[DOTS], None));
     lamps.extend(self.dots.lamp(872.0, foot, values[DOTS]));
+
+    // the fader on its side, and over it a row of lights that it fills from the left
+    let slid = values[SLIDE];
+    let across = SLIDE_AT + Vec2::X * SLIDE_TRAVEL * (slid - 0.5);
+    for (mesh, material) in self.lying.iter().zip(materials) {
+      let place = Mat4::from_translation(across.extend(0.0));
+      drawn.place(mesh, place, material, Some(Target::Control(SLIDE_CONTROL)));
+    }
+    let colors = [
+      Vec3::new(0.1, 0.9, 0.3),
+      Vec3::new(0.1, 0.9, 0.3),
+      Vec3::new(1.0, 0.75, 0.1),
+      Vec3::new(1.0, 0.12, 0.06),
+    ];
+    for (light, color) in colors.into_iter().enumerate() {
+      let level = (slid * 4.0 - light as f32).clamp(0.0, 1.0);
+      let at = Vec3::new(630.0 + 32.0 * light as f32, LIGHTS_Y, 0.0);
+      drawn.place(
+        &self.light,
+        Mat4::from_translation(at),
+        parts::led_material(color, level, LIGHT_SIZE),
+        None,
+      );
+    }
 
     let scene = Scene {
       size: SIZE.into(),
@@ -486,7 +626,7 @@ fn typed(over: &mut Flat, edit: &Edit, middle: [f32; 2]) {
 
 impl Skin for Demo {
   fn prepare(&mut self, gpu: &Gpu, view: &View, over: &mut Flat) {
-    let (scene, targets) = self.scene(view.values);
+    let (scene, targets) = self.scene(view.values, view.held);
     (self.renderer).prepare(gpu.device, gpu.queue, &scene, view.pixels);
     (self.scene, self.targets) = (Some(scene), targets);
 
@@ -523,13 +663,9 @@ impl Skin for Demo {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   let settings = Settings::new("potpot", SIZE);
-  // a parameter for each knob, which no host has: each stands where the panel last set it
-  let params = (knobs().into_iter())
-    .map(|shown| Param::free(shown.dial))
-    .collect();
-  let controls = (0..knobs().len())
-    .map(|parameter| Control::new(parameter, Readout::new(5)))
-    .collect();
+  let (dials, controls) = wiring();
+  // no host has these parameters: each stands where the panel last set it
+  let params = dials.into_iter().map(Param::free).collect();
   let opened = potpot_window::open(settings, params, controls, Opening::alone(), Demo::new)?;
   opened.window.run_until_closed()?;
   Ok(())
