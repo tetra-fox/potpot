@@ -161,6 +161,8 @@ struct Frame {
   scale: f32,
   edit: Option<Edit>,
   menu: Option<Menu>,
+  /// the control that is held down
+  held: Option<usize>,
 }
 
 /// what a frame is drawn on and read back from, for one size of window. there is no
@@ -218,11 +220,13 @@ fn due(
   scale: f32,
   edit: Option<&Edit>,
   menu: Option<&Menu>,
+  held: Option<usize>,
 ) -> bool {
   shown.is_none_or(|shown| {
     (shown.values.as_slice(), shown.window, shown.scale) != (values, window, scale)
       || shown.edit.as_ref() != edit
       || shown.menu.as_ref() != menu
+      || shown.held != held
   })
 }
 
@@ -249,7 +253,16 @@ impl<S: Skin> State<S> {
   fn stale(&mut self, hosts: &[Host], size: Point) -> bool {
     let (values, window, scale) = (self.values(hosts), self.window, self.scale(size));
     let (edit, menu) = (self.interaction.edit(), self.interaction.menu());
-    due(self.shown.as_ref(), &values, window, scale, edit, menu)
+    let held = self.interaction.held();
+    due(
+      self.shown.as_ref(),
+      &values,
+      window,
+      scale,
+      edit,
+      menu,
+      held,
+    )
   }
 
   /// what of the panel is at one of its points: the menu while it is up, the grip, or
@@ -338,6 +351,7 @@ impl<S: Skin> Window<S> {
         values: &values,
         edit: None,
         menu: None,
+        held: None,
         scale,
         pixel: settings.size[0] / width as f32,
         pixels: [width, height],
@@ -625,6 +639,7 @@ impl<S: Skin> Window<S> {
       values: &values,
       edit: interaction.edit(),
       menu: interaction.menu(),
+      held: interaction.held(),
       scale,
       pixel,
       pixels: [width, height],
@@ -713,6 +728,7 @@ impl<S: Skin> Window<S> {
       scale,
       edit: interaction.edit().cloned(),
       menu: interaction.menu().copied(),
+      held: interaction.held(),
     });
     Ok(())
   }
@@ -1017,6 +1033,7 @@ mod tests {
       scale: 1.0,
       edit: None,
       menu: None,
+      held: None,
     }
   }
 
@@ -1028,8 +1045,10 @@ mod tests {
       scale,
       edit,
       menu,
+      held,
     } = now;
-    due(shown, values, *window, *scale, edit.as_ref(), menu.as_ref())
+    let (edit, menu) = (edit.as_ref(), menu.as_ref());
+    due(shown, values, *window, *scale, edit, menu, *held)
   }
 
   #[test]
@@ -1078,6 +1097,13 @@ mod tests {
     assert!(is_due(Some(&shown), &typed("1")));
     assert!(is_due(Some(&typed("1")), &typed("12")));
     assert!(!is_due(Some(&typed("12")), &typed("12")));
+    // a button held down, and let go
+    let held = Frame {
+      held: Some(0),
+      ..shown.clone()
+    };
+    assert!(is_due(Some(&shown), &held));
+    assert!(is_due(Some(&held), &shown));
   }
 
   #[test]

@@ -23,6 +23,14 @@ pub enum Drag {
     /// the part of the whole turn one point is
     turn: f32,
   },
+  /// along a line across the panel, the way a fader slides: toward `way` turns it on and
+  /// away from it turns it back, by `turn` of its whole turn for each point
+  Along {
+    /// the way that turns it on, one point long, across and down
+    way: Point,
+    /// the part of the whole turn one point is
+    turn: f32,
+  },
 }
 
 impl Drag {
@@ -30,15 +38,57 @@ impl Drag {
   fn travel(self, from: Point, to: Point) -> f32 {
     match self {
       Self::Up { .. } => from[1] - to[1],
+      Self::Along { way, .. } => (to[0] - from[0]) * way[0] + (to[1] - from[1]) * way[1],
     }
   }
 
   /// how far one point of that turns it
   fn turn(self) -> f32 {
     match self {
-      Self::Up { turn } => turn,
+      Self::Up { turn } | Self::Along { turn, .. } => turn,
     }
   }
+}
+
+/// what a button that is pressed does
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Push {
+  /// each push turns it over: in and on, then out and off. it stays most of the way in
+  /// while it is on
+  Latching,
+  /// it is on only while it is held
+  Momentary,
+}
+
+impl Push {
+  /// how far in such a button is, from zero for out to one for all the way: all the way
+  /// while it is `held`, and most of the way while a latching one is `on`
+  pub fn depth(self, on: bool, held: bool) -> f32 {
+    match (held, self, on) {
+      (true, ..) => 1.0,
+      (false, Push::Latching, true) => 0.7,
+      (false, Push::Latching, false) | (false, Push::Momentary, _) => 0.0,
+    }
+  }
+
+  /// whether such a button is on after a push is let go, given whether it was on before. a
+  /// momentary one is never on once it is let go
+  pub fn released(self, was_on: bool) -> bool {
+    self == Push::Latching && !was_on
+  }
+}
+
+/// what the left button does to a control
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Touch {
+  /// it is dragged, the way its [`Feel`] says, and a double click puts it at its default
+  Turn,
+  /// it is pressed like a button, and its parameter is at the end of its turn while it is
+  /// on and at the start while it is off
+  Press(Push),
+  /// each click moves it one step on, and from the end of its turn back to the start
+  Step,
 }
 
 /// how a control answers the pointer and the wheel. it starts as [`Feel::default`] and is
@@ -198,6 +248,15 @@ impl Dial {
     };
     turned.clamp(0.0, 1.0)
   }
+
+  /// the value one step on from another, which from the end of the turn is its start
+  fn stepped_on(&self, value: f32, feel: Feel) -> f32 {
+    if value > 1.0 - 1e-4 {
+      0.0
+    } else {
+      self.wheeled(value, 1.0, false, feel)
+    }
+  }
 }
 
 /// one of a panel's controls: something on it that is turned, with a readout of its own. a
@@ -213,15 +272,19 @@ pub struct Control {
   pub feel: Feel,
   /// what its readout can show of a value typed into it
   pub readout: Readout,
+  /// what the left button does to it
+  pub touch: Touch,
 }
 
 impl Control {
-  /// a control on a parameter, with a readout, that feels as [`Feel::default`] does
+  /// a control on a parameter, with a readout, that is dragged and feels as
+  /// [`Feel::default`] does
   pub fn new(parameter: usize, readout: Readout) -> Self {
     Self {
       parameter,
       feel: Feel::default(),
       readout,
+      touch: Touch::Turn,
     }
   }
 }
@@ -517,6 +580,13 @@ enum State {
     from: f32,
     scale: f32,
   },
+  /// the left button is down on a control that is pressed. `on` is whether it was on
+  /// before
+  Held {
+    control: usize,
+    push: Push,
+    on: bool,
+  },
   Edit(Edit),
   Menu(Menu),
 }
@@ -632,6 +702,14 @@ impl Interaction {
     }
   }
 
+  /// the control that is pressed and held down, if one is
+  pub fn held(&self) -> Option<usize> {
+    match self.state {
+      State::Held { control, .. } => Some(control),
+      _ => None,
+    }
+  }
+
   /// whether keys mean something to the panel right now
   pub fn takes_keys(&self) -> bool {
     matches!(self.state, State::Edit(_) | State::Menu(_))
@@ -680,6 +758,14 @@ impl Interaction {
       }
       Event::Closed => {
         self.rest_wheel(&mut actions);
+        // a latching button held as the window goes was not let go, and stays as it was
+        if let State::Held {
+          push: Push::Latching,
+          ..
+        } = self.state
+        {
+          self.state = State::Idle;
+        }
         self.let_go(&mut actions);
         self.state = State::Idle;
       }
@@ -687,13 +773,26 @@ impl Interaction {
     actions
   }
 
-  /// the left button is up, or as good as: a drag or a pull at the grip is over
+  /// the left button is up, or as good as: a drag, a press or a pull at the grip is over
   fn let_go(&mut self, actions: &mut Vec<Action>) {
     match self.state {
       State::Drag { control, begun, .. } => {
         if begun {
           actions.push(Action::End(self.controls[control].parameter));
         }
+        self.state = State::Idle;
+      }
+      State::Held { control, push, on } => {
+        let parameter = self.controls[control].parameter;
+        match push {
+          Push::Momentary => actions.extend([Action::Set(parameter, 0.0), Action::End(parameter)]),
+          Push::Latching => {
+            let value = if push.released(on) { 1.0 } else { 0.0 };
+            actions.extend(gesture(parameter, value));
+          }
+        }
+        // it comes back out, which shows whatever its value
+        actions.push(Action::Redraw);
         self.state = State::Idle;
       }
       State::Resize { .. } => self.state = State::Idle,
@@ -776,7 +875,7 @@ impl Interaction {
           actions.push(Action::Redraw);
         }
       }
-      State::Idle | State::Edit(_) => {}
+      State::Idle | State::Held { .. } | State::Edit(_) => {}
     }
   }
 
@@ -836,24 +935,51 @@ impl Interaction {
         }
         self.commit(actions);
       }
-      State::Idle | State::Drag { .. } | State::Resize { .. } => {}
+      State::Idle | State::Drag { .. } | State::Held { .. } | State::Resize { .. } => {}
     }
 
     match over {
-      Some(Target::Control(control)) if reset || double => {
-        let parameter = self.controls[control].parameter;
-        actions.extend(gesture(parameter, self.dials[parameter].default));
-      }
       Some(Target::Control(control)) => {
-        let parameter = self.controls[control].parameter;
-        self.state = State::Drag {
-          control,
-          turned: values[parameter],
-          value: values[parameter],
-          from: at,
-          fine: false,
-          begun: false,
-        };
+        let Control {
+          parameter,
+          feel,
+          touch,
+          ..
+        } = self.controls[control];
+        let dial = &self.dials[parameter];
+        match touch {
+          // a second click on what is pressed or stepped is one more of the same
+          _ if reset => actions.extend(gesture(parameter, dial.default)),
+          Touch::Turn if double => actions.extend(gesture(parameter, dial.default)),
+          Touch::Turn => {
+            self.state = State::Drag {
+              control,
+              turned: values[parameter],
+              value: values[parameter],
+              from: at,
+              fine: false,
+              begun: false,
+            };
+          }
+          Touch::Press(push) => {
+            self.state = State::Held {
+              control,
+              push,
+              on: values[parameter] > 0.5,
+            };
+            match push {
+              Push::Momentary => {
+                actions.extend([Action::Begin(parameter), Action::Set(parameter, 1.0)]);
+              }
+              // it turns over once it is let go, and until then only goes in
+              Push::Latching => actions.push(Action::Redraw),
+            }
+          }
+          Touch::Step => {
+            let next = dial.stepped_on(values[parameter], feel);
+            actions.extend(gesture(parameter, next));
+          }
+        }
       }
       Some(Target::Readout(control)) if double => self.begin_edit(control, values, actions),
       Some(Target::Grip) if double => actions.push(Action::Scale(1.0)),
@@ -900,8 +1026,15 @@ impl Interaction {
       return;
     };
     let Control {
-      parameter, feel, ..
+      parameter,
+      feel,
+      touch,
+      ..
     } = self.controls[control];
+    // a button is pressed, and the wheel does nothing to it
+    if let Touch::Press(_) = touch {
+      return;
+    }
     let from = match self.wheel {
       Some((turning, value, _)) if turning == control => value,
       _ => {
@@ -931,7 +1064,7 @@ impl Interaction {
         }
         return;
       }
-      State::Idle | State::Drag { .. } | State::Resize { .. } => return,
+      State::Idle | State::Drag { .. } | State::Held { .. } | State::Resize { .. } => return,
     };
     let (letters, selected) = (edit.letters(), edit.selected());
     let Readout { room, shows } = self.controls[edit.control].readout;
@@ -1130,6 +1263,7 @@ mod tests {
         room: ROOM,
         shows: |_| true,
       },
+      touch: Touch::Turn,
     };
     let mut panel = Interaction::new(dials, vec![on(MIX), on(PITCH)], SIZE, SCALES);
     let values = [0.5, 0.5, 1.0, 0.5];
@@ -1214,6 +1348,7 @@ mod tests {
         room: 2,
         shows: |letter| letter.is_ascii_digit(),
       },
+      touch: Touch::Turn,
     };
     let wide = Control {
       parameter: 1,
@@ -1222,6 +1357,7 @@ mod tests {
         room: 5,
         shows: |_| true,
       },
+      touch: Touch::Turn,
     };
     let mut panel = Interaction::new(dials, vec![narrow, wide], SIZE, SCALES);
     let values = [0.5, 1.0];
@@ -1284,6 +1420,7 @@ mod tests {
           room: ROOM,
           shows: |letter| letter.is_ascii_digit() || " +-.,%st".contains(letter),
         },
+        touch: Touch::Turn,
       })
       .collect();
     Interaction::new(dials, controls, SIZE, SCALES)
@@ -2237,5 +2374,140 @@ mod tests {
     bench.right(Some(Target::Control(PITCH)));
     assert_eq!(bench.right(None), [Redraw]);
     assert!(bench.interaction.menu().is_none());
+  }
+
+  /// the bench with its mix made a fader that slides to the right, a hundred points for
+  /// its whole turn, and standing in the middle
+  fn fader() -> Bench {
+    let mut bench = Bench::new();
+    bench.interaction.controls[MIX].feel.drag = Drag::Along {
+      way: [1.0, 0.0],
+      turn: 0.01,
+    };
+    bench.values[MIX] = 0.5;
+    bench
+  }
+
+  fn slide(bench: &mut Bench, at: Point) -> Vec<Action> {
+    let (at, window) = bench.place(at);
+    bench.send(Event::Move {
+      at,
+      window,
+      over: None,
+      fine: false,
+    })
+  }
+
+  #[test]
+  fn a_fader_is_dragged_along_its_own_way_and_no_other() {
+    let mut bench = fader();
+    bench.press(Some(Target::Control(MIX)), 100.0);
+    // up the panel is across a fader that lies on its side
+    assert_eq!(slide(&mut bench, [100.0, 40.0]), []);
+    let first = slide(&mut bench, [120.0, 40.0]);
+    assert_eq!(first[0], Begin(MIX));
+    assert!(close(set(&first[1..], MIX), 0.7));
+    assert!(close(set(&slide(&mut bench, [90.0, 300.0]), MIX), 0.4));
+    assert_eq!(bench.release(), [End(MIX)]);
+  }
+
+  /// the bench with its mix made a button of a kind, which is off
+  fn button(push: Push) -> Bench {
+    let mut bench = Bench::new();
+    bench.interaction.controls[MIX].touch = Touch::Press(push);
+    bench.values[MIX] = 0.0;
+    bench
+  }
+
+  #[test]
+  fn a_momentary_button_is_on_for_as_long_as_it_is_held() {
+    let mut bench = button(Push::Momentary);
+    let over = Some(Target::Control(MIX));
+    assert_eq!(bench.press(over, 100.0), [Begin(MIX), Set(MIX, 1.0)]);
+    assert_eq!(bench.interaction.held(), Some(MIX));
+    // the pointer wandering off while it is held changes nothing
+    assert_eq!(bench.drag(20.0, false), []);
+    assert_eq!(bench.release(), [Set(MIX, 0.0), End(MIX), Redraw]);
+    assert_eq!(bench.interaction.held(), None);
+    // held as the window goes, it is let go
+    bench.press(over, 100.0);
+    assert_eq!(bench.send(Event::Closed), [Set(MIX, 0.0), End(MIX), Redraw]);
+  }
+
+  #[test]
+  fn a_latching_button_turns_over_each_time_it_is_let_go() {
+    let mut bench = button(Push::Latching);
+    let over = Some(Target::Control(MIX));
+    assert_eq!(bench.press(over, 100.0), [Redraw]);
+    assert_eq!(bench.interaction.held(), Some(MIX));
+    assert_eq!(
+      bench.release(),
+      [Begin(MIX), Set(MIX, 1.0), End(MIX), Redraw]
+    );
+    // a second press straight after is another push, and no reset
+    bench.values[MIX] = 1.0;
+    assert_eq!(bench.press(over, 100.0), [Redraw]);
+    assert_eq!(
+      bench.release(),
+      [Begin(MIX), Set(MIX, 0.0), End(MIX), Redraw]
+    );
+    // held as the window goes, it stays as it was
+    bench.press(over, 100.0);
+    assert_eq!(bench.send(Event::Closed), []);
+  }
+
+  #[test]
+  fn a_button_is_not_turned_by_the_wheel_and_is_reset_with_the_reset_key() {
+    let mut bench = button(Push::Latching);
+    assert_eq!(bench.wheel(Target::Control(MIX), 1.0, false), []);
+    let (at, window) = bench.place([100.0, 100.0]);
+    let reset = Event::Press {
+      button: Button::Left,
+      at,
+      window,
+      over: Some(Target::Control(MIX)),
+      reset: true,
+    };
+    // the mix of the bench is on by default
+    assert_eq!(bench.send(reset), [Begin(MIX), Set(MIX, 1.0), End(MIX)]);
+    assert_eq!(bench.interaction.held(), None);
+  }
+
+  #[test]
+  fn a_stepped_switch_goes_one_step_on_with_each_click_and_around_from_the_end() {
+    // three positions, like a switch for off, low and high
+    let mut bench = Bench::new();
+    bench.interaction.dials[MIX] = Dial::linear([0.0, 2.0], 0.0, Some(1.0), 0, "");
+    bench.interaction.controls[MIX].touch = Touch::Step;
+    let over = Some(Target::Control(MIX));
+    let mut click = |from: f32| {
+      bench.values[MIX] = from;
+      let actions = bench.press(over, 100.0);
+      assert_eq!(bench.release(), []);
+      match actions[..] {
+        [Begin(MIX), Set(MIX, value), End(MIX)] => value,
+        _ => panic!("not one whole gesture: {actions:?}"),
+      }
+    };
+    // clicks as close together as a double click are still one step each
+    assert_eq!(click(0.0), 0.5);
+    assert_eq!(click(0.5), 1.0);
+    assert_eq!(click(1.0), 0.0);
+  }
+
+  #[test]
+  fn a_latching_button_stays_in_and_a_momentary_one_comes_back() {
+    // held, either is all the way in
+    assert_eq!(Push::Latching.depth(false, true), 1.0);
+    assert_eq!(Push::Momentary.depth(false, true), 1.0);
+    // let go, a latching one that is on stays most of the way in and the rest are out
+    let latched = Push::Latching.depth(true, false);
+    assert!(latched > 0.5 && latched < 1.0);
+    assert_eq!(Push::Latching.depth(false, false), 0.0);
+    assert_eq!(Push::Momentary.depth(true, false), 0.0);
+    // each push turns a latching one over
+    assert!(Push::Latching.released(false));
+    assert!(!Push::Latching.released(true));
+    assert!(!Push::Momentary.released(false));
   }
 }

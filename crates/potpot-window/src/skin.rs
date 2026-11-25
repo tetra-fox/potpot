@@ -31,6 +31,8 @@ pub struct View<'a> {
   pub edit: Option<&'a Edit>,
   /// the menu, if it is up. the window draws it, over the skin's picture
   pub menu: Option<&'a Menu>,
+  /// the control that is pressed and held down, if one is, by its place among the panel's
+  pub held: Option<usize>,
   /// how many times its own size the panel is drawn at
   pub scale: f32,
   /// how much of one of the panel's points a pixel is

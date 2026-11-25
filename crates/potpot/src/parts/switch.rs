@@ -1,6 +1,7 @@
 //! push switches: a sprung plunger in a collar
 
 use glam::{Mat4, Vec3};
+pub use potpot_controls::interaction::Push;
 
 use super::button::Button;
 use super::outline::band;
@@ -18,34 +19,6 @@ pub struct PushSwitch {
   pub collar: f32,
   /// how high the collar stands
   pub collar_height: f32,
-}
-
-/// what a push switch does when it is pushed
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Push {
-  /// each push turns it over: in and on, then out and off. it stays most of the way in
-  /// while it is on
-  Latching,
-  /// it is on only while it is held, like any button
-  Momentary,
-}
-
-impl Push {
-  /// how far in the plunger of such a switch is, from zero for out to one for all the way:
-  /// all the way while it is `held`, and most of the way while a latching switch is `on`
-  pub fn depth(self, on: bool, held: bool) -> f32 {
-    match (held, self, on) {
-      (true, ..) => 1.0,
-      (false, Push::Latching, true) => 0.7,
-      (false, Push::Latching, false) | (false, Push::Momentary, _) => 0.0,
-    }
-  }
-
-  /// whether such a switch is on after a push is let go, given whether it was on before. a
-  /// momentary switch is never on once it is let go
-  pub fn released(self, was_on: bool) -> bool {
-    self == Push::Latching && !was_on
-  }
 }
 
 impl PushSwitch {
@@ -106,21 +79,8 @@ mod tests {
   use super::*;
 
   #[test]
-  fn a_latching_switch_stays_in_and_a_momentary_one_comes_back() {
+  fn a_plunger_all_the_way_in_still_stands_over_its_collar() {
     let switch = PushSwitch::square(24.0, 14.0);
-    // held, either is all the way in
-    assert_eq!(Push::Latching.depth(false, true), 1.0);
-    assert_eq!(Push::Momentary.depth(false, true), 1.0);
-    // let go, a latching one that is on stays most of the way in and the rest are out
-    let latched = Push::Latching.depth(true, false);
-    assert!(latched > 0.5 && latched < 1.0);
-    assert_eq!(Push::Latching.depth(false, false), 0.0);
-    assert_eq!(Push::Momentary.depth(true, false), 0.0);
-    // each push turns a latching one over
-    assert!(Push::Latching.released(false));
-    assert!(!Push::Latching.released(true));
-    assert!(!Push::Momentary.released(false));
-    // even all the way in, the plunger still stands over its collar
     let top = switch
       .transform(0.0, 0.0, 1.0)
       .transform_point3(Vec3::Z * switch.plunger.height);
