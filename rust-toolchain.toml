@@ -1,0 +1,6 @@
+[toolchain]
+channel = "1.100.0"
+profile = "minimal"
+components = ["clippy", "rustfmt", "rust-src", "rust-analyzer"]
+# the window's code for Windows hosts is checked from here, see `just check-windows`
+targets = ["x86_64-pc-windows-gnu"]

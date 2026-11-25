@@ -1,0 +1,8 @@
+[workspace]
+resolver = "3"
+members = ["crates/controls", "crates/controls-window", "crates/skeuo"]
+
+[workspace.dependencies]
+# the one place the crate of unstyled controls is named: everything else writes `controls`
+controls = { path = "crates/controls" }
+wgpu = { version = "27", default-features = false, features = ["std", "wgsl"] }
