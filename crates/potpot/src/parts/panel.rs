@@ -80,7 +80,7 @@ pub fn bezel(inner: f32, outer: f32, height: f32) -> Mesh {
 /// Returns the round head of a screw, a low dome of radius `radius`.
 ///
 /// Nothing is cut into it.
-fn screw_head(radius: f32) -> Mesh {
+pub fn screw_head(radius: f32) -> Mesh {
   /// The count of rings from the dome's rim to its middle.
   const DOME: usize = 6;
   let rim = Vec2::new(radius, 0.0);
@@ -101,6 +101,19 @@ pub fn screw(radius: f32) -> Mesh {
     Vec3::new(-radius * 0.75, -radius * 0.12, 0.0),
     Vec3::new(radius * 0.75, radius * 0.12, radius * 0.47),
   ))
+}
+
+/// Returns the cross cut into the head of a screw of radius `radius`.
+///
+/// The cross is two bars standing just proud of [`screw_head`], to be drawn dark.
+pub fn screw_cross(radius: f32) -> Mesh {
+  let bar = |long: f32, wide: f32| {
+    Mesh::cuboid(
+      Vec3::new(-radius * long, -radius * wide, 0.0),
+      Vec3::new(radius * long, radius * wide, radius * 0.47),
+    )
+  };
+  bar(0.58, 0.1).merged(&bar(0.1, 0.58))
 }
 
 /// Returns a slot cut through the panel, as a dark strip.
