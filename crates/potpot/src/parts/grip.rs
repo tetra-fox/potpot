@@ -10,24 +10,48 @@ pub enum Grip {
   /// this many flat sides
   Faceted(u32),
   /// this many round-bottomed scoops down the side, each `depth` of the radius deep
-  Fluted { flutes: u32, depth: f32 },
+  Fluted {
+    /// how many scoops
+    flutes: u32,
+    /// how deep each is, as a share of the radius
+    depth: f32,
+  },
   /// this many fine sharp ridges
   Knurled(u32),
   /// this many round ribs with round grooves between them, each `depth` of the radius deep
-  Ribbed { ribs: u32, depth: f32 },
+  Ribbed {
+    /// how many ribs
+    ribs: u32,
+    /// how deep the grooves are, as a share of the radius
+    depth: f32,
+  },
   /// drawn out to a point on the side it points at, `reach` of the radius further than the
   /// rest, like a chicken head knob
-  Pointed { reach: f32 },
+  Pointed {
+    /// how much further out the point is, as a share of the radius
+    reach: f32,
+  },
   /// a handle standing across the whole knob like a stove dial's, `width` of the radius
   /// wide, with round ends
-  Bar { width: f32 },
+  Bar {
+    /// how wide the handle is, as a share of the radius
+    width: f32,
+  },
   /// a round body with one long handle out to the side it points at, for turning with a
   /// foot. the body is `body` of the radius and the handle `width` of it wide
-  Lever { width: f32, body: f32 },
+  Lever {
+    /// how wide the handle is, as a share of the radius
+    width: f32,
+    /// how far out the body reaches, as a share of the radius
+    body: f32,
+  },
   /// a tall blade that narrows from `width` of the radius at its foot to a thin crest, with
   /// a long nose sloping down to a point on the side it points at and a short round tail,
   /// standing on a small round base
-  Ridge { width: f32 },
+  Ridge {
+    /// how wide the blade is at its foot, as a share of the radius
+    width: f32,
+  },
 }
 
 /// how far out a blade's outline reaches at `angle` from its nose: straight edges running
@@ -70,7 +94,12 @@ impl Grip {
   /// grip, from zero at its foot to one at its top, for the grips that change on the way
   pub(super) fn at(self, angle: f32, level: f32) -> f32 {
     match self {
-      Grip::Smooth | Grip::Faceted(_) | Grip::Knurled(_) => 1.0,
+      Grip::Smooth | Grip::Knurled(_) => 1.0,
+      Grip::Faceted(sides) => {
+        // a polygon with a corner at angle zero, measured from the middle of a side
+        let half = PI / sides.max(3) as f32;
+        half.cos() / (angle.rem_euclid(half * 2.0) - half).cos()
+      }
       Grip::Ribbed { ribs, depth } => {
         // turned so that a rib is where the knob points
         let turned = (angle + FRAC_PI_2) * ribs as f32;
@@ -88,8 +117,15 @@ impl Grip {
         // a round body, and a beak whose straight sides leave it without a corner and run
         // in to a point
         let nose = 1.0 + reach;
-        let half = nose / (nose * nose - 1.0).sqrt();
-        blade_at(angle + FRAC_PI_2, nose, 1.0, half).max(1.0)
+        let from = angle + FRAC_PI_2;
+        let (across, along) = (from.sin().abs(), from.cos());
+        // the sides are the lines through the point that touch the body, and the beak is
+        // what lies ahead of where they touch it
+        if along * nose >= 1.0 {
+          nose / (across * (nose * nose - 1.0).sqrt() + along)
+        } else {
+          1.0
+        }
       }
       // the angle from the way the knob points, which is up the panel
       Grip::Bar { width } => {
@@ -131,6 +167,8 @@ impl Grip {
 
 #[cfg(test)]
 mod tests {
+  use std::f32::consts::TAU;
+
   use super::*;
 
   #[test]
@@ -159,5 +197,40 @@ mod tests {
     assert!((blade_at(PI, nose, tail, half) - tail).abs() < 1e-5);
     assert!((blade_at(FRAC_PI_2, nose, tail, half) - half).abs() < 1e-6);
     assert!((blade_at(-FRAC_PI_2, nose, tail, half) - half).abs() < 1e-6);
+  }
+
+  #[test]
+  fn a_pointed_grip_is_round_but_for_its_beak() {
+    for reach in [0.0, 0.2, 0.414, 1.1, 3.0] {
+      let grip = Grip::Pointed { reach };
+      for step in 0..720 {
+        let angle = step as f32 / 720.0 * TAU;
+        let out = grip.at(angle, 0.0);
+        assert!(
+          (1.0..=1.0 + reach + 1e-5).contains(&out),
+          "reach {reach} at {angle}: {out}"
+        );
+      }
+      // the knob points toward negative y, and its sides and back are the round body
+      assert!((grip.at(-FRAC_PI_2, 0.0) - 1.0 - reach).abs() < 1e-5);
+      for side in [0.0, PI, FRAC_PI_2] {
+        assert_eq!(grip.at(side, 0.0), 1.0, "reach {reach} at {side}");
+      }
+    }
+  }
+
+  #[test]
+  fn a_faceted_grip_is_a_polygon_with_its_corners_on_the_radius() {
+    for sides in [3, 6, 9] {
+      let grip = Grip::Faceted(sides);
+      let facet = TAU / sides as f32;
+      for corner in 0..sides {
+        let out = grip.at(corner as f32 * facet, 0.0);
+        assert!((out - 1.0).abs() < 1e-5, "{sides} sides: {out}");
+        let middle = grip.at((corner as f32 + 0.5) * facet, 0.0);
+        let flat = (PI / sides as f32).cos();
+        assert!((middle - flat).abs() < 1e-5, "{sides} sides: {middle}");
+      }
+    }
   }
 }

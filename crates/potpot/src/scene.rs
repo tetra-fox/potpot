@@ -21,8 +21,11 @@ pub struct Scene {
   /// how far a point slides across the picture for each unit of its height. zero looks
   /// straight down, anything else leans the view so that sides show
   pub lean: Vec2,
+  /// the light over the whole panel
   pub light: Light,
+  /// how crude the picture is
   pub look: Look,
+  /// everything on the panel. [`Scene::pick`] names one by its place here
   pub objects: Vec<Object>,
   /// small lights on the panel itself, like what a lit button throws on what is around it.
   /// only the first [`LAMPS`] shine
@@ -36,7 +39,9 @@ pub const LAMPS: usize = 32;
 /// surface shadows that surface, going by how high things are seen from straight above
 #[derive(Clone, Copy, Debug)]
 pub struct Lamp {
+  /// where it is, in the scene's x, y and z
   pub at: Vec3,
+  /// its color and how bright it is, as linear light, which may be more than one
   pub color: Vec3,
   /// how far its light gets before it has faded to nothing
   pub reach: f32,
@@ -45,10 +50,12 @@ pub struct Lamp {
   pub radius: f32,
 }
 
+/// the one light over the whole panel, which casts the shadows
 #[derive(Clone, Copy, Debug)]
 pub struct Light {
   /// from the panel toward the light
   pub toward: Vec3,
+  /// its color and how bright it is, as linear light
   pub color: Vec3,
   /// the light that reaches every surface, shadowed or not
   pub ambient: Vec3,
@@ -122,6 +129,7 @@ impl Default for Look {
   }
 }
 
+/// one thing on the panel: a shape, where it goes and what it is made of
 #[derive(Clone, Debug)]
 pub struct Object {
   /// the object's shape. objects of one allocation share it on the gpu, where it stays for
@@ -129,6 +137,7 @@ pub struct Object {
   pub mesh: Arc<Mesh>,
   /// where the mesh goes. a rotation and a move, with at most an even scale
   pub transform: Mat4,
+  /// what its surface is made of
   pub material: Material,
 }
 

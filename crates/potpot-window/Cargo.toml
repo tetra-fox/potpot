@@ -7,6 +7,9 @@ description = "a baseview window for a panel of controls, drawn with wgpu by wha
 license = "GPL-3.0-or-later"
 publish = false
 
+[lints]
+workspace = true
+
 [features]
 default = ["nice-plug"]
 # the window as an editor of the nice-plug plugin wrapper

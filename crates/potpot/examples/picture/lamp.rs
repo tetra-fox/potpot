@@ -3,17 +3,16 @@
 
 use std::sync::Arc;
 
-use potpot::glam::{Mat4, Vec2, Vec3};
+use potpot::glam::{Mat4, Vec3};
 use potpot::parts::{self, Button, Knob};
 use potpot::{Lamp, Light, Look, Material, Object, Scene};
 
-use crate::SIZE;
+use crate::{ALUMINUM, BLACK, SEAT, SIZE, framed};
 
 /// two rows on a pale plate under a dimmed light: a red lamp between a chrome knob and a
 /// glossy one with posts around it, and a lit pad and a blue lamp among knobs and blocks
 pub(super) fn lamp(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
-  let black = Vec3::new(0.035, 0.035, 0.04);
   let mut objects = vec![Object {
     mesh: Arc::new(parts::plate(width, height, 6.0)),
     transform: Mat4::IDENTITY,
@@ -29,7 +28,7 @@ pub(super) fn lamp(look: Look) -> Scene {
   lamps.push(lamp);
   objects.extend([
     put(knob.body(), 400.0, 170.0, chrome),
-    put(knob.body(), 624.0, 170.0, Material::glossy(black)),
+    put(knob.body(), 624.0, 170.0, Material::glossy(BLACK)),
     put(
       Knob::fluted(40.0, 34.0).body(),
       512.0,
@@ -38,12 +37,12 @@ pub(super) fn lamp(look: Look) -> Scene {
     ),
     // and one more of each further off, where the lamp's light is nearly gone
     put(knob.body(), 250.0, 170.0, chrome),
-    put(knob.body(), 774.0, 170.0, Material::glossy(black)),
+    put(knob.body(), 774.0, 170.0, Material::glossy(BLACK)),
   ]);
   let posts = [
     (462.0, chrome),
     (512.0, Material::matte(Vec3::splat(0.8))),
-    (562.0, Material::glossy(black)),
+    (562.0, Material::glossy(BLACK)),
   ];
   for (x, material) in posts {
     objects.push(put(parts::slab(12.0, 12.0, 26.0, 6.0), x, 232.0, material));
@@ -52,12 +51,7 @@ pub(super) fn lamp(look: Look) -> Scene {
   // a lit pad beside painted blocks, and a blue lamp between a spun knob and a cream one
   let pad = Button::pad(70.0, 12.0);
   let green = Vec3::new(0.1, 0.9, 0.3);
-  objects.push(put(
-    pad.seat(3.0),
-    200.0,
-    450.0,
-    Material::matte(Vec3::splat(0.012)),
-  ));
+  objects.push(put(pad.seat(3.0), 200.0, 450.0, Material::matte(SEAT)));
   objects.push(Object {
     mesh: Arc::new(pad.body()),
     transform: parts::button_transform(200.0, 450.0, pad.height, 0.0),
@@ -77,12 +71,7 @@ pub(super) fn lamp(look: Look) -> Scene {
   objects.extend(light);
   lamps.push(lamp);
   objects.extend([
-    put(
-      knob.body(),
-      660.0,
-      450.0,
-      Material::spun(Vec3::new(0.78, 0.79, 0.81)),
-    ),
+    put(knob.body(), 660.0, 450.0, Material::spun(ALUMINUM)),
     put(
       knob.body(),
       860.0,
@@ -92,18 +81,14 @@ pub(super) fn lamp(look: Look) -> Scene {
   ]);
 
   Scene {
-    size: Vec2::new(width, height),
-    heights: [-8.0, 64.0],
-    lean: Vec2::new(0.0, -0.25),
     light: Light {
       color: Vec3::splat(0.6),
       ambient: Vec3::splat(0.2),
       bounce: 3.0,
       ..Light::default()
     },
-    look,
-    objects,
     lamps,
+    ..framed(look, objects)
   }
 }
 
@@ -118,7 +103,7 @@ fn put(mesh: potpot::Mesh, x: f32, y: f32, material: Material) -> Object {
 /// a small round light in its seat, lit in a color, and the lamp that is its light
 fn small_lamp(x: f32, y: f32, color: Vec3) -> ([Object; 2], Lamp) {
   let size = 20.0;
-  let seat = Material::matte(Vec3::splat(0.012));
+  let seat = Material::matte(SEAT);
   let objects = [
     put(parts::led_seat(size), x, y, seat),
     put(
@@ -128,11 +113,6 @@ fn small_lamp(x: f32, y: f32, color: Vec3) -> ([Object; 2], Lamp) {
       parts::led_material(color, 1.0, size),
     ),
   ];
-  let lamp = Lamp {
-    at: Vec3::new(x, y, size),
-    color: color * 2.5,
-    reach: 190.0,
-    radius: size / 2.0,
-  };
+  let lamp = parts::led_lamp(Vec3::new(x, y, size), color, 1.0, size, 190.0);
   (objects, lamp)
 }

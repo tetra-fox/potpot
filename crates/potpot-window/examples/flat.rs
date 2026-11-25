@@ -10,8 +10,7 @@
 use std::f32::consts::PI;
 
 use potpot_window::controls::flat::{Color, Flat};
-use potpot_window::controls::interaction::{Control, Dial, Edit, Feel, Readout, Target};
-use potpot_window::controls::stroke;
+use potpot_window::controls::interaction::{Control, Dial, Feel, Readout, Target};
 use potpot_window::{Gpu, Opening, Param, Settings, Skin, View, wgpu};
 
 /// the panel's width and height in its own points
@@ -24,6 +23,8 @@ const RADIUS: f32 = 30.0;
 /// half a readout's width and height
 const READOUT: [f32; 2] = [38.0, 12.0];
 const LETTERS: f32 = 9.0;
+/// how wide the strokes of all the lettering are
+const WEIGHT: f32 = 1.2;
 
 const GROUND: Color = [0.11, 0.12, 0.14, 1.0];
 const WELL: Color = [0.05, 0.055, 0.065, 1.0];
@@ -46,8 +47,8 @@ struct Knob {
   feel: Feel,
 }
 
-/// the panel's knobs, left to right: one in whole semitones, one smooth, one in steps of
-/// five that the wheel moves slowly, and one that the fine key slows down a great deal
+/// the panel's knobs, left to right: one in whole semitones, one smooth that the wheel
+/// moves slowly, one in steps of five, and one that the fine key slows down a great deal
 fn knobs() -> [Knob; 4] {
   // how each answers the pointer and the wheel: as usual, with a wheel that moves it a
   // hundredth of its turn for each line, and with a fine key that slows it fifty times
@@ -76,7 +77,7 @@ fn knobs() -> [Knob; 4] {
       decimals: 2,
       unit: "",
       room: 5,
-      feel,
+      feel: slow_wheel,
     },
     Knob {
       name: "TONE",
@@ -87,7 +88,7 @@ fn knobs() -> [Knob; 4] {
       decimals: 0,
       unit: "%",
       room: 3,
-      feel: slow_wheel,
+      feel,
     },
     Knob {
       name: "LEVEL",
@@ -121,22 +122,10 @@ struct Look {
   knobs: [Knob; 4],
 }
 
-/// lettering with its middle at a point
-fn centered(over: &mut Flat, text: &str, at: [f32; 2], height: f32, color: Color) {
-  let corner = stroke::top_left(text.chars().count(), height);
-  over.legend(
-    text,
-    [at[0] + corner[0], at[1] + corner[1]],
-    height,
-    1.2,
-    color,
-  );
-}
-
 impl Skin for Look {
   fn prepare(&mut self, _gpu: &Gpu, view: &View, over: &mut Flat) {
     over.rect([0.0, 0.0], SIZE, GROUND);
-    centered(over, "FLAT", [SIZE[0] / 2.0, 36.0], 14.0, LINE);
+    over.centered("FLAT", [SIZE[0] / 2.0, 36.0], 14.0, WEIGHT, LINE);
     for (control, (knob, reading)) in self.knobs.iter().zip(view.controls).enumerate() {
       let value = reading.value;
       // a ring of short lines, and a pointer that sweeps three quarters of the way round
@@ -150,7 +139,7 @@ impl Skin for Look {
         over.line(on_ring(from, RADIUS), on_ring(to, RADIUS), 2.0, color);
       }
       over.line(on_ring(value, 8.0), on_ring(value, RADIUS - 6.0), 3.0, INK);
-      centered(over, knob.name, [knob.x, NAME_Y], 8.0, LINE);
+      over.centered(knob.name, [knob.x, NAME_Y], 8.0, WEIGHT, LINE);
 
       let middle = [knob.x, READOUT_Y];
       let corner = |sign: f32| [middle[0] + sign * READOUT[0], middle[1] + sign * READOUT[1]];
@@ -163,10 +152,11 @@ impl Skin for Look {
       let inside = |sign: f32| corner(sign).map(|along| along - sign * view.pixel);
       over.rect(inside(-1.0), inside(1.0), WELL);
       match edit {
-        Some(edit) => typed(over, edit, middle),
+        // what is selected is on a bright block
+        Some(edit) => over.typed(edit, middle, LETTERS, WEIGHT, INK, MARK),
         None => {
           let written = format!("{}{}", reading.text, reading.unit);
-          centered(over, &written, middle, LETTERS, INK);
+          over.centered(&written, middle, LETTERS, WEIGHT, INK);
         }
       }
     }
@@ -186,22 +176,6 @@ impl Skin for Look {
       within.then_some(Target::Readout(control))
     })
   }
-}
-
-/// a value being typed: what is selected on a bright block, and the caret
-fn typed(over: &mut Flat, edit: &Edit, middle: [f32; 2]) {
-  let count = edit.text.chars().count();
-  let gap = |place: usize| middle[0] + stroke::gap(count, place, LETTERS);
-  let (top, foot) = (
-    middle[1] - LETTERS / 2.0 - 2.0,
-    middle[1] + LETTERS / 2.0 + 2.0,
-  );
-  let selected = edit.selected();
-  if !selected.is_empty() {
-    over.rect([gap(selected.start), top], [gap(selected.end), foot], MARK);
-  }
-  centered(over, &edit.text, middle, LETTERS, INK);
-  over.line([gap(edit.caret), top], [gap(edit.caret), foot], 1.0, INK);
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

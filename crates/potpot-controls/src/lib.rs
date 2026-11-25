@@ -41,8 +41,6 @@
 //! [`furniture`] for the menu and the grip, and [`flat`] and [`stroke`] for plain shapes and
 //! lettering to draw them in
 
-#![warn(missing_docs, missing_debug_implementations)]
-
 /// a place or a size, across and down
 pub type Point = [f32; 2];
 

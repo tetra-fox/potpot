@@ -3,11 +3,11 @@
 use std::f32::consts::FRAC_PI_2;
 use std::sync::Arc;
 
-use potpot::glam::{Mat4, Vec2, Vec3};
+use potpot::glam::{Mat4, Vec3};
 use potpot::parts::{self, Button, Meter, Push, PushSwitch};
 use potpot::{Light, Look, Material, Object, Scene};
 
-use crate::SIZE;
+use crate::{SEAT, SIZE, framed, screws};
 
 /// rubber buttons, some of them lit, and level meters at a few levels, on a dark panel
 /// under a dimmed light so that what glows shows
@@ -43,14 +43,13 @@ pub(super) fn lights(look: Look) -> Scene {
   let squares = pair(square.plunger(), square.collar());
   let circle = PushSwitch::round(30.0, 18.0);
   let circles = pair(circle.plunger(), circle.collar());
-  let screw = Arc::new(parts::screw(8.0));
   let mut objects = vec![Object {
     mesh: Arc::new(parts::plate(width, height, 6.0)),
     transform: Mat4::IDENTITY,
     material: Material::textured(Vec3::new(0.075, 0.08, 0.09)),
   }];
   let mut lamps = Vec::new();
-  let seat = Material::matte(Vec3::splat(0.012));
+  let seat = Material::matte(SEAT);
 
   // each button with the meshes of its body and its seat, where it is, how far it is lit
   // and in which color, and how far it is held down
@@ -196,31 +195,14 @@ pub(super) fn lights(look: Look) -> Scene {
   objects.extend(lying.seats(gap, 0.0, 0.0).map(turned));
   objects.extend(lying.lights(segment, 0.0, 0.0, 0.7, None).map(turned));
 
-  let inset = 18.0;
-  for (x, y) in [
-    (inset, inset),
-    (width - inset, inset),
-    (inset, height - inset),
-    (width - inset, height - inset),
-  ] {
-    objects.push(Object {
-      mesh: Arc::clone(&screw),
-      transform: Mat4::from_translation(Vec3::new(x, y, 0.0)) * Mat4::from_rotation_z(x * 0.3 + y),
-      material: Material::chrome(Vec3::splat(0.75)),
-    });
-  }
-
+  objects.extend(screws());
   Scene {
-    size: Vec2::new(width, height),
-    heights: [-8.0, 64.0],
-    lean: Vec2::new(0.0, -0.25),
     light: Light {
       color: Vec3::splat(0.6),
       ambient: Vec3::splat(0.2),
       ..Light::default()
     },
-    look,
-    objects,
     lamps,
+    ..framed(look, objects)
   }
 }

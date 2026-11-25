@@ -327,9 +327,16 @@ impl fmt::Debug for Opened {
 }
 
 /// opens a window on a panel of `controls` that turn `params`, drawn by the skin that `skin`
-/// makes once there is a graphics device to make it with. it opens only if the device can build everything the skin draws
-/// with, and from then on nothing that goes wrong with the device or the skin is let out
-/// into the opener's process: it is logged and the window keeps its last picture
+/// makes once there is a graphics device to make it with. it opens only if the device can
+/// build everything the skin draws with, and from then on nothing that goes wrong with the
+/// device or the skin is let out into the opener's process: it is logged and the window
+/// keeps its last picture
+///
+/// # Errors
+///
+/// if a side of the panel's size is not a finite number of points, one at least, which is
+/// refused before any window is made, or if the system cannot make the window or the window
+/// cannot be set up in it
 pub fn open<S: Skin, W: HasWindowHandle>(
   settings: Settings,
   params: Vec<Param>,
@@ -345,6 +352,17 @@ pub fn open<S: Skin, W: HasWindowHandle>(
     remembered,
     shared,
   } = opening;
+  // a panel is fitted to a window by its sides in whole points, which are counted as u64
+  // and multiplied: none of them is to be zero or past counting
+  let fits = |side: &f32| side.is_finite() && *side >= 1.0;
+  if !settings.size.iter().all(fits) {
+    return Err(
+      HandlerError::from_boxed(
+        "a side of the panel is not a finite number of points, one at least".into(),
+      )
+      .into(),
+    );
+  }
   // baseview 0.4.2 makes a child window at the scale of the window it goes in, but in a
   // host that is aware of each monitor's scale the older way it reports the scale the host
   // gave, 1 if it gave none, and takes the first one the host gives later as a change:

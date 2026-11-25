@@ -116,7 +116,9 @@ impl Screen {
       rows
     };
     if rows == 0 {
-      return Err(std::io::Error::last_os_error().into());
+      return Err(HandlerError::from_boxed(
+        "the picture could not be put in the window".into(),
+      ));
     }
     Ok(())
   }

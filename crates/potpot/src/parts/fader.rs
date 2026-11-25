@@ -13,7 +13,9 @@ pub struct Fader {
   pub width: f32,
   /// how long it is, along the way it slides
   pub length: f32,
+  /// how high it stands at its highest, along z
   pub height: f32,
+  /// its shape from the side
   pub cap: Cap,
   /// how much narrower the cap is at its top than at its foot, as a share of its width
   pub taper: f32,
@@ -24,7 +26,10 @@ pub struct Fader {
 pub enum Cap {
   /// hollowed along its length for a fingertip, the mixing console's cap. with `terraces`
   /// the hollow is cut in that many flat steps down each side instead of one curve
-  Saddle { terraces: u32 },
+  Saddle {
+    /// how many steps down each side, or zero for one curve
+    terraces: u32,
+  },
   /// a block with slanted ends and a flat top, the dj mixer's cap, which is made much wider
   /// across than it is long
   Block,
@@ -33,7 +38,10 @@ pub enum Cap {
   /// a low flat body with one fin standing across its middle, a synthesizer slider's cap
   Fin,
   /// flat steps rising to the middle
-  Stepped { steps: u32 },
+  Stepped {
+    /// how many of them there are to each side of the middle
+    steps: u32,
+  },
   /// a ramp rising in a hollow curve from the front to a tall back, to push with a thumb
   Wedge,
 }
@@ -105,7 +113,8 @@ impl Fader {
   /// the cap from its side, front to back: how far along and how high
   fn outline(&self) -> Vec<Vec2> {
     let (half, tall) = (self.length / 2.0, self.height);
-    // a small cut across every top corner, so that none is a knife's edge
+    // a small cut across the corner at each end of a top that has no steps, so that it is
+    // not a knife's edge
     let cut = (tall * 0.07).min(half * 0.1);
     // a symmetric cap, given how high its top is at a share of the way from the middle
     // out to an end, in so many straight stretches
@@ -213,13 +222,13 @@ impl Fader {
     self.width / 2.0 * (1.0 - self.taper * (height / self.height).clamp(0.0, 1.0))
   }
 
-  /// how high the cap's top is over its middle, where its stripe crosses
-  fn middle(&self) -> f32 {
+  /// how high the cap's top is at a place along it from its middle
+  fn top_at(&self, along: f32) -> f32 {
     let outline = self.outline();
     (outline.windows(2))
-      .find(|span| span[0].x <= 0.0 && span[1].x >= 0.0 && span[1].x > span[0].x)
+      .find(|span| span[0].x <= along && span[1].x >= along && span[1].x > span[0].x)
       .map_or(self.height, |span| {
-        span[0].y + (span[1].y - span[0].y) * (0.0 - span[0].x) / (span[1].x - span[0].x)
+        span[0].y + (span[1].y - span[0].y) * (along - span[0].x) / (span[1].x - span[0].x)
       })
   }
 
@@ -228,28 +237,35 @@ impl Fader {
     Mesh::extruded(&self.outline(), |height| self.half_width(height), CREASE)
   }
 
-  /// the stripe painted across the cap's middle, over the top and down both sides
+  /// the stripe painted across the cap's middle, over the top and down both sides, sloped
+  /// the way the top is under it
   pub fn line(&self) -> Mesh {
-    let (top, half_stripe) = (self.middle(), (self.length * 0.035).max(0.8));
-    let (crown, foot) = (self.half_width(top), self.half_width(0.0));
+    let half_stripe = (self.length * 0.035).max(0.8);
+    let (front, back) = (self.top_at(-half_stripe), self.top_at(half_stripe));
     let lift = PAINT * 2.0;
+    // the stripe's front and back corners on one side of the cap, `out` past its edge, each
+    // as high as the top is under it
+    let corners = |side: f32, out: f32| {
+      [(-half_stripe, front), (half_stripe, back)]
+        .map(|(along, top)| Vec3::new(side * (self.half_width(top) + out), along, top + lift))
+    };
     let mut line = Mesh::default();
+    let ([left_front, left_back], [right_front, right_back]) =
+      (corners(-1.0, 0.0), corners(1.0, 0.0));
     line.quad(
-      [
-        Vec3::new(-crown, -half_stripe, top + lift),
-        Vec3::new(crown, -half_stripe, top + lift),
-        Vec3::new(crown, half_stripe, top + lift),
-        Vec3::new(-crown, half_stripe, top + lift),
-      ],
-      Vec3::Z,
+      [left_front, right_front, right_back, left_back],
+      Vec3::new(0.0, front - back, half_stripe * 2.0).normalize(),
     );
+    let foot = self.half_width(0.0);
+    // a side leans in by the same slope at any height
+    let lean = (foot - self.half_width(front)) / front.max(f32::EPSILON);
     for side in [-1.0, 1.0] {
-      let lean = (foot - crown) / top.max(f32::EPSILON);
+      let [top_front, top_back] = corners(side, lift);
       line.quad(
         [
           Vec3::new(side * (foot + lift), -half_stripe, 0.0),
-          Vec3::new(side * (crown + lift), -half_stripe, top + lift),
-          Vec3::new(side * (crown + lift), half_stripe, top + lift),
+          top_front,
+          top_back,
           Vec3::new(side * (foot + lift), half_stripe, 0.0),
         ],
         Vec3::new(side, 0.0, lean).normalize(),
@@ -333,31 +349,52 @@ mod tests {
   }
 
   #[test]
-  fn a_stripe_crosses_the_cap_at_the_height_of_its_middle() {
+  fn a_stripe_crosses_the_middle_of_the_cap_and_lies_on_its_top() {
     for fader in faders(30.0, 50.0, 24.0) {
-      let top = fader.middle();
+      let top = fader.top_at(0.0);
       assert!(
         top > 24.0 * 0.3 && top <= 24.0,
         "{fader:?} is {top} high in the middle"
       );
       let line = fader.line();
-      let highest = (line.vertices.iter())
-        .map(|vertex| vertex.position[2])
-        .fold(f32::MIN, f32::max);
-      assert!(
-        (highest - top - PAINT * 2.0).abs() < 1e-4,
-        "{fader:?} stripe at {highest}"
-      );
       assert!(
         line
           .vertices
           .iter()
           .all(|vertex| vertex.position[1].abs() < 50.0 * 0.05)
       );
+      // its top runs straight from its front edge to its back one, just off the cap's top
+      // at both and nowhere under it between them
+      let edge = |back: bool| {
+        (line.vertices.iter())
+          .filter(|vertex| (vertex.position[1] > 0.0) == back)
+          .map(|vertex| Vec2::new(vertex.position[1], vertex.position[2]))
+          .fold(
+            Vec2::MIN,
+            |highest, at| {
+              if at.y > highest.y { at } else { highest }
+            },
+          )
+      };
+      let (front, back) = (edge(false), edge(true));
+      for at in [front, back] {
+        assert!(
+          (at.y - fader.top_at(at.x) - PAINT * 2.0).abs() < 1e-4,
+          "{fader:?} stripe at {at}"
+        );
+      }
+      for step in 0..=16 {
+        let at = front.lerp(back, step as f32 / 16.0);
+        assert!(
+          at.y >= fader.top_at(at.x),
+          "{fader:?} stripe at {at} is under {}",
+          fader.top_at(at.x)
+        );
+      }
     }
-    // a hollow cap is lowest there and a stepped one highest
-    assert!(Fader::console(30.0, 50.0, 24.0).middle() < 24.0 * 0.6);
-    assert_eq!(Fader::stepped(30.0, 50.0, 24.0).middle(), 24.0);
+    // a hollow cap is lowest in the middle and a stepped one highest
+    assert!(Fader::console(30.0, 50.0, 24.0).top_at(0.0) < 24.0 * 0.6);
+    assert_eq!(Fader::stepped(30.0, 50.0, 24.0).top_at(0.0), 24.0);
   }
 
   #[test]

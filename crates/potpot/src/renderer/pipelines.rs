@@ -17,14 +17,20 @@ pub(super) const SAMPLES: u32 = 4;
 pub(super) const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
   wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
 
-pub(super) const PRESENT_SOURCE: &str = include_str!("present.wgsl");
+/// the srgb curve, which goes ahead of each shader that uses it
+const SRGB_SOURCE: &str = include_str!("srgb.wgsl");
 
 /// scene.wgsl with the length of its array of lamps ahead of it, which is a scene's
 pub(super) fn scene_source() -> String {
   format!(
-    "const LAMPS: u32 = {LAMPS};\n{}",
+    "const LAMPS: u32 = {LAMPS};\n{SRGB_SOURCE}{}",
     include_str!("scene.wgsl")
   )
+}
+
+/// present.wgsl with the srgb curve ahead of it
+pub(super) fn present_source() -> String {
+  format!("{SRGB_SOURCE}{}", include_str!("present.wgsl"))
 }
 
 #[derive(Debug)]
@@ -119,7 +125,7 @@ impl Pipelines {
     });
     let present_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
       label: Some("potpot present"),
-      source: wgpu::ShaderSource::Wgsl(PRESENT_SOURCE.into()),
+      source: wgpu::ShaderSource::Wgsl(present_source().into()),
     });
 
     let vertex_buffers = [

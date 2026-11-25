@@ -6,6 +6,9 @@ description = "a small lit 3d scene renderer on wgpu, for skeuomorphic plugin pa
 license = "GPL-3.0-or-later"
 publish = false
 
+[lints]
+workspace = true
+
 [dependencies]
 bytemuck = { version = "1", features = ["derive"] }
 # the strokes of the face its lettering is in

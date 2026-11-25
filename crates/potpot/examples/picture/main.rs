@@ -11,7 +11,11 @@ mod lamp;
 mod lights;
 mod synth;
 
-use potpot::{Look, Place, Renderer, Scene, wgpu};
+use std::sync::Arc;
+
+use potpot::glam::{Mat4, Vec2, Vec3};
+use potpot::parts;
+use potpot::{Light, Look, Material, Mesh, Object, Place, Renderer, Scene, wgpu};
 
 use crate::faders::faders;
 use crate::knobs::knobs;
@@ -20,6 +24,49 @@ use crate::lights::lights;
 use crate::synth::synth;
 
 const SIZE: [u32; 2] = [1024, 640];
+/// the black of most knobs and caps
+const BLACK: Vec3 = Vec3::new(0.035, 0.035, 0.04);
+/// the color of aluminum turned on a lathe
+const ALUMINUM: Vec3 = Vec3::new(0.78, 0.79, 0.81);
+/// the color of the dark gap around what is set into a panel
+const SEAT: Vec3 = Vec3::splat(0.012);
+
+/// lettering `tall` high, in strokes wide enough to show when it is small
+fn lettering(text: &str, tall: f32) -> Mesh {
+  parts::legend(text, tall, (tall * 0.17).max(1.0))
+}
+
+/// a screw in each corner of the panel, each turned its own way
+fn screws() -> [Object; 4] {
+  let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
+  let screw = Arc::new(parts::screw(8.0));
+  let inset = 18.0;
+  [
+    (inset, inset),
+    (width - inset, inset),
+    (inset, height - inset),
+    (width - inset, height - inset),
+  ]
+  .map(|(x, y)| Object {
+    mesh: Arc::clone(&screw),
+    transform: Mat4::from_translation(Vec3::new(x, y, 0.0)) * Mat4::from_rotation_z(x * 0.3 + y),
+    material: Material::chrome(Vec3::splat(0.75)),
+  })
+}
+
+/// the scene of a panel that fills the picture, seen leaning a little, under the plain
+/// light and with no lamps
+fn framed(look: Look, objects: Vec<Object>) -> Scene {
+  Scene {
+    size: Vec2::new(SIZE[0] as f32, SIZE[1] as f32),
+    heights: [-8.0, 64.0],
+    lean: Vec2::new(0.0, -0.25),
+    light: Light::default(),
+    look,
+    objects,
+    lamps: Vec::new(),
+  }
+}
 
 fn main() {
   let mut arguments = std::env::args().skip(1).peekable();

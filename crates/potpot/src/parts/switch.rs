@@ -56,11 +56,11 @@ impl PushSwitch {
 
   /// the collar, a ring around the plunger with a hole for it to move in
   pub fn collar(&self) -> Mesh {
-    // a hair of room around the plunger
     let cut = self.collar_height.min(self.collar) * 0.25;
     let plunger = self.plunger.outline();
     band(
       plunger.grown(self.collar),
+      // a hair of room around the plunger
       plunger.grown(self.collar * 0.08),
       self.collar_height,
       cut,

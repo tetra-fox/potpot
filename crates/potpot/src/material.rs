@@ -2,8 +2,10 @@
 
 use glam::Vec3;
 
+/// a surface, as its color and how it takes the light
 #[derive(Clone, Copy, Debug)]
 pub struct Material {
+  /// its color under white light, as red, green and blue encoded the way srgb is
   pub color: Vec3,
   /// the strength of the highlight
   pub specular: f32,

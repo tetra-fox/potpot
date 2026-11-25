@@ -230,11 +230,17 @@ fn due(
   })
 }
 
+/// how many times its own size a panel of `size` is drawn at in a window of so many pixels,
+/// on a display with `display_scale` of them to a point
+fn scale_in(window: [u32; 2], display_scale: f64, size: Point) -> f32 {
+  let [_, _, width, _] = fitted(window, size);
+  (f64::from(width) / display_scale) as f32 / size[0]
+}
+
 impl<S: Skin> State<S> {
   /// how many times its own size a panel of `size` is drawn at
   fn scale(&self, size: Point) -> f32 {
-    let [_, _, width, _] = fitted(self.window, size);
-    (f64::from(width) / self.display_scale) as f32 / size[0]
+    scale_in(self.window, self.display_scale, size)
   }
 
   /// where each parameter stands: at what was last set from here if that has yet to reach
@@ -335,7 +341,7 @@ impl<S: Skin> Window<S> {
     let interaction = Interaction::new(dials, controls, settings.size, settings.scales);
     let values: Vec<f32> = hosts.iter().map(|host| (host.value)()).collect();
     let [_, _, width, height] = fitted(window, settings.size);
-    let scale = (f64::from(width) / size.scale_factor) as f32 / settings.size[0];
+    let scale = scale_in(window, size.scale_factor, settings.size);
     // the editor opens only if the device can build everything it is drawn with, and lay
     // out the panel as it is. what goes wrong after that is kept for the next frame to
     // find, and drawing stops there
@@ -434,7 +440,7 @@ impl<S: Skin> Window<S> {
     };
     self.misshapen.set(Some((state.window, ticks)));
     if ticks == SETTLED {
-      let scale = (f64::from(width) / state.display_scale) as f32 / self.settings.size[0];
+      let scale = scale_in(state.window, state.display_scale, self.settings.size);
       let [least, most] = self.settings.scales;
       state.wanted_scale = Some(scale.clamp(least, most));
       drop(state);

@@ -26,8 +26,9 @@ pub struct Meter {
   pub margin: f32,
   /// how round each light is, from zero for square corners to one for round
   pub corner: f32,
-  /// the share of the lights, from the bottom, where they turn yellow and then red
+  /// the share of the lights, from the bottom, where they turn yellow
   pub yellow_from: f32,
+  /// and the share where they turn red
   pub red_from: f32,
 }
 
@@ -54,11 +55,6 @@ impl Meter {
       corner: 1.0,
       ..Self::ladder(segments, diameter, length)
     }
-  }
-
-  /// how far the meter runs up the panel
-  pub fn reach(&self) -> f32 {
-    self.pitch * self.segments as f32
   }
 
   /// the shape of one light pipe's end: a low flat rectangle with tight corners and a
@@ -165,7 +161,7 @@ mod tests {
   #[test]
   fn a_meter_lights_from_the_bottom_up_in_green_yellow_and_red() {
     let meter = Meter::ladder(10, 8.0, 100.0);
-    assert_eq!(meter.reach(), 100.0);
+    assert_eq!(meter.pitch * meter.segments as f32, 100.0);
     let segment = Arc::new(meter.segment());
     let lights: Vec<Object> = (meter.lights(&segment, 50.0, 200.0, 0.45, None)).collect();
     assert_eq!(lights.len(), 10);

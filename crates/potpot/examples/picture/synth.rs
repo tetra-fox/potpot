@@ -6,7 +6,7 @@ use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Button, Edge, Grip, Knob, Meter, Top};
 use potpot::{Light, Look, Material, Object, Scene};
 
-use crate::SIZE;
+use crate::{SEAT, SIZE, framed, lettering};
 
 /// a panel being put together: what stands where, and what is lit
 #[derive(Default)]
@@ -32,12 +32,7 @@ impl Build {
 
   /// lettering centered on a point at a height off the panel
   fn letters(&mut self, text: &str, at: Vec3, tall: f32, material: Material) {
-    let weight = (tall * 0.17).max(1.0);
-    self.put(
-      parts::legend(text, tall, weight),
-      Mat4::from_translation(at),
-      material,
-    );
+    self.put(lettering(text, tall), Mat4::from_translation(at), material);
   }
 }
 
@@ -58,7 +53,7 @@ pub(super) fn synth(look: Look) -> Scene {
   };
   let ink = Material::matte(Vec3::splat(0.92));
   let dark_ink = Material::matte(Vec3::new(0.04, 0.07, 0.16));
-  let hole = Material::matte(Vec3::splat(0.012));
+  let hole = Material::matte(SEAT);
 
   // the panel and the rim around it
   build.put(
@@ -179,7 +174,11 @@ pub(super) fn synth(look: Look) -> Scene {
   // the switches, each a low key in its seat with a small light over it and a name under
   let key = Button::key(38.0, 38.0, 5.0);
   let (key_body, key_seat) = (Arc::new(key.body()), Arc::new(key.seat(2.0)));
-  let (light, light_seat) = (Arc::new(parts::led(11.0)), Arc::new(parts::led_seat(11.0)));
+  let light_size = 11.0;
+  let (light, light_seat) = (
+    Arc::new(parts::led(light_size)),
+    Arc::new(parts::led_seat(light_size)),
+  );
   let green = Vec3::new(0.55, 1.0, 0.2);
   let switches = [
     (117.0, 110.0, true, "ON"),
@@ -197,15 +196,11 @@ pub(super) fn synth(look: Look) -> Scene {
     build.place(
       &light,
       at(x, y - 31.0, UP),
-      parts::led_material(green, level, 11.0),
+      parts::led_material(green, level, light_size),
     );
     if lit {
-      build.lamps.push(potpot::Lamp {
-        at: Vec3::new(x, y - 31.0, 12.0),
-        color: green * 2.5,
-        reach: 40.0,
-        radius: 5.5,
-      });
+      let over = Vec3::new(x, y - 31.0, 12.0);
+      (build.lamps).push(parts::led_lamp(over, green, 1.0, light_size, 40.0));
     }
   }
 
@@ -354,9 +349,12 @@ pub(super) fn synth(look: Look) -> Scene {
     }
   }
 
+  let look = Look {
+    soften: 0.5,
+    bloom: 1.0,
+    ..look
+  };
   Scene {
-    size: Vec2::new(width, height),
-    heights: [-8.0, 64.0],
     lean: Vec2::new(0.0, -0.5),
     light: Light {
       toward: Vec3::new(-0.3, -0.5, 1.0),
@@ -366,12 +364,7 @@ pub(super) fn synth(look: Look) -> Scene {
       softness: 7.0,
       ..Light::default()
     },
-    look: Look {
-      soften: 0.5,
-      bloom: 1.0,
-      ..look
-    },
-    objects: build.objects,
     lamps: build.lamps,
+    ..framed(look, build.objects)
   }
 }

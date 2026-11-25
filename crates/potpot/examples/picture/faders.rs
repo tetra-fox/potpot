@@ -2,16 +2,15 @@
 
 use std::sync::Arc;
 
-use potpot::glam::{Mat4, Vec2, Vec3};
+use potpot::glam::{Mat4, Vec3};
 use potpot::parts::{self, Fader};
-use potpot::{Light, Look, Material, Object, Scene};
+use potpot::{Look, Material, Object, Scene};
 
-use crate::SIZE;
+use crate::{ALUMINUM, BLACK, SIZE, framed, lettering, screws};
 
 /// every fader cap in its slot, the last few a dj mixer's in its colors
 pub(super) fn faders(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
-  let black = Vec3::new(0.035, 0.035, 0.04);
   let (white, dark) = (Vec3::splat(0.86), Vec3::splat(0.05));
   let (wide, long, tall) = (34.0, 62.0, 26.0);
   // a dj mixer's cap is much wider across than it is long
@@ -19,17 +18,17 @@ pub(super) fn faders(look: Look) -> Scene {
   let caps = [
     (
       Fader::console(wide, long, tall),
-      Material::glossy(black),
+      Material::glossy(BLACK),
       white,
     ),
     (
       Fader::terraced(wide, long, tall),
-      Material::glossy(black),
+      Material::glossy(BLACK),
       white,
     ),
     (
       Fader::terraced(wide, long, tall),
-      Material::spun(Vec3::new(0.78, 0.79, 0.81)),
+      Material::spun(ALUMINUM),
       dark,
     ),
     (
@@ -39,7 +38,7 @@ pub(super) fn faders(look: Look) -> Scene {
     ),
     (
       Fader::wedge(wide, long, tall * 1.2),
-      Material::glossy(black),
+      Material::glossy(BLACK),
       white,
     ),
     (
@@ -58,7 +57,6 @@ pub(super) fn faders(look: Look) -> Scene {
   ];
 
   let (travel, middle) = (380.0, height / 2.0);
-  let screw = Arc::new(parts::screw(8.0));
   let slot = Arc::new(parts::fader_slot(travel, 5.0));
   let scale = Arc::new(parts::fader_ticks(11, travel, 26.0, 34.0, 5));
   let mut objects = vec![Object {
@@ -96,7 +94,7 @@ pub(super) fn faders(look: Look) -> Scene {
     let print = Material::matte(Vec3::splat(0.82));
     let mut letters = |text: &str, x: f32, y: f32, tall: f32| {
       objects.push(Object {
-        mesh: Arc::new(parts::legend(text, tall, (tall * 0.17).max(1.0))),
+        mesh: Arc::new(lettering(text, tall)),
         transform: Mat4::from_translation(Vec3::new(x, y, 0.0)),
         material: print,
       });
@@ -112,27 +110,6 @@ pub(super) fn faders(look: Look) -> Scene {
       letters(level, x - 40.0, y, 6.0);
     }
   }
-  let inset = 18.0;
-  for (x, y) in [
-    (inset, inset),
-    (width - inset, inset),
-    (inset, height - inset),
-    (width - inset, height - inset),
-  ] {
-    objects.push(Object {
-      mesh: Arc::clone(&screw),
-      transform: Mat4::from_translation(Vec3::new(x, y, 0.0)) * Mat4::from_rotation_z(x * 0.3 + y),
-      material: Material::chrome(Vec3::splat(0.75)),
-    });
-  }
-
-  Scene {
-    size: Vec2::new(width, height),
-    heights: [-8.0, 64.0],
-    lean: Vec2::new(0.0, -0.25),
-    light: Light::default(),
-    look,
-    objects,
-    lamps: Vec::new(),
-  }
+  objects.extend(screws());
+  framed(look, objects)
 }

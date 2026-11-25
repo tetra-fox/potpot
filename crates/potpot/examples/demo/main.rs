@@ -11,10 +11,9 @@ use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Button, Fader, Knob, Meter, Push, PushSwitch};
-use potpot::{Lamp, Light, Look, Material, Mesh, Object, Place, Renderer, Scene};
+use potpot::{Light, Look, Material, Mesh, Object, Place, Renderer, Scene};
 use potpot_window::controls::flat::{Color, Flat};
-use potpot_window::controls::interaction::{Control, Dial, Drag, Edit, Readout, Target, Touch};
-use potpot_window::controls::stroke;
+use potpot_window::controls::interaction::{Control, Dial, Drag, Readout, Target, Touch};
 use potpot_window::{Gpu, Opening, Param, Settings, Skin, View, wgpu};
 
 const SIZE: [f32; 2] = [900.0, 520.0];
@@ -27,10 +26,13 @@ const LEVEL: usize = 4;
 const DOTS: usize = 5;
 /// how many of the knobs drive something, which are the ones with a readout
 const WIRED: usize = 6;
+/// how many knobs come after those, one of every other style
+const REST: usize = 9;
 /// how many knobs there are, each a control on the parameter at its own place
-const KNOBS: usize = 15;
+const KNOBS: usize = WIRED + REST;
 /// the parameters after the knobs' own: the pad that flashes the lamp, the switch the keys
-/// are, and the fader that lies on its side. each button of [`buttons`] has one after these
+/// are, and the fader that lies on its side. each button of [`buttons`] that is on none of
+/// these has one of its own after them
 const FLASH: usize = KNOBS;
 const KEYS: usize = KNOBS + 1;
 const SLIDE: usize = KNOBS + 2;
@@ -51,6 +53,8 @@ const READOUT_UNDER: f32 = 76.0;
 /// half a readout's width and height
 const READOUT: [f32; 2] = [32.0, 10.0];
 const LETTERS: f32 = 8.0;
+/// how wide their strokes are
+const WEIGHT: f32 = 1.2;
 /// the lamp between the first two knobs
 const LAMP: Vec2 = Vec2::new(150.0, WIRED_Y);
 const LAMP_SIZE: f32 = 16.0;
@@ -58,7 +62,10 @@ const SWITCH: Vec2 = Vec2::new(398.0, WIRED_Y);
 /// the fader's middle and how far it slides, and the foot of the meters beside it
 const FADER: Vec2 = Vec2::new(690.0, WIRED_Y + 5.0);
 const TRAVEL: f32 = 110.0;
-const METER_FOOT: f32 = FADER.y + TRAVEL / 2.0;
+const METER_FOOT: f32 = FADER.y + TRAVEL / 2.0 + 10.0;
+/// how far across the two ladders of lights and the column of dots are
+const LADDERS: [f32; 2] = [736.0, 752.0];
+const DOTS_X: f32 = 872.0;
 /// how far down the buttons along the bottom are
 const BUTTONS_Y: f32 = 440.0;
 /// the middle of the fader that lies on its side and how far it slides, and how far down
@@ -67,7 +74,20 @@ const SLIDE_AT: Vec2 = Vec2::new(678.0, 466.0);
 const SLIDE_TRAVEL: f32 = 100.0;
 const LIGHTS_Y: f32 = 418.0;
 const LIGHT_SIZE: f32 = 11.0;
+/// the color of each light of the row, from the left
+const LIGHT_COLORS: [Vec3; 4] = [
+  Vec3::new(0.1, 0.9, 0.3),
+  Vec3::new(0.1, 0.9, 0.3),
+  Vec3::new(1.0, 0.75, 0.1),
+  Vec3::new(1.0, 0.12, 0.06),
+];
 const AMBER: Vec3 = Vec3::new(1.0, 0.55, 0.05);
+/// the black of most knobs
+const BLACK: Vec3 = Vec3::new(0.035, 0.035, 0.04);
+/// the color of aluminum turned on a lathe
+const ALUMINUM: Vec3 = Vec3::new(0.78, 0.79, 0.81);
+/// the color of the dark gap around what is set into the panel
+const SEAT: Vec3 = Vec3::splat(0.012);
 
 const INK: Color = [1.0, 0.66, 0.14, 1.0];
 const SELECTED: Color = [0.45, 0.28, 0.05, 1.0];
@@ -86,9 +106,7 @@ struct Shown {
 
 /// the six wired knobs along the top, and under them one of every other style
 fn knobs() -> Vec<Shown> {
-  let black = Vec3::new(0.035, 0.035, 0.04);
   let white = Vec3::splat(0.9);
-  let aluminum = Material::spun(Vec3::new(0.78, 0.79, 0.81));
   let percent = || Dial::linear([0.0, 100.0], 50.0, None, 0, "%");
   let wired = |name, x, knob, material, mark, dial| Shown {
     name,
@@ -98,20 +116,20 @@ fn knobs() -> Vec<Shown> {
     mark,
     dial,
   };
-  let mut knobs = vec![
+  let first: [_; WIRED] = [
     wired(
       "BRIGHT",
       80.0,
       Knob::round(30.0, 26.0),
       Material::chrome(Vec3::splat(0.8)),
-      black,
+      BLACK,
       Dial::linear([0.0, 100.0], 80.0, None, 0, "%"),
     ),
     wired(
       "HUE",
       220.0,
       Knob::fluted(30.0, 26.0),
-      Material::glossy(black),
+      Material::glossy(BLACK),
       white,
       Dial::linear([0.0, 360.0], 8.0, None, 0, ""),
     ),
@@ -119,7 +137,7 @@ fn knobs() -> Vec<Shown> {
       "LAMP",
       330.0,
       Knob::skirted(30.0, 26.0),
-      Material::glossy(black),
+      Material::glossy(BLACK),
       white,
       Dial::linear([0.0, 1.0], 1.0, Some(1.0), 0, ""),
     ),
@@ -127,8 +145,8 @@ fn knobs() -> Vec<Shown> {
       "BOUNCE",
       490.0,
       Knob::knurled(26.0, 26.0),
-      aluminum,
-      black,
+      Material::spun(ALUMINUM),
+      BLACK,
       Dial::linear([0.0, MOST_BOUNCE], 3.0, None, 1, ""),
     ),
     wired(
@@ -148,7 +166,8 @@ fn knobs() -> Vec<Shown> {
       Dial::linear([0.0, 8.0], 5.0, Some(1.0), 0, ""),
     ),
   ];
-  let rest = [
+  let mut knobs = Vec::from(first);
+  let rest: [_; REST] = [
     ("DIMPLED", Knob::dimpled(26.0, 14.0)),
     ("CHICKEN", Knob::chicken_head(26.0, 22.0)),
     ("BAR", Knob::bar(26.0, 26.0)),
@@ -161,7 +180,7 @@ fn knobs() -> Vec<Shown> {
   ];
   for (index, (name, knob)) in rest.into_iter().enumerate() {
     let material = match index % 3 {
-      0 => Material::glossy(black),
+      0 => Material::glossy(BLACK),
       1 => Material::satin(Vec3::new(0.74, 0.72, 0.66)),
       _ => Material::glossy(Vec3::new(0.70, 0.36, 0.04)),
     };
@@ -170,7 +189,7 @@ fn knobs() -> Vec<Shown> {
       at: Vec2::new(70.0 + 95.0 * index as f32, 290.0),
       knob,
       material,
-      mark: if index % 3 == 1 { black } else { white },
+      mark: if index % 3 == 1 { BLACK } else { white },
       dial: percent(),
     });
   }
@@ -233,7 +252,10 @@ fn wiring() -> (Vec<Dial>, Vec<Control>) {
   dials.push(switch());
   dials.push(Dial::linear([0.0, 2.0], 0.0, Some(1.0), 0, ""));
   dials.push(Dial::linear([0.0, 100.0], 60.0, None, 0, "%"));
-  dials.extend((0..4).map(|_| switch()));
+  let own = buttons()
+    .into_iter()
+    .filter(|button| button.parameter >= BUTTONS);
+  dials.extend(own.map(|_| switch()));
 
   let readout = Readout::new(5);
   let mut controls: Vec<Control> = (0..KNOBS)
@@ -262,6 +284,11 @@ fn wiring() -> (Vec<Dial>, Vec<Control>) {
       .map(|button| pressed(button.parameter, button.touch)),
   );
   (dials, controls)
+}
+
+/// where the light at a place in the row over the fader on its side is, from the left
+fn light_at(place: usize) -> Vec2 {
+  Vec2::new(630.0 + 32.0 * place as f32, LIGHTS_Y)
 }
 
 /// a color all the way around the wheel from red through green and blue back to red, as
@@ -343,9 +370,8 @@ impl Demo {
     let knobs = knobs();
     let mut fixed = Drawn::default();
     let ink = Material::matte(Vec3::splat(0.9));
-    let hole = Material::matte(Vec3::splat(0.012));
+    let hole = Material::matte(SEAT);
     let chrome = Material::chrome(Vec3::splat(0.8));
-    let black = Vec3::new(0.035, 0.035, 0.04);
     let size = Vec2::from(SIZE);
 
     fixed.put(
@@ -386,7 +412,7 @@ impl Demo {
         let frame = parts::frame(wide + 6.0, tall + 6.0, 3.0, 2.0, 3.0);
         let target = Some(Target::Readout(index));
         let place = Mat4::from_translation(at.extend(0.0));
-        fixed.place(&Arc::new(frame), place, Material::glossy(black), target);
+        fixed.place(&Arc::new(frame), place, Material::glossy(BLACK), target);
         let glass = Mesh::cuboid(
           Vec3::new(-wide / 2.0, -tall / 2.0, 0.0),
           Vec3::new(wide / 2.0, tall / 2.0, 0.4),
@@ -412,10 +438,10 @@ impl Demo {
     let ladder = Meter::ladder(12, 11.0, TRAVEL + 20.0);
     let dots = Meter::dots(8, 9.0, TRAVEL + 20.0);
     let seat = Arc::new(ladder.seat());
-    for x in [736.0, 752.0] {
-      fixed.extend(ladder.seats(&seat, x, METER_FOOT + 10.0));
+    for x in LADDERS {
+      fixed.extend(ladder.seats(&seat, x, METER_FOOT));
     }
-    fixed.extend(dots.seats(&Arc::new(dots.seat()), 872.0, METER_FOOT + 10.0));
+    fixed.extend(dots.seats(&Arc::new(dots.seat()), DOTS_X, METER_FOOT));
 
     // along the bottom: the gaps the buttons sit in, the slot of the fader on its side
     // under the seats of its row of lights, and slots that let the air out
@@ -432,9 +458,8 @@ impl Demo {
       SLIDE_AT,
       hole,
     );
-    for light in 0..4 {
-      let at = Vec2::new(630.0 + 32.0 * light as f32, LIGHTS_Y);
-      fixed.put(parts::led_seat(LIGHT_SIZE), at, hole);
+    for light in 0..LIGHT_COLORS.len() {
+      fixed.put(parts::led_seat(LIGHT_SIZE), light_at(light), hole);
     }
     for slot in 0..6 {
       let at = Vec2::new(790.0 + 12.0 * slot as f32, BUTTONS_Y);
@@ -494,12 +519,8 @@ impl Demo {
       parts::led_material(color, level, LAMP_SIZE),
       None,
     );
-    lamps.push(Lamp {
-      at: LAMP.extend(LAMP_SIZE),
-      color: color * level * 2.5,
-      reach: 150.0,
-      radius: LAMP_SIZE / 2.0,
-    });
+    let over = LAMP.extend(LAMP_SIZE);
+    lamps.push(parts::led_lamp(over, color, level, LAMP_SIZE, 150.0));
     let rubber = Material::silicone(Vec3::splat(0.62));
     let plunger = self.switch.plunger;
     let depth = Push::Latching.depth(on, held == Some(SWITCH_CONTROL));
@@ -545,14 +566,13 @@ impl Demo {
     for (mesh, material) in self.cap.iter().zip(materials) {
       drawn.place(mesh, cap, material, Some(Target::Control(FADER_CONTROL)));
     }
-    let foot = METER_FOOT + 10.0;
     let [segment, dot] = &self.segments;
-    for (x, level) in [(736.0, stands), (752.0, stands * 0.85)] {
-      drawn.extend(self.ladder.lights(segment, x, foot, level, None));
-      lamps.extend(self.ladder.lamp(x, foot, level));
+    for (x, level) in LADDERS.into_iter().zip([stands, stands * 0.85]) {
+      drawn.extend(self.ladder.lights(segment, x, METER_FOOT, level, None));
+      lamps.extend(self.ladder.lamp(x, METER_FOOT, level));
     }
-    drawn.extend(self.dots.lights(dot, 872.0, foot, values[DOTS], None));
-    lamps.extend(self.dots.lamp(872.0, foot, values[DOTS]));
+    drawn.extend((self.dots).lights(dot, DOTS_X, METER_FOOT, values[DOTS], None));
+    lamps.extend(self.dots.lamp(DOTS_X, METER_FOOT, values[DOTS]));
 
     // the fader on its side, and over it a row of lights that it fills from the left
     let slid = values[SLIDE];
@@ -561,18 +581,11 @@ impl Demo {
       let place = Mat4::from_translation(across.extend(0.0));
       drawn.place(mesh, place, material, Some(Target::Control(SLIDE_CONTROL)));
     }
-    let colors = [
-      Vec3::new(0.1, 0.9, 0.3),
-      Vec3::new(0.1, 0.9, 0.3),
-      Vec3::new(1.0, 0.75, 0.1),
-      Vec3::new(1.0, 0.12, 0.06),
-    ];
-    for (light, color) in colors.into_iter().enumerate() {
-      let level = (slid * 4.0 - light as f32).clamp(0.0, 1.0);
-      let at = Vec3::new(630.0 + 32.0 * light as f32, LIGHTS_Y, 0.0);
+    for (light, color) in LIGHT_COLORS.into_iter().enumerate() {
+      let level = (slid * LIGHT_COLORS.len() as f32 - light as f32).clamp(0.0, 1.0);
       drawn.place(
         &self.light,
-        Mat4::from_translation(at),
+        Mat4::from_translation(light_at(light).extend(0.0)),
         parts::led_material(color, level, LIGHT_SIZE),
         None,
       );
@@ -597,33 +610,6 @@ impl Demo {
   }
 }
 
-/// lettering with its middle at a point
-fn centered(over: &mut Flat, text: &str, at: [f32; 2], color: Color) {
-  let corner = stroke::top_left(text.chars().count(), LETTERS);
-  let from = [at[0] + corner[0], at[1] + corner[1]];
-  over.legend(text, from, LETTERS, 1.2, color);
-}
-
-/// a value being typed: what is selected on a block, and the caret
-fn typed(over: &mut Flat, edit: &Edit, middle: [f32; 2]) {
-  let count = edit.text.chars().count();
-  let gap = |place: usize| middle[0] + stroke::gap(count, place, LETTERS);
-  let (top, foot) = (
-    middle[1] - LETTERS / 2.0 - 2.0,
-    middle[1] + LETTERS / 2.0 + 2.0,
-  );
-  let selected = edit.selected();
-  if !selected.is_empty() {
-    over.rect(
-      [gap(selected.start), top],
-      [gap(selected.end), foot],
-      SELECTED,
-    );
-  }
-  centered(over, &edit.text, middle, INK);
-  over.line([gap(edit.caret), top], [gap(edit.caret), foot], 1.0, INK);
-}
-
 impl Skin for Demo {
   fn prepare(&mut self, gpu: &Gpu, view: &View, over: &mut Flat) {
     let (scene, targets) = self.scene(view.values, view.held);
@@ -635,10 +621,10 @@ impl Skin for Demo {
     for (control, (shown, reading)) in wired.enumerate() {
       let middle = [shown.at.x, shown.at.y + READOUT_UNDER];
       match view.edit.filter(|edit| edit.control == control) {
-        Some(edit) => typed(over, edit, middle),
+        Some(edit) => over.typed(edit, middle, LETTERS, WEIGHT, INK, SELECTED),
         None => {
           let written = format!("{}{}", reading.text, reading.unit);
-          centered(over, &written, middle, INK);
+          over.centered(&written, middle, LETTERS, WEIGHT, INK);
         }
       }
     }

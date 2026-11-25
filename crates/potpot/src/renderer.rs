@@ -30,9 +30,13 @@ const BOUNCE_SIZE: u32 = 64;
 /// a rectangle of a target, in its pixels
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Place {
+  /// how far its left edge is from the target's
   pub x: f32,
+  /// how far down its top edge is from the target's
   pub y: f32,
+  /// how far across it reaches
   pub width: f32,
+  /// how far down it reaches
   pub height: f32,
 }
 
@@ -357,8 +361,9 @@ impl Renderer {
   }
 
   /// stretches the picture last drawn over `place` on the target, leaving everything outside
-  /// `clip` as it was. `clip` is x, y, width and height in the target's pixels, and has to
-  /// lie on the target. before any scene is prepared there is no picture and nothing is drawn
+  /// `clip` as it was. both are in the target's pixels, `clip` as x, y, width and height,
+  /// and `clip` has to lie on the target. before any scene is prepared there is no picture
+  /// and nothing is drawn
   pub fn render(
     &self,
     encoder: &mut wgpu::CommandEncoder,

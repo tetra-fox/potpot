@@ -1,11 +1,12 @@
-//! shapes of common panel hardware, sized in panel points and centered on the z axis
+//! shapes of common panel hardware, sized in panel points and centered on the z axis.
+//! every size is more than zero
 
 mod button;
 mod fader;
 mod grip;
 mod knob;
 mod led;
-pub(crate) mod legend;
+mod legend;
 mod meter;
 mod outline;
 mod panel;
@@ -16,10 +17,10 @@ pub use button::{Button, button_transform};
 pub use fader::{Cap, Fader, fader_slot, fader_transform};
 pub use grip::Grip;
 pub use knob::{Edge, KNOB_SWEEP, Knob, Top, knob_transform};
-pub use led::{led, led_material, led_seat};
-pub use legend::{legend, legend_gap, legend_width, lettered};
+pub use led::{led, led_lamp, led_material, led_seat};
+pub use legend::legend;
 pub use meter::Meter;
-pub use panel::{bezel, frame, plate, screw, screw_cross, screw_head, screw_seat, slab, slot};
+pub use panel::{bezel, frame, plate, screw, screw_seat, slab, slot};
 pub use scale::{dashes, fader_ticks, ticks};
 pub use switch::{Push, PushSwitch};
 

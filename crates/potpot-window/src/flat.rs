@@ -28,9 +28,7 @@ impl Corner {
   const ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
     0 => Float32x2, 1 => Float32x2, 2 => Float32x2, 3 => Float32x2, 4 => Float32x4, 5 => Float32
   ];
-}
 
-impl Corner {
   /// the six corners of the two triangles a shape is drawn as
   fn of(shape: &Shape) -> [Self; 6] {
     let corner = |side: [f32; 2]| Self {
@@ -184,8 +182,8 @@ impl FlatRenderer {
   }
 
   /// draws the shapes last prepared over `place` on the target, leaving everything outside
-  /// `clip` as it was. `clip` is x, y, width and height in the target's pixels, and has to
-  /// lie on the target
+  /// it as it was. `place` is x, y, width and height in the target's pixels, and has to lie
+  /// on the target
   pub(crate) fn render(
     &self,
     encoder: &mut wgpu::CommandEncoder,

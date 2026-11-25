@@ -33,8 +33,10 @@ pub fn slab(width: f32, length: f32, height: f32, corner: f32) -> Mesh {
 
 /// a raised frame around a rectangle centered on the origin, like the bezel of a screen or
 /// the rim of a panel: `width` by `length` on the outside, `border` wide, `height` tall,
-/// with corners of radius `corner` on the outside
+/// with corners of radius `corner` on the outside. `border` is kept to what the shorter
+/// side has room for
 pub fn frame(width: f32, length: f32, border: f32, height: f32, corner: f32) -> Mesh {
+  let border = border.min(width.min(length) / 2.0);
   band(
     Outline::new(width, length, corner),
     Outline::new(width - border * 2.0, length - border * 2.0, corner - border),
@@ -67,7 +69,7 @@ pub fn bezel(inner: f32, outer: f32, height: f32) -> Mesh {
 }
 
 /// the round head of a screw, `radius` wide, with nothing cut into it: a low dome
-pub fn screw_head(radius: f32) -> Mesh {
+fn screw_head(radius: f32) -> Mesh {
   /// the rings the dome is cut into from its rim to its middle
   const DOME: usize = 6;
   let rim = Vec2::new(radius, 0.0);
@@ -83,23 +85,11 @@ pub fn screw_head(radius: f32) -> Mesh {
 
 /// a round-headed screw with a slot, `radius` wide
 pub fn screw(radius: f32) -> Mesh {
-  // the slot is a dark bar standing just proud of the dome, cheaper than cutting into it
+  // the slot is a bar standing just proud of the dome, cheaper than cutting into it
   screw_head(radius).merged(&Mesh::cuboid(
     Vec3::new(-radius * 0.75, -radius * 0.12, 0.0),
     Vec3::new(radius * 0.75, radius * 0.12, radius * 0.47),
   ))
-}
-
-/// the cross cut into the head of a screw `radius` wide, as two bars standing just proud
-/// of [`screw_head`], to be drawn dark
-pub fn screw_cross(radius: f32) -> Mesh {
-  let bar = |long: f32, wide: f32| {
-    Mesh::cuboid(
-      Vec3::new(-radius * long, -radius * wide, 0.0),
-      Vec3::new(radius * long, radius * wide, radius * 0.47),
-    )
-  };
-  bar(0.58, 0.1).merged(&bar(0.1, 0.58))
 }
 
 /// a slot cut through the panel, `width` by `length` with round ends, as a dark strip
@@ -129,6 +119,19 @@ mod tests {
       assert!(!inside, "the frame fills its middle at {position}");
       assert!(position.x.abs() <= 100.01 && position.y.abs() <= 50.01);
       assert!((0.0..=6.001).contains(&position.z));
+    }
+  }
+
+  #[test]
+  fn a_frame_with_too_wide_a_border_stays_within_its_size() {
+    let frame = frame(20.0, 10.0, 6.0, 3.0, 2.0);
+    for vertex in &frame.vertices {
+      let position = Vec3::from(vertex.position);
+      assert!(
+        position.x.abs() <= 10.01 && position.y.abs() <= 5.01,
+        "the frame reaches {position}"
+      );
+      assert!((0.0..=3.001).contains(&position.z));
     }
   }
 }

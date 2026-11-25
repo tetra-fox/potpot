@@ -148,22 +148,23 @@ impl Present {
 mod tests {
   use std::mem::offset_of;
 
-  use wgpu::naga;
+  use naga::valid::ModuleInfo;
 
   use super::*;
   use crate::mesh::Vertex;
-  use crate::renderer::pipelines::{PRESENT_SOURCE, VERTEX_ATTRIBUTES, scene_source};
+  use crate::renderer::pipelines::{VERTEX_ATTRIBUTES, present_source, scene_source};
 
-  /// a shader as wgpu will take it, which is parsed and then checked
-  fn shader(source: &str) -> naga::Module {
+  /// a shader as wgpu will take it, which is parsed and then checked, with what the check
+  /// found out about it
+  fn shader(source: &str) -> (naga::Module, ModuleInfo) {
     let module = naga::front::wgsl::parse_str(source).expect("the shader to parse");
-    naga::valid::Validator::new(
+    let info = naga::valid::Validator::new(
       naga::valid::ValidationFlags::all(),
       naga::valid::Capabilities::empty(),
     )
     .validate(&module)
     .expect("the shader to be valid");
-    module
+    (module, info)
   }
 
   fn members<'a>(module: &'a naga::Module, name: &str) -> (&'a [naga::StructMember], usize) {
@@ -210,21 +211,11 @@ mod tests {
   /// the user's machine, so all of them are written here
   #[test]
   fn every_shader_can_be_written_for_every_backend() {
-    use ::naga::back::{hlsl, msl, spv};
+    use naga::back::{hlsl, msl, spv};
 
-    let shaders = [
-      ("scene", scene_source()),
-      ("present", PRESENT_SOURCE.to_owned()),
-    ];
+    let shaders = [("scene", scene_source()), ("present", present_source())];
     for (name, source) in shaders {
-      let module = ::naga::front::wgsl::parse_str(&source).expect("the shader to parse");
-      let info = ::naga::valid::Validator::new(
-        ::naga::valid::ValidationFlags::all(),
-        ::naga::valid::Capabilities::empty(),
-      )
-      .validate(&module)
-      .expect("the shader to be valid");
-
+      let (module, info) = shader(&source);
       let mut direct3d = String::new();
       let pipeline = hlsl::PipelineOptions::default();
       hlsl::Writer::new(&mut direct3d, &hlsl::Options::default(), &pipeline)
@@ -244,7 +235,7 @@ mod tests {
 
   #[test]
   fn the_scene_shader_reads_what_it_is_given() {
-    let module = shader(&scene_source());
+    let (module, _) = shader(&scene_source());
     let globals = named([
       ("view", offset_of!(Globals, view)),
       ("light_view", offset_of!(Globals, light_view)),
@@ -277,7 +268,7 @@ mod tests {
 
   #[test]
   fn the_present_shader_reads_what_it_is_given() {
-    let module = shader(PRESENT_SOURCE);
+    let (module, _) = shader(&present_source());
     let present = named([
       ("options", offset_of!(Present, options)),
       ("more", offset_of!(Present, more)),

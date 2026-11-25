@@ -4,7 +4,6 @@ use std::f32::consts::PI;
 
 use glam::{Vec2, Vec3};
 use potpot_controls::stroke;
-pub use potpot_controls::stroke::{gap as legend_gap, lettered, width as legend_width};
 
 use super::PAINT;
 use crate::mesh::{Mesh, Vertex};

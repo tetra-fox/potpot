@@ -5,10 +5,13 @@ use std::f32::consts::TAU;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3};
 
+/// one corner of a mesh's triangles
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct Vertex {
+  /// where it is, in the mesh's own space
   pub position: [f32; 3],
+  /// the way the surface faces there, pointing out of it
   pub normal: [f32; 3],
 }
 
@@ -16,7 +19,9 @@ pub struct Vertex {
 /// vertices, so each keeps its own normal
 #[derive(Clone, Debug, Default)]
 pub struct Mesh {
+  /// the corners of its triangles
   pub vertices: Vec<Vertex>,
+  /// the triangles, each as the places of its three corners among `vertices`
   pub indices: Vec<u32>,
 }
 

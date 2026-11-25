@@ -1,6 +1,7 @@
 //! flat shapes to draw straight onto a panel, over whatever picture it has: rectangles, lines
 //! and lettering in plain colors. this is only the list of them, which anything may draw
 
+use crate::interaction::Edit;
 use crate::{Point, stroke};
 
 /// a color as it is to look, with how much of what is under it it covers
@@ -74,14 +75,45 @@ impl Flat {
   /// `from`: letters `height` tall with strokes `weight` wide
   pub fn legend(&mut self, text: &str, from: Point, height: f32, weight: f32, color: Color) {
     let corner = stroke::top_left(text.chars().count(), height);
-    let offset = [from[0] - corner[0], from[1] - corner[1]];
+    let middle = [from[0] - corner[0], from[1] - corner[1]];
+    self.centered(text, middle, height, weight, color);
+  }
+
+  /// the same lettering with the middle of it all at `middle`
+  pub fn centered(&mut self, text: &str, middle: Point, height: f32, weight: f32, color: Color) {
     for [start, end] in stroke::lines(text, height) {
       self.line(
-        [offset[0] + start[0], offset[1] + start[1]],
-        [offset[0] + end[0], offset[1] + end[1]],
+        [middle[0] + start[0], middle[1] + start[1]],
+        [middle[0] + end[0], middle[1] + end[1]],
         weight,
         color,
       );
     }
+  }
+
+  /// a value being typed, as lettering in `ink` with its middle at `middle`: what is
+  /// selected on a block of `selected`, two points taller than the letters at either end,
+  /// and the caret as a line one point wide
+  pub fn typed(
+    &mut self,
+    edit: &Edit,
+    middle: Point,
+    height: f32,
+    weight: f32,
+    ink: Color,
+    selected: Color,
+  ) {
+    let count = edit.text.chars().count();
+    let gap = |place: usize| middle[0] + stroke::gap(count, place, height);
+    let (top, foot) = (
+      middle[1] - height / 2.0 - 2.0,
+      middle[1] + height / 2.0 + 2.0,
+    );
+    let marked = edit.selected();
+    if !marked.is_empty() {
+      self.rect([gap(marked.start), top], [gap(marked.end), foot], selected);
+    }
+    self.centered(&edit.text, middle, height, weight, ink);
+    self.line([gap(edit.caret), top], [gap(edit.caret), foot], 1.0, ink);
   }
 }

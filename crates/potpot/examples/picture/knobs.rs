@@ -2,30 +2,11 @@
 
 use std::sync::Arc;
 
-use potpot::glam::{Mat4, Vec2, Vec3};
+use potpot::glam::{Mat4, Vec3};
 use potpot::parts::{self, Knob, Top};
-use potpot::{Light, Look, Material, Object, Scene};
+use potpot::{Look, Material, Object, Scene};
 
-use crate::SIZE;
-
-/// what each knob of the gallery is called, in the order they are shown
-const NAMES: [&str; 15] = [
-  "ROUND",
-  "FLUTED",
-  "SKIRTED",
-  "KNURLED",
-  "DISHED",
-  "DIMPLED",
-  "FACETED",
-  "CHICKEN HEAD",
-  "BAR",
-  "LEVER",
-  "RIDGE",
-  "CAPPED",
-  "HEX",
-  "RIBBED",
-  "CONICAL",
-];
+use crate::{ALUMINUM, BLACK, SIZE, framed, lettering, screws};
 
 /// how a knob of the gallery is marked
 #[derive(Clone, Copy)]
@@ -36,9 +17,10 @@ enum Marker {
   None,
 }
 
-/// a knob of the gallery: its shape, what it is made of, what marks it and in which color,
-/// and what its face is inlaid with if anything
+/// a knob of the gallery: what it is called, its shape, what it is made of, what marks it
+/// and in which color, and what its face is inlaid with if anything
 struct Shown {
+  name: &'static str,
   knob: Knob,
   material: Material,
   marker: Marker,
@@ -50,10 +32,10 @@ struct Shown {
 pub(super) fn knobs(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let (radius, tall) = (58.0, 42.0);
-  let black = Vec3::new(0.035, 0.035, 0.04);
   let white = Vec3::splat(0.86);
-  let aluminum = Material::spun(Vec3::new(0.78, 0.79, 0.81));
-  let shown = |knob, material, marker| Shown {
+  let aluminum = Material::spun(ALUMINUM);
+  let shown = |name, knob, material, marker| Shown {
+    name,
     knob,
     material,
     marker,
@@ -62,102 +44,120 @@ pub(super) fn knobs(look: Look) -> Scene {
   };
   let knobs = [
     shown(
+      "ROUND",
       Knob::round(radius, tall),
-      Material::glossy(black),
+      Material::glossy(BLACK),
       Marker::Line,
     ),
     shown(
+      "FLUTED",
       Knob::fluted(radius, tall),
-      Material::glossy(black),
+      Material::glossy(BLACK),
       Marker::Line,
     ),
     Shown {
       cap: Some(aluminum),
-      mark: black,
+      mark: BLACK,
       ..shown(
+        "SKIRTED",
         Knob::skirted(radius, tall),
-        Material::glossy(black),
+        Material::glossy(BLACK),
         Marker::Line,
       )
     },
     Shown {
-      mark: black,
-      ..shown(Knob::knurled(radius * 0.85, tall), aluminum, Marker::Line)
+      mark: BLACK,
+      ..shown(
+        "KNURLED",
+        Knob::knurled(radius * 0.85, tall),
+        aluminum,
+        Marker::Line,
+      )
     },
     shown(
+      "DISHED",
       Knob::dished(radius, tall),
       Material::satin(Vec3::new(0.50, 0.08, 0.07)),
       Marker::Dot,
     ),
     shown(
+      "DIMPLED",
       Knob::dimpled(radius, tall * 0.55),
       Material::satin(Vec3::new(0.74, 0.72, 0.66)),
       Marker::None,
     ),
     shown(
+      "FACETED",
       Knob::faceted(radius, tall),
       Material::glossy(Vec3::new(0.06, 0.13, 0.26)),
       Marker::Line,
     ),
     shown(
+      "CHICKEN HEAD",
       Knob::chicken_head(radius, tall),
-      Material::glossy(black),
+      Material::glossy(BLACK),
       Marker::Line,
     ),
     shown(
+      "BAR",
       Knob::bar(radius, tall * 1.2),
-      Material::glossy(black),
+      Material::glossy(BLACK),
       Marker::Line,
     ),
     shown(
+      "LEVER",
       Knob::lever(radius, tall * 0.8),
       Material::glossy(Vec3::new(0.70, 0.36, 0.04)),
       Marker::Line,
     ),
     shown(
+      "RIDGE",
       Knob::ridge(radius, tall * 1.25),
-      Material::glossy(black),
+      Material::glossy(BLACK),
       Marker::Line,
     ),
     Shown {
       cap: Some(aluminum),
-      mark: black,
+      mark: BLACK,
       ..shown(
+        "CAPPED",
         Knob {
           skirt: 0.0,
           top: Top::Flat,
           ..Knob::knurled(radius * 0.8, tall * 1.1)
         },
-        Material::glossy(black),
+        Material::glossy(BLACK),
         Marker::Line,
       )
     },
     shown(
+      "HEX",
       Knob::hex(radius, tall * 1.1),
-      Material::glossy(black),
+      Material::glossy(BLACK),
       Marker::Line,
     ),
     Shown {
       cap: Some(aluminum),
-      mark: black,
+      mark: BLACK,
       ..shown(
+        "RIBBED",
         Knob::ribbed(radius * 0.8, tall * 1.1),
-        Material::satin(black),
+        Material::satin(BLACK),
         Marker::Line,
       )
     },
     Shown {
       cap: Some(Material::spun(Vec3::new(0.80, 0.66, 0.36))),
-      mark: black,
+      mark: BLACK,
       ..shown(
+        "CONICAL",
         Knob::conical(radius, tall),
-        Material::glossy(black),
+        Material::glossy(BLACK),
         Marker::Line,
       )
     },
   ];
 
-  let screw = Arc::new(parts::screw(8.0));
   let scale = Arc::new(parts::ticks(
     11,
     parts::KNOB_SWEEP,
@@ -202,36 +202,15 @@ pub(super) fn knobs(look: Look) -> Scene {
     let engraved = Material::matte(Vec3::splat(0.08));
     let mut letters = |text: &str, x: f32, y: f32, tall: f32| {
       objects.push(Object {
-        mesh: Arc::new(parts::legend(text, tall, tall * 0.17)),
+        mesh: Arc::new(lettering(text, tall)),
         transform: Mat4::from_translation(Vec3::new(x, y, 0.0)),
         material: engraved,
       });
     };
-    letters(NAMES[index], x, y + radius + 34.0, 9.0);
+    letters(shown.name, x, y + radius + 34.0, 9.0);
     letters("0", x - radius - 4.0, y + radius + 14.0, 7.0);
     letters("10", x + radius + 6.0, y + radius + 14.0, 7.0);
   }
-  let inset = 18.0;
-  for (x, y) in [
-    (inset, inset),
-    (width - inset, inset),
-    (inset, height - inset),
-    (width - inset, height - inset),
-  ] {
-    objects.push(Object {
-      mesh: Arc::clone(&screw),
-      transform: Mat4::from_translation(Vec3::new(x, y, 0.0)) * Mat4::from_rotation_z(x * 0.3 + y),
-      material: Material::chrome(Vec3::splat(0.75)),
-    });
-  }
-
-  Scene {
-    size: Vec2::new(width, height),
-    heights: [-8.0, 64.0],
-    lean: Vec2::new(0.0, -0.25),
-    light: Light::default(),
-    look,
-    objects,
-    lamps: Vec::new(),
-  }
+  objects.extend(screws());
+  framed(look, objects)
 }

@@ -72,11 +72,14 @@ fn ribbon(path: &[Vec2], half_width: f32) -> Mesh {
 pub struct Knob {
   /// the widest the knob gets, at its skirt if it has one
   pub radius: f32,
+  /// how high the rim of its top stands, along z
   pub height: f32,
   /// how much narrower the grip is than a skirt under it, as a share of the radius. zero is
   /// a knob with straight sides and no skirt
   pub skirt: f32,
+  /// the outline of its side
   pub grip: Grip,
+  /// the shape of its face
   pub top: Top,
   /// how much narrower the grip is at its top than at its foot, as a share of its radius,
   /// for a knob that is a cone
@@ -99,13 +102,16 @@ pub enum Edge {
 /// the face of a knob
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Top {
+  /// level all over
   Flat,
   /// hollowed like a shallow bowl, `depth` of the height deep at the middle
   Dished {
+    /// how far down the middle is, as a share of the height
     depth: f32,
   },
   /// raised to a round crown, `rise` of the height higher at the middle
   Domed {
+    /// how far up the middle is, as a share of the height
     rise: f32,
   },
   /// flat but for one fingertip-sized divot near the rim on the side the knob points at,
@@ -443,9 +449,10 @@ impl Knob {
       _ => {}
     }
     let at = Vec2::from_angle(angle) * ring.radius * out;
+    // a ring on the face has rounded off by as much as it has come in from the rim
     let height = ring
       .height
-      .unwrap_or_else(|| self.top_height(at, ring.radius / self.face_radius()));
+      .unwrap_or_else(|| self.top_height(at, 1.0 - ring.rounded));
     at.extend(height)
   }
 
@@ -666,5 +673,23 @@ mod tests {
     assert!(knob.top_at(center) < 30.0 * 0.75);
     assert_eq!(knob.top_at(center + Vec2::X * radius * 1.01), 30.0);
     assert_eq!(knob.top_at(-center), 30.0);
+  }
+
+  #[test]
+  fn a_knob_tapered_to_a_point_has_a_place_for_every_vertex() {
+    let knob = Knob {
+      taper: 1.0,
+      ..Knob::round(40.0, 30.0)
+    };
+    for mesh in [knob.body(), knob.line()] {
+      assert!(!mesh.vertices.is_empty());
+      for vertex in &mesh.vertices {
+        assert!(
+          Vec3::from(vertex.position).is_finite(),
+          "{:?}",
+          vertex.position
+        );
+      }
+    }
   }
 }

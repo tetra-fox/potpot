@@ -17,6 +17,7 @@ pub struct Button {
   pub width: f32,
   /// how long it is, along y
   pub length: f32,
+  /// how high the rim of its top stands, along z
   pub height: f32,
   /// how round its corners are, from zero for square to one for as round as its shorter
   /// side allows, which makes a square button a circle

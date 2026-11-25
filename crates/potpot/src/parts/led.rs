@@ -6,6 +6,7 @@ use super::button::Button;
 use super::outline::Outline;
 use crate::material::Material;
 use crate::mesh::Mesh;
+use crate::scene::Lamp;
 
 /// a small round light with a domed top, like the indicator beside a switch
 pub fn led(diameter: f32) -> Mesh {
@@ -33,4 +34,15 @@ pub fn led_material(color: Vec3, level: f32, diameter: f32) -> Material {
     ..dark
   }
   .lit(color, level, diameter * 0.45)
+}
+
+/// the light a small light of a color at a level throws on what is around it, from `at`
+/// over its middle out to `reach` away
+pub fn led_lamp(at: Vec3, color: Vec3, level: f32, diameter: f32, reach: f32) -> Lamp {
+  Lamp {
+    at,
+    color: color * level * 2.5,
+    reach,
+    radius: diameter / 2.0,
+  }
 }

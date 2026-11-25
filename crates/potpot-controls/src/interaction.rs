@@ -13,6 +13,9 @@ const DOUBLE_TIME: Duration = Duration::from_millis(400);
 const DOUBLE_REACH: f32 = 4.0;
 /// a turn of the wheel this long after the last belongs to a new gesture
 const WHEEL_REST: Duration = Duration::from_millis(400);
+/// a count of steps or of lines this close to a whole one is that one: sums of their parts
+/// come out a hair off
+const SLACK: f32 = 1e-4;
 /// the way the pointer is dragged to turn a control, and how far that turns it
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
@@ -123,8 +126,8 @@ impl Default for Feel {
 
 /// what there is to know of one parameter, for the controls that turn it. its value is a part
 /// of its whole turn, from zero to one, and its plain value is that in the units it is read
-/// and written in. it can be handed
-/// to another thread, which is where some systems have a window's
+/// and written in. it can be handed to another thread, which is where some systems have a
+/// window's
 #[non_exhaustive]
 pub struct Dial {
   /// the value a reset gives it
@@ -228,7 +231,8 @@ impl Dial {
   }
 
   /// the value some lines of the wheel on from another. with the fine key it is a part of a
-  /// step further, and without it the next whole steps that way
+  /// step further, and without it the next whole steps that way, one for each of its lines,
+  /// which are whole
   fn wheeled(&self, value: f32, lines: f32, fine: bool, feel: Feel) -> f32 {
     let turned = match self.step {
       None => value + lines * feel.wheel * if fine { feel.fine } else { 1.0 },
@@ -236,13 +240,11 @@ impl Dial {
       Some(step) => {
         let steps = (self.plain)(value) / step;
         // from between two steps the first line goes to the one that way, and no further
-        let slack = 1e-4;
         let from = if lines > 0.0 {
-          (steps + slack).floor()
+          (steps + SLACK).floor()
         } else {
-          (steps - slack).ceil()
+          (steps - SLACK).ceil()
         };
-        let lines = lines.signum() * lines.abs().round().max(1.0);
         (self.turn)((from + lines) * step)
       }
     };
@@ -446,7 +448,8 @@ pub enum Event {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
   /// the host is told a gesture on a parameter begins, then its values, then that it ends.
-  /// the parameter is known by its place among the panel's, which is its control's
+  /// the parameter is known by its place among the panel's parameters, which is not its
+  /// control's among the controls
   Begin(usize),
   /// the parameter is set to a value
   Set(usize, f32),
@@ -591,6 +594,18 @@ enum State {
   Menu(Menu),
 }
 
+/// the wheel turning a control
+#[derive(Debug)]
+struct Wheel {
+  control: usize,
+  /// the value it last set. none until it sets one, which is when the host hears of it
+  set: Option<f32>,
+  /// the part of a line it has turned a control that moves in steps, short of a whole one
+  gathered: f32,
+  /// when it last moved
+  last: Instant,
+}
+
 /// what the panel is like at the time an event comes in
 #[derive(Clone, Copy, Debug)]
 pub struct Moment<'a> {
@@ -613,8 +628,8 @@ pub struct Interaction {
   state: State,
   /// the last press of the left button, for telling a double click
   pressed: Option<(Instant, Point, Target)>,
-  /// the control the wheel is turning, its value, and when the wheel last moved
-  wheel: Option<(usize, f32, Instant)>,
+  /// what the wheel is turning, until it rests
+  wheel: Option<Wheel>,
   /// what the clipboard was asked for, until its text comes
   awaiting: Option<Paste>,
   /// the least and the most times its own size the window is pulled to
@@ -646,6 +661,10 @@ impl Interaction {
   /// the behaviour of a panel `size` across and down with these controls on parameters the
   /// dials describe. the grip pulls the window from the first of `scales` times its own
   /// size to the second
+  ///
+  /// # Panics
+  ///
+  /// if a control names a parameter that `dials` has none for
   pub fn new(dials: Vec<Dial>, controls: Vec<Control>, size: Point, scales: [f32; 2]) -> Self {
     assert!(
       controls
@@ -665,7 +684,8 @@ impl Interaction {
     }
   }
 
-  /// what each control shows with the parameters at `values`, in the controls' order
+  /// what each control shows with the parameters at `values`, in the controls' order.
+  /// `values` has one for every parameter
   pub fn readings(&self, values: &[f32]) -> Vec<Reading> {
     (self.controls.iter().enumerate())
       .map(|(place, control)| {
@@ -750,7 +770,7 @@ impl Interaction {
         self.dismiss(&mut actions);
       }
       Event::Tick => {
-        if let Some((_, _, last)) = self.wheel
+        if let Some(Wheel { last, .. }) = self.wheel
           && moment.now.duration_since(last) >= WHEEL_REST
         {
           self.rest_wheel(&mut actions);
@@ -758,19 +778,27 @@ impl Interaction {
       }
       Event::Closed => {
         self.rest_wheel(&mut actions);
-        // a latching button held as the window goes was not let go, and stays as it was
-        if let State::Held {
-          push: Push::Latching,
-          ..
-        } = self.state
-        {
-          self.state = State::Idle;
-        }
-        self.let_go(&mut actions);
+        self.cut_short(&mut actions);
         self.state = State::Idle;
       }
     }
     actions
+  }
+
+  /// what the left button has open is over with no release of it: a drag or a pull at the
+  /// grip ends and a momentary button goes off, and a latching one was not let go, so it
+  /// stays as it was
+  fn cut_short(&mut self, actions: &mut Vec<Action>) {
+    if let State::Held {
+      push: Push::Latching,
+      ..
+    } = self.state
+    {
+      // it comes back out all the same
+      actions.push(Action::Redraw);
+      self.state = State::Idle;
+    }
+    self.let_go(actions);
   }
 
   /// the left button is up, or as good as: a drag, a press or a pull at the grip is over
@@ -935,7 +963,10 @@ impl Interaction {
         }
         self.commit(actions);
       }
-      State::Idle | State::Drag { .. } | State::Held { .. } | State::Resize { .. } => {}
+      // the release of the press before never came, which baseview leaves out when windows
+      // takes the pointer away
+      State::Drag { .. } | State::Held { .. } | State::Resize { .. } => self.cut_short(actions),
+      State::Idle => {}
     }
 
     match over {
@@ -1025,6 +1056,10 @@ impl Interaction {
     else {
       return;
     };
+    // a wheel turned sideways comes as no lines this way
+    if lines == 0.0 {
+      return;
+    }
     let Control {
       parameter,
       feel,
@@ -1035,22 +1070,51 @@ impl Interaction {
     if let Touch::Press(_) = touch {
       return;
     }
-    let from = match self.wheel {
-      Some((turning, value, _)) if turning == control => value,
-      _ => {
-        self.rest_wheel(actions);
+    if (self.wheel.as_ref()).is_none_or(|wheel| wheel.control != control) {
+      self.rest_wheel(actions);
+    }
+    let wheel = self.wheel.get_or_insert(Wheel {
+      control,
+      set: None,
+      gathered: 0.0,
+      last: moment.now,
+    });
+    wheel.last = moment.now;
+    let dial = &self.dials[parameter];
+    // a control that moves in steps goes one for each whole line, and what is left of a
+    // line waits for the rest of it
+    let lines = if dial.step.is_some() && !fine {
+      wheel.gathered += lines;
+      let whole = (wheel.gathered + SLACK.copysign(wheel.gathered)).trunc();
+      wheel.gathered -= whole;
+      if whole == 0.0 {
+        return;
+      }
+      whole
+    } else {
+      lines
+    };
+    let from = match wheel.set {
+      Some(value) => value,
+      None => {
         actions.push(Action::Begin(parameter));
         moment.values[parameter]
       }
     };
-    let value = self.dials[parameter].wheeled(from, lines, fine, feel);
-    self.wheel = Some((control, value, moment.now));
+    let value = dial.wheeled(from, lines, fine, feel);
+    wheel.set = Some(value);
     actions.push(Action::Set(parameter, value));
   }
 
-  /// ends the gesture the wheel has open, if it has one
+  /// the wheel is no longer turning what it was, which ends the gesture if the host has
+  /// heard of one
   fn rest_wheel(&mut self, actions: &mut Vec<Action>) {
-    if let Some((control, _, _)) = self.wheel.take() {
+    if let Some(Wheel {
+      control,
+      set: Some(_),
+      ..
+    }) = self.wheel.take()
+    {
       actions.push(Action::End(self.controls[control].parameter));
     }
   }
@@ -1174,7 +1238,9 @@ impl Interaction {
   /// the value of a control that text stands for, if it reads as one
   fn read(&self, control: usize, text: &str) -> Option<f32> {
     // a comma is the decimal point of many keyboards' number pads
-    (self.dials[self.controls[control].parameter].read)(&text.replace(',', "."))
+    let read = (self.dials[self.controls[control].parameter].read)(&text.replace(',', "."));
+    // "nan" is a number to a dial that reads any, and no place on its turn
+    read.filter(|value| value.is_finite())
   }
 
   fn dismiss(&mut self, actions: &mut Vec<Action>) {
@@ -1684,6 +1750,61 @@ mod tests {
     assert_eq!(bench.wheel(knob, 1.0, false), [Set(STEPPED, 1.0)]);
   }
 
+  #[test]
+  fn a_turn_of_no_lines_tells_the_host_nothing() {
+    // what a wheel turned sideways comes in as
+    let mut bench = Bench::new();
+    assert_eq!(bench.wheel(Target::Control(STEPPED), 0.0, false), []);
+    assert_eq!(bench.wheel(Target::Control(PITCH), 0.0, false), []);
+    assert_eq!(bench.wheel(Target::Control(PITCH), -0.0, true), []);
+    // and no gesture is left open by it
+    assert_eq!(bench.send(Event::Closed), []);
+  }
+
+  #[test]
+  fn parts_of_a_line_gather_into_the_steps_of_a_stepped_control() {
+    let mut bench = Bench::new();
+    let knob = Target::Control(STEPPED);
+    // a twentieth of a line at a time, as a trackpad sends them
+    for _ in 0..19 {
+      assert_eq!(bench.wheel(knob, 0.05, false), []);
+    }
+    assert_eq!(
+      bench.wheel(knob, 0.05, false),
+      [Begin(STEPPED), Set(STEPPED, semitones(1.0))]
+    );
+    // a line and a half is one step now, and the half makes the next with another
+    assert_eq!(
+      bench.wheel(knob, -1.5, false),
+      [Set(STEPPED, semitones(0.0))]
+    );
+    assert_eq!(
+      bench.wheel(knob, -0.5, false),
+      [Set(STEPPED, semitones(-1.0))]
+    );
+    assert_eq!(
+      bench.after(Duration::from_secs(1), Event::Tick),
+      [End(STEPPED)]
+    );
+  }
+
+  #[test]
+  fn less_than_a_line_on_a_stepped_control_tells_the_host_nothing() {
+    let mut bench = Bench::new();
+    let knob = Target::Control(STEPPED);
+    for _ in 0..3 {
+      assert_eq!(bench.wheel(knob, 0.3, false), []);
+    }
+    // the wheel rests with no gesture to end, and what had gathered goes
+    assert_eq!(bench.after(Duration::from_secs(1), Event::Tick), []);
+    assert_eq!(bench.wheel(knob, 0.3, false), []);
+    // as it does when the wheel moves to another control and back
+    let other = bench.wheel(Target::Control(PITCH), 1.0, false);
+    assert_eq!(other[0], Begin(PITCH));
+    assert_eq!(bench.wheel(knob, 0.9, false), [End(PITCH)]);
+    assert_eq!(bench.press(None, 100.0), []);
+  }
+
   /// the grip, in the far corner of the bench's panel, ten points in from both edges
   const GRIP: Point = [SIZE[0] - 10.0, SIZE[1] - 10.0];
 
@@ -1929,6 +2050,70 @@ mod tests {
     bench.wheel(Target::Control(MIX), -1.0, false);
     assert_eq!(bench.send(Event::Closed), [End(MIX)]);
     assert_eq!(bench.send(Event::Closed), []);
+  }
+
+  #[test]
+  fn a_press_while_a_drag_is_open_ends_the_drag_first() {
+    // a release that never came, as when the system takes the pointer away
+    let mut bench = Bench::new();
+    bench.press(Some(Target::Control(PITCH)), 100.0);
+    assert_eq!(bench.drag(80.0, false)[0], Begin(PITCH));
+    assert_eq!(bench.press(Some(Target::Control(MIX)), 100.0), [End(PITCH)]);
+    // and the press is a drag of its own
+    assert_eq!(bench.drag(120.0, false)[0], Begin(MIX));
+    assert_eq!(bench.press(None, 200.0), [End(MIX)]);
+    assert_eq!(bench.drag(150.0, false), []);
+    assert_eq!(bench.release(), []);
+  }
+
+  #[test]
+  fn a_press_while_a_button_is_held_lets_the_button_go_first() {
+    let mut bench = button(Push::Momentary);
+    let over = Some(Target::Control(MIX));
+    bench.press(over, 100.0);
+    assert_eq!(
+      bench.press(over, 100.0),
+      [Set(MIX, 0.0), End(MIX), Redraw, Begin(MIX), Set(MIX, 1.0)]
+    );
+    assert_eq!(bench.press(None, 100.0), [Set(MIX, 0.0), End(MIX), Redraw]);
+    assert_eq!(bench.interaction.held(), None);
+    // a latching one was not let go: it comes back out as it was
+    let mut bench = button(Push::Latching);
+    bench.press(over, 100.0);
+    assert_eq!(bench.press(None, 100.0), [Redraw]);
+    assert_eq!(bench.interaction.held(), None);
+    assert_eq!(bench.release(), []);
+  }
+
+  #[test]
+  fn a_press_while_the_grip_is_pulled_lets_the_grip_go_first() {
+    let mut bench = Bench::new();
+    grab(&mut bench);
+    assert_eq!(bench.press(None, 100.0), []);
+    // with no button down on the grip the pointer scales nothing
+    assert_eq!(pull(&mut bench, [GRIP[0] + 50.0, GRIP[1]]), []);
+  }
+
+  #[test]
+  fn text_that_is_no_finite_number_sets_nothing() {
+    // a dial that reads any number, behind a readout that letters can be typed into
+    let mut bench = Bench::new();
+    bench.interaction.dials[PITCH] = Dial::linear([-12.0, 12.0], 0.0, None, 1, " st");
+    bench.interaction.controls[PITCH].readout = Readout::new(ROOM);
+    bench.edit(PITCH);
+    bench.kind("NAN");
+    assert_eq!(bench.typed().0, "NAN");
+    assert_eq!(bench.key(Key::Enter), [Redraw]);
+    choose(&mut bench, Target::Control(PITCH), Item::Paste);
+    assert_eq!(bench.send(Event::Clipboard(Some("nan".to_owned()))), []);
+    // past the end of the turn is still its end
+    bench.after(Duration::from_secs(1), Event::Tick);
+    bench.edit(PITCH);
+    bench.kind("inf");
+    assert_eq!(
+      bench.key(Key::Enter),
+      [Begin(PITCH), Set(PITCH, 1.0), End(PITCH), Redraw]
+    );
   }
 
   #[test]
@@ -2453,7 +2638,7 @@ mod tests {
     );
     // held as the window goes, it stays as it was
     bench.press(over, 100.0);
-    assert_eq!(bench.send(Event::Closed), []);
+    assert_eq!(bench.send(Event::Closed), [Redraw]);
   }
 
   #[test]

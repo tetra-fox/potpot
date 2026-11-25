@@ -56,27 +56,21 @@ fn strokes(letter: char) -> &'static [&'static str] {
 }
 
 /// whether the face has a letter for it. a small letter counts as its capital
-pub fn lettered(letter: char) -> bool {
+pub(crate) fn lettered(letter: char) -> bool {
   !strokes(letter.to_ascii_uppercase()).is_empty()
 }
 
 /// how far across from the middle of lettering of `count` letters `height` tall the gap
 /// before its letter `index` is, where a mark between two letters goes. `index` runs up to
 /// `count`, which is the gap after the last letter
-pub fn gap(count: usize, index: usize, height: f32) -> f32 {
+pub(crate) fn gap(count: usize, index: usize, height: f32) -> f32 {
   let unit = height / 6.0;
   left_edge(count, unit) + (index as f32 * 6.0 - 1.0) * unit
 }
 
-/// how wide lettering of `count` letters `height` tall is, from the left of its first letter to
-/// the right of its last
-pub const fn width(count: usize, height: f32) -> f32 {
-  -2.0 * left_edge(count, height / 6.0)
-}
-
 /// the left edge of the first of `count` letters from the middle of them all. each letter
 /// is four units wide, and two more go to the gap after it
-const fn left_edge(count: usize, unit: f32) -> f32 {
+fn left_edge(count: usize, unit: f32) -> f32 {
   -(count as f32 * 6.0 - 2.0) * unit / 2.0
 }
 
@@ -105,7 +99,7 @@ pub fn lines(text: &str, height: f32) -> Vec<[Point; 2]> {
 
 /// where the top left of the first letter is from the middle of lettering of `count` letters
 /// `height` tall
-pub fn top_left(count: usize, height: f32) -> Point {
+pub(crate) fn top_left(count: usize, height: f32) -> Point {
   [left_edge(count, height / 6.0), -height / 2.0]
 }
 
@@ -139,6 +133,5 @@ mod tests {
     assert_eq!(gaps, [-18.0, -6.0, 6.0, 18.0]);
     // with no letters the one gap is the middle
     assert_eq!(gap(0, 0, 12.0), 0.0);
-    assert_eq!(width(3, 12.0), 32.0);
   }
 }

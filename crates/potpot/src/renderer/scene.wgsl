@@ -1,13 +1,18 @@
 // the panel's objects under one light: into the shadow map, into the maps of how high they
 // are and of the light they give off, and then into the picture
+// `encode` and `decode` are in srgb.wgsl, which is put ahead of this source when it is loaded
 
 struct Globals {
   view: mat4x4<f32>,
   light_view: mat4x4<f32>,
+  // and in w how wide shadow edges are: the shadow map texels between the places
+  // `lit_share` looks at
   toward_light: vec4<f32>,
   // and in w how far off the light and the viewer are for what shines, or zero for
   // infinitely far
   toward_viewer: vec4<f32>,
+  // and in w how much brighter the panel is at its edge nearest the light than in its
+  // middle
   light_color: vec4<f32>,
   // and in w how much of the light that comes off surfaces lands on what is next to them
   ambient: vec4<f32>,
@@ -39,10 +44,22 @@ struct Lamp {
 @group(1) @binding(3) var bounce_map: texture_2d<f32>;
 @group(1) @binding(4) var bounce_sampler: sampler;
 
+const TAU: f32 = 6.2831853;
+// how many shadow map texels to each side of a point are looked at for a soft shadow edge
+const SHADOW_SPREAD: i32 = 2;
+// how many rings of places around a point are looked at for what stands over it, and how
+// many places are in each ring
+const OPEN_RINGS: i32 = 3;
+const OPEN_STEPS: i32 = 10;
+// a turn over OPEN_STEPS. worked out from TAU it rounds one bit higher than this, which
+// changes pixels
+const OPEN_TURN: f32 = 0.6283185;
 // how many places between a point and a lamp are looked at for what blocks the lamp
 const LAMP_STEPS: i32 = 12;
-// how many rings of places around a point are looked at for the light that comes off them
+// how many rings of places around a point are looked at for the light that comes off them,
+// and how many places are in each ring
 const BOUNCE_RINGS: i32 = 3;
+const BOUNCE_STEPS: i32 = 8;
 
 struct Corner {
   @location(0) position: vec3<f32>,
@@ -129,25 +146,14 @@ fn lit_share(world: vec3<f32>, facing: f32) -> f32 {
   }
   // spread wide enough that a shadow's edge is a few pixels of the picture
   var share = 0.0;
-  for (var x = -2; x <= 2; x++) {
-    for (var y = -2; y <= 2; y++) {
+  let side = SHADOW_SPREAD * 2 + 1;
+  for (var x = -SHADOW_SPREAD; x <= SHADOW_SPREAD; x++) {
+    for (var y = -SHADOW_SPREAD; y <= SHADOW_SPREAD; y++) {
       let aside = vec2<f32>(f32(x), f32(y)) * globals.shadows.y * globals.toward_light.w;
       share += textureSampleCompareLevel(shadow_map, shadow_sampler, at + aside, depth);
     }
   }
-  return share / 25.0;
-}
-
-fn encode(linear: vec3<f32>) -> vec3<f32> {
-  let low = linear * 12.92;
-  let high = 1.055 * pow(linear, vec3<f32>(1.0 / 2.4)) - 0.055;
-  return select(high, low, linear <= vec3<f32>(0.0031308));
-}
-
-fn decode(encoded: vec3<f32>) -> vec3<f32> {
-  let low = encoded / 12.92;
-  let high = pow((encoded + 0.055) / 1.055, vec3<f32>(2.4));
-  return select(high, low, encoded <= vec3<f32>(0.04045));
+  return share / f32(side * side);
 }
 
 // how high the highest thing over a point of the panel is
@@ -164,11 +170,11 @@ fn height_over(at: vec2<f32>) -> f32 {
 fn open_share(world: vec3<f32>) -> f32 {
   var closed = 0.0;
   var weight = 0.0;
-  for (var ring = 0; ring < 3; ring++) {
+  for (var ring = 0; ring < OPEN_RINGS; ring++) {
     let reach = 3.0 + f32(ring * ring) * 5.5 + f32(ring) * 2.0;
-    for (var step = 0; step < 10; step++) {
+    for (var step = 0; step < OPEN_STEPS; step++) {
       // each ring turned against the last, so that their points do not line up
-      let turn = (f32(step) + f32(ring) * 0.37) * 0.6283185;
+      let turn = (f32(step) + f32(ring) * 0.37) * OPEN_TURN;
       let over = height_over(world.xy + vec2<f32>(cos(turn), sin(turn)) * reach);
       let rise = over - world.z - 0.6;
       let near = 1.0 / (1.0 + reach * 0.12);
@@ -245,9 +251,9 @@ fn bounced(world: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
     let far = reach * (0.6 + 0.8 * f32(ring));
     // a further ring is as much less of what the point sees
     let share = reach / far;
-    for (var step = 0; step < 8; step++) {
+    for (var step = 0; step < BOUNCE_STEPS; step++) {
       // each ring turned against the last, so that their places do not line up
-      let turn = (f32(step) + f32(ring) * 0.37) * 0.7853982;
+      let turn = (f32(step) + f32(ring) * 0.37) * (TAU / f32(BOUNCE_STEPS));
       let aside = vec2<f32>(cos(turn), sin(turn)) * far;
       let tap = textureSampleLevel(bounce_map, bounce_sampler, (world.xy + aside) / globals.panel.xy, 0.0);
       let toward = normalize(vec3<f32>(aside, tap.a - world.z));
@@ -256,6 +262,12 @@ fn bounced(world: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
     }
   }
   return caught / weight;
+}
+
+// the way to the light along the panel's face, which is along y when the light is straight
+// overhead
+fn across_to_light() -> vec2<f32> {
+  return normalize(globals.toward_light.xy + vec2<f32>(0.0, 0.0001));
 }
 
 // a number from zero to one out of a place, the same every time for the same place
@@ -326,7 +338,7 @@ fn textured(normal: vec3<f32>, world: vec3<f32>, texture: vec4<f32>) -> vec4<f32
 // keeps its colors: a blue ceiling, a warm line and a brown floor
 fn room(leaving: vec3<f32>, normal: vec3<f32>, crisp: f32, tinted: f32) -> vec3<f32> {
   let aside = normalize(leaving.xy + normal.xy * 0.02 + vec2<f32>(0.00001));
-  let side = dot(aside, normalize(globals.toward_light.xy + vec2<f32>(0.0, 0.0001)));
+  let side = dot(aside, across_to_light());
   let high = leaving.z;
   let edge = mix(0.3, 0.025, crisp);
   let lamp = smoothstep(0.24 - edge, 0.24 + edge, high) * (1.0 - smoothstep(0.82 - edge, 0.82 + edge, high))
@@ -389,7 +401,7 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
   let open = mix(1.0, open_share(lit.world), globals.shadows.w);
   // the light is nearer one edge of the panel than the other
   let from_middle = (lit.world.xy - globals.panel.xy * 0.5) / max(globals.panel.x, globals.panel.y);
-  let nearness = 1.0 + globals.light_color.w * 2.0 * dot(from_middle, normalize(toward_light.xy + vec2<f32>(0.0, 0.0001)));
+  let nearness = 1.0 + globals.light_color.w * 2.0 * dot(from_middle, across_to_light());
   let direct = globals.light_color.rgb * nearness;
   let lighting = globals.ambient.rgb * around * open + direct * facing * share * mix(1.0, open, 0.35);
   // how sharply it mirrors goes with how tight its highlight is
@@ -481,8 +493,8 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
   // a pane shows a sheen over the corner of it nearest the light, cut off along a slant,
   // the look of a flat piece of glass with a window somewhere behind the viewer
   if lit.finish.w > 0.0 {
-    let from_middle = (lit.world.xy - lit.center.xy) / lit.finish.w;
-    let toward = dot(from_middle, normalize(toward_light.xy + vec2<f32>(0.0, 0.0001)));
+    let within = (lit.world.xy - lit.center.xy) / lit.finish.w;
+    let toward = dot(within, across_to_light());
     let sheen = smoothstep(0.06, 0.1, toward) * (0.22 - 0.2 * clamp(toward, 0.0, 1.0));
     color += vec3<f32>(sheen) * max(normalize(lit.normal).z, 0.0);
   }
