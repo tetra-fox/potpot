@@ -8,7 +8,7 @@
 //! ```
 //! use std::time::Instant;
 //!
-//! use controls::interaction::{
+//! use potpot_controls::interaction::{
 //!   Action, Button, Control, Dial, Event, Interaction, Moment, Readout, Target,
 //! };
 //!

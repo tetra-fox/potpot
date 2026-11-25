@@ -9,7 +9,7 @@ mod knobs;
 mod lights;
 mod synth;
 
-use skeuo::{Look, Place, Renderer, Scene, wgpu};
+use potpot::{Look, Place, Renderer, Scene, wgpu};
 
 use crate::faders::faders;
 use crate::knobs::knobs;

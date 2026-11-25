@@ -1,8 +1,8 @@
 //! what a panel looks like, as the window asks it of whoever draws the panel
 
-use controls::Point;
-use controls::flat::Flat;
-use controls::interaction::{Edit, Menu, Reading, Target};
+use potpot_controls::Point;
+use potpot_controls::flat::Flat;
+use potpot_controls::interaction::{Edit, Menu, Reading, Target};
 
 /// the graphics device the window draws with, for a skin to make what it draws from
 #[derive(Clone, Copy, Debug)]

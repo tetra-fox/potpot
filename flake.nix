@@ -1,5 +1,5 @@
 {
-  description = "skeuo, lit 3d panels for baseview audio plugins";
+  description = "potpot, lit 3d panels for baseview audio plugins";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

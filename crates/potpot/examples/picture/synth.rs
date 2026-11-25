@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use skeuo::glam::{Mat4, Vec2, Vec3};
-use skeuo::parts::{self, Button, Edge, Grip, Knob, Meter, Top};
-use skeuo::{Light, Look, Material, Object, Scene};
+use potpot::glam::{Mat4, Vec2, Vec3};
+use potpot::parts::{self, Button, Edge, Grip, Knob, Meter, Top};
+use potpot::{Light, Look, Material, Object, Scene};
 
 use crate::SIZE;
 
@@ -12,12 +12,12 @@ use crate::SIZE;
 #[derive(Default)]
 struct Build {
   objects: Vec<Object>,
-  lamps: Vec<skeuo::Lamp>,
+  lamps: Vec<potpot::Lamp>,
 }
 
 impl Build {
   /// a mesh that is placed as often as wanted
-  fn place(&mut self, mesh: &Arc<skeuo::Mesh>, transform: Mat4, material: Material) {
+  fn place(&mut self, mesh: &Arc<potpot::Mesh>, transform: Mat4, material: Material) {
     self.objects.push(Object {
       mesh: Arc::clone(mesh),
       transform,
@@ -26,7 +26,7 @@ impl Build {
   }
 
   /// a mesh that goes in one place only
-  fn put(&mut self, mesh: skeuo::Mesh, transform: Mat4, material: Material) {
+  fn put(&mut self, mesh: potpot::Mesh, transform: Mat4, material: Material) {
     self.place(&Arc::new(mesh), transform, material);
   }
 
@@ -77,7 +77,7 @@ pub(super) fn synth(look: Look) -> Scene {
   let low = Arc::new(parts::slab(300.0, 196.0, UP, 12.0));
   let wide = Arc::new(parts::slab(336.0, 196.0, UP, 12.0));
   let banner = Arc::new(parts::slab(150.0, 15.0, 1.2, 3.0));
-  let slant = Arc::new(skeuo::Mesh::cuboid(
+  let slant = Arc::new(potpot::Mesh::cuboid(
     Vec3::new(-1.3, -6.0, 0.0),
     Vec3::new(1.3, 6.0, 0.4),
   ));
@@ -107,12 +107,12 @@ pub(super) fn synth(look: Look) -> Scene {
     }
     // a line cut across the section under its banner, with its lower lip catching light
     build.put(
-      skeuo::Mesh::cuboid(Vec3::new(-136.0, -0.6, 0.0), Vec3::new(136.0, 0.6, 0.25)),
+      potpot::Mesh::cuboid(Vec3::new(-136.0, -0.6, 0.0), Vec3::new(136.0, 0.6, 0.25)),
       at(x, top + 13.0, UP),
       Material::matte(blue * 0.35),
     );
     build.put(
-      skeuo::Mesh::cuboid(Vec3::new(-136.0, 0.6, 0.0), Vec3::new(136.0, 1.5, 0.25)),
+      potpot::Mesh::cuboid(Vec3::new(-136.0, 0.6, 0.0), Vec3::new(136.0, 1.5, 0.25)),
       at(x, top + 13.0, UP),
       Material::matte((blue * 1.5).min(Vec3::ONE)),
     );
@@ -200,7 +200,7 @@ pub(super) fn synth(look: Look) -> Scene {
       parts::led_material(green, level, 11.0),
     );
     if lit {
-      build.lamps.push(skeuo::Lamp {
+      build.lamps.push(potpot::Lamp {
         at: Vec3::new(x, y - 31.0, 12.0),
         color: green * 2.5,
         reach: 40.0,
@@ -246,7 +246,7 @@ pub(super) fn synth(look: Look) -> Scene {
   let glass = Vec3::new(0.05, 0.12, 0.26);
   let shown = Vec3::new(0.55, 0.8, 1.0);
   build.put(
-    skeuo::Mesh::cuboid(Vec3::new(-138.0, -106.0, 0.0), Vec3::new(138.0, 106.0, 1.0)),
+    potpot::Mesh::cuboid(Vec3::new(-138.0, -106.0, 0.0), Vec3::new(138.0, 106.0, 1.0)),
     at(middle, top + 26.0, 5.0),
     Material::pane(glass, 300.0).lit(Vec3::new(0.1, 0.26, 0.56), 0.16, 0.0),
   );
@@ -260,7 +260,7 @@ pub(super) fn synth(look: Look) -> Scene {
     build.letters(name, Vec3::new(x, top - 62.0, on_glass), 7.0, shade);
   }
   build.put(
-    skeuo::Mesh::cuboid(Vec3::new(-128.0, -0.5, 0.0), Vec3::new(128.0, 0.5, 0.1)),
+    potpot::Mesh::cuboid(Vec3::new(-128.0, -0.5, 0.0), Vec3::new(128.0, 0.5, 0.1)),
     at(middle, top - 52.0, on_glass),
     dim,
   );
@@ -274,17 +274,17 @@ pub(super) fn synth(look: Look) -> Scene {
     // a bar filled as far as the setting goes
     let filled = 26.0 + 22.0 * row as f32;
     build.put(
-      skeuo::Mesh::cuboid(Vec3::new(0.0, -3.5, 0.0), Vec3::new(88.0, 3.5, 0.1)),
+      potpot::Mesh::cuboid(Vec3::new(0.0, -3.5, 0.0), Vec3::new(88.0, 3.5, 0.1)),
       at(middle + 36.0, y, on_glass),
       Material::matte(shown * 0.2).lit(shown * 0.3, 0.15, 0.0),
     );
     build.put(
-      skeuo::Mesh::cuboid(Vec3::new(0.0, -3.5, 0.0), Vec3::new(filled, 3.5, 0.15)),
+      potpot::Mesh::cuboid(Vec3::new(0.0, -3.5, 0.0), Vec3::new(filled, 3.5, 0.15)),
       at(middle + 36.0, y, on_glass),
       glow,
     );
   }
-  let step = Arc::new(skeuo::Mesh::cuboid(
+  let step = Arc::new(potpot::Mesh::cuboid(
     Vec3::new(-6.5, -5.0, 0.0),
     Vec3::new(6.5, 5.0, 0.1),
   ));
@@ -302,7 +302,7 @@ pub(super) fn synth(look: Look) -> Scene {
     }
   }
   build.put(
-    skeuo::Mesh::cuboid(Vec3::new(-128.0, -0.5, 0.0), Vec3::new(128.0, 0.5, 0.1)),
+    potpot::Mesh::cuboid(Vec3::new(-128.0, -0.5, 0.0), Vec3::new(128.0, 0.5, 0.1)),
     at(middle, top + 78.0, on_glass),
     dim,
   );
@@ -341,7 +341,7 @@ pub(super) fn synth(look: Look) -> Scene {
       Material::chrome(Vec3::splat(0.55)),
     );
   }
-  let vent = Arc::new(skeuo::Mesh::cuboid(
+  let vent = Arc::new(potpot::Mesh::cuboid(
     Vec3::new(-9.0, -1.3, 0.0),
     Vec3::new(9.0, 1.3, 0.2),
   ));

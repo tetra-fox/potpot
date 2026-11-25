@@ -1,5 +1,5 @@
 //! a panel of four knobs drawn with nothing but flat shapes, in a window of its own with no
-//! host: the least there is to write to have working controls. `cargo run -p controls-window
+//! host: the least there is to write to have working controls. `cargo run -p potpot-window
 //! --example flat`.
 //!
 //! everything the pointer and the keys do comes with the window: dragging and the wheel,
@@ -9,10 +9,10 @@
 
 use std::f32::consts::PI;
 
-use controls_window::controls::flat::{Color, Flat};
-use controls_window::controls::interaction::{Control, Dial, Edit, Feel, Readout, Target};
-use controls_window::controls::stroke;
-use controls_window::{Gpu, Opening, Param, Settings, Skin, View, wgpu};
+use potpot_window::controls::flat::{Color, Flat};
+use potpot_window::controls::interaction::{Control, Dial, Edit, Feel, Readout, Target};
+use potpot_window::controls::stroke;
+use potpot_window::{Gpu, Opening, Param, Settings, Skin, View, wgpu};
 
 /// the panel's width and height in its own points
 const SIZE: [f32; 2] = [420.0, 300.0];
@@ -218,7 +218,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       control
     })
     .collect();
-  let opened = controls_window::open(settings, params, controls, Opening::alone(), |_| Look {
+  let opened = potpot_window::open(settings, params, controls, Opening::alone(), |_| Look {
     knobs: knobs(),
   })?;
   opened.window.run_until_closed()?;

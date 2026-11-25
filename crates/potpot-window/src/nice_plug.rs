@@ -7,14 +7,14 @@ use std::fmt;
 use std::sync::Arc;
 
 use baseview::HandlerError;
-use controls::fit::{chosen, shaped};
-use controls::interaction::{Control, Dial, Feel, Key, Readout};
 use nice_plug::context::gui::GuiContext;
 use nice_plug::editor::dpi::NativeSize;
 use nice_plug::editor::{EditorHandle, HostMethods, ResizeHint, SpawnedEditor};
 use nice_plug::params::Params;
 use nice_plug::params::internals::ParamPtr;
 use nice_plug::prelude::{Modifiers, ParentWindowHandle, VirtualKeyCode};
+use potpot_controls::fit::{chosen, shaped};
+use potpot_controls::interaction::{Control, Dial, Feel, Key, Readout};
 
 use crate::open::{Opening, Param, Remembered, Settings, Shared, Tell, open};
 use crate::skin::{Gpu, Skin};
@@ -428,10 +428,10 @@ impl baseview::host::HostMainThreadCaller for MainThreadCaller {
 
 #[cfg(test)]
 mod tests {
-  use controls::flat::Flat;
-  use controls::furniture::{GripLook, MenuLook};
-  use controls::interaction::Target;
   use nice_plug::prelude::{FloatParam, FloatRange, Param, Params};
+  use potpot_controls::flat::Flat;
+  use potpot_controls::furniture::{GripLook, MenuLook};
+  use potpot_controls::interaction::Target;
 
   use super::{Arc, Bound, Gpu, Held, NotOurs, Readout, Remembered, Settings, Skin};
   use crate::skin::View;

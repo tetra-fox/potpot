@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use skeuo::glam::{Mat4, Vec2, Vec3};
-use skeuo::parts::{self, Knob, Top};
-use skeuo::{Light, Look, Material, Object, Scene};
+use potpot::glam::{Mat4, Vec2, Vec3};
+use potpot::parts::{self, Knob, Top};
+use potpot::{Light, Look, Material, Object, Scene};
 
 use crate::SIZE;
 
@@ -182,7 +182,7 @@ pub(super) fn knobs(look: Look) -> Scene {
       transform: Mat4::from_translation(Vec3::new(x, y, 0.0)),
       material: Material::matte(Vec3::splat(0.85)),
     });
-    let mut part = |mesh: skeuo::Mesh, material: Material| {
+    let mut part = |mesh: potpot::Mesh, material: Material| {
       objects.push(Object {
         mesh: Arc::new(mesh),
         transform,

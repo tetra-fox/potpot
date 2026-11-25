@@ -89,9 +89,9 @@ impl Renderer {
         mapped_at_creation: false,
       })
     };
-    let globals = uniform("skeuo globals", size_of::<Globals>());
+    let globals = uniform("potpot globals", size_of::<Globals>());
     let globals_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-      label: Some("skeuo globals"),
+      label: Some("potpot globals"),
       layout: &layouts.globals,
       entries: &[wgpu::BindGroupEntry {
         binding: 0,
@@ -99,17 +99,17 @@ impl Renderer {
       }],
     });
 
-    let shadow_map = depth_map(device, "skeuo shadow map", SHADOW_SIZE);
-    let height_map = depth_map(device, "skeuo heights", HEIGHT_SIZE);
+    let shadow_map = depth_map(device, "potpot shadow map", SHADOW_SIZE);
+    let height_map = depth_map(device, "potpot heights", HEIGHT_SIZE);
     let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-      label: Some("skeuo shadow map"),
+      label: Some("potpot shadow map"),
       mag_filter: wgpu::FilterMode::Linear,
       min_filter: wgpu::FilterMode::Linear,
       compare: Some(wgpu::CompareFunction::LessEqual),
       ..Default::default()
     });
     let maps_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-      label: Some("skeuo shadow map"),
+      label: Some("potpot shadow map"),
       layout: &layouts.maps,
       entries: &[
         wgpu::BindGroupEntry {
@@ -135,7 +135,7 @@ impl Renderer {
       height_map,
       maps_group,
       present_layout: layouts.present,
-      present_options: uniform("skeuo present", size_of::<Present>()),
+      present_options: uniform("potpot present", size_of::<Present>()),
       target_encodes: target.is_srgb(),
       max_side: device.limits().max_texture_dimension_2d,
       picture: None,
@@ -241,11 +241,11 @@ impl Renderer {
   /// the shadow map, the height map, and then the lit scene into the picture
   fn draw_picture(&self, device: &wgpu::Device, queue: &wgpu::Queue, picture: &Picture) {
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-      label: Some("skeuo picture"),
+      label: Some("potpot picture"),
     });
     let depth_passes = [
-      ("skeuo shadow", &self.pipelines.shadow, &self.shadow_map),
-      ("skeuo heights", &self.pipelines.height, &self.height_map),
+      ("potpot shadow", &self.pipelines.shadow, &self.shadow_map),
+      ("potpot heights", &self.pipelines.height, &self.height_map),
     ];
     for (label, pipeline, map) in depth_passes {
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -261,7 +261,7 @@ impl Renderer {
     }
     {
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("skeuo scene"),
+        label: Some("potpot scene"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
           view: picture.smoothed.as_ref().unwrap_or(&picture.color),
           depth_slice: None,
@@ -300,7 +300,7 @@ impl Renderer {
       return;
     }
     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-      label: Some("skeuo present"),
+      label: Some("potpot present"),
       color_attachments: &[Some(wgpu::RenderPassColorAttachment {
         view: target,
         depth_slice: None,
@@ -341,12 +341,12 @@ impl Loaded {
     Self {
       from: Arc::clone(mesh),
       vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("skeuo vertices"),
+        label: Some("potpot vertices"),
         contents: bytemuck::cast_slice(&mesh.vertices),
         usage: wgpu::BufferUsages::VERTEX,
       }),
       indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("skeuo indices"),
+        label: Some("potpot indices"),
         contents: bytemuck::cast_slice(&mesh.indices),
         usage: wgpu::BufferUsages::INDEX,
       }),
@@ -393,7 +393,7 @@ fn depth_attachment(view: &wgpu::TextureView) -> wgpu::RenderPassDepthStencilAtt
 
 fn placed_buffer(device: &wgpu::Device, room: usize) -> wgpu::Buffer {
   device.create_buffer(&wgpu::BufferDescriptor {
-    label: Some("skeuo placed"),
+    label: Some("potpot placed"),
     size: (room.max(1) * size_of::<Placed>()) as u64,
     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
     mapped_at_creation: false,

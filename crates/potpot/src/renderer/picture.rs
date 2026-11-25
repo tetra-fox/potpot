@@ -42,7 +42,7 @@ impl Picture {
         .create_view(&wgpu::TextureViewDescriptor::default())
     };
     let color = texture(
-      "skeuo picture",
+      "potpot picture",
       PICTURE,
       wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
       1,
@@ -50,27 +50,27 @@ impl Picture {
     let samples = if smooth { SAMPLES } else { 1 };
     let smoothed = smooth.then(|| {
       texture(
-        "skeuo picture samples",
+        "potpot picture samples",
         PICTURE,
         wgpu::TextureUsages::RENDER_ATTACHMENT,
         samples,
       )
     });
     let depth = texture(
-      "skeuo picture depth",
+      "potpot picture depth",
       DEPTH,
       wgpu::TextureUsages::RENDER_ATTACHMENT,
       samples,
     );
     // each rendered pixel lands on the window as a hard-edged block
     let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-      label: Some("skeuo picture"),
+      label: Some("potpot picture"),
       mag_filter: wgpu::FilterMode::Nearest,
       min_filter: wgpu::FilterMode::Nearest,
       ..Default::default()
     });
     let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-      label: Some("skeuo picture"),
+      label: Some("potpot picture"),
       layout,
       entries: &[
         wgpu::BindGroupEntry {

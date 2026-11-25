@@ -3,8 +3,8 @@
 use std::mem::size_of;
 
 use bytemuck::{Pod, Zeroable};
-use controls::Point;
-use controls::flat::{Color, Flat, Shape};
+use potpot_controls::Point;
+use potpot_controls::flat::{Color, Flat, Shape};
 
 /// one corner of a shape, which is a rectangle about a middle: lying along the pixels and
 /// drawn onto their edges, or any way round with its edges smoothed

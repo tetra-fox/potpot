@@ -9,9 +9,9 @@
 //! a panel is its [`Settings`], a [`Param`] for each control, and a [`Skin`]:
 //!
 //! ```no_run
-//! use controls_window::controls::flat::Flat;
-//! use controls_window::controls::interaction::{Control, Dial, Readout, Target};
-//! use controls_window::{Gpu, Opening, Param, Settings, Skin, View, wgpu};
+//! use potpot_window::controls::flat::Flat;
+//! use potpot_window::controls::interaction::{Control, Dial, Readout, Target};
+//! use potpot_window::{Gpu, Opening, Param, Settings, Skin, View, wgpu};
 //!
 //! /// one control, drawn as a bar as long as its value
 //! struct Bar;
@@ -29,9 +29,9 @@
 //! let settings = Settings::new("Bar", [200.0, 100.0]);
 //! let params = vec![Param::free(Dial::linear([0.0, 1.0], 0.5, None, 2, ""))];
 //! let controls = vec![Control::new(0, Readout::new(4))];
-//! let opened = controls_window::open(settings, params, controls, Opening::alone(), |_| Bar)?;
+//! let opened = potpot_window::open(settings, params, controls, Opening::alone(), |_| Bar)?;
 //! opened.window.run_until_closed()?;
-//! # Ok::<(), controls_window::baseview::Error>(())
+//! # Ok::<(), potpot_window::baseview::Error>(())
 //! ```
 //!
 //! `examples/flat.rs` is a whole panel written this way, and [`nice_plug`] makes one the
@@ -50,4 +50,5 @@ mod window;
 pub use open::{Opened, Opening, Param, Remembered, Settings, Shared, Tell, open};
 pub use skin::{Gpu, Skin, View};
 // what the types above are made of, so that a skin is built on the same versions
-pub use {baseview, controls, wgpu};
+pub use potpot_controls as controls;
+pub use {baseview, wgpu};

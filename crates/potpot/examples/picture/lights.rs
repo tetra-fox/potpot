@@ -3,9 +3,9 @@
 use std::f32::consts::FRAC_PI_2;
 use std::sync::Arc;
 
-use skeuo::glam::{Mat4, Vec2, Vec3};
-use skeuo::parts::{self, Button, Meter, Push, PushSwitch};
-use skeuo::{Light, Look, Material, Object, Scene};
+use potpot::glam::{Mat4, Vec2, Vec3};
+use potpot::parts::{self, Button, Meter, Push, PushSwitch};
+use potpot::{Light, Look, Material, Object, Scene};
 
 use crate::SIZE;
 
@@ -31,7 +31,7 @@ pub(super) fn lights(look: Look) -> Scene {
   let thin = Meter::ladder(24, 9.0, 420.0);
   let lying = Meter::ladder(14, 20.0, 250.0);
   // a shape's body and then its seat, or for a switch its plunger and then its collar
-  let pair = |body: skeuo::Mesh, seat: skeuo::Mesh| [Arc::new(body), Arc::new(seat)];
+  let pair = |body: potpot::Mesh, seat: potpot::Mesh| [Arc::new(body), Arc::new(seat)];
   let pads = pair(pad.body(), pad.seat(3.0));
   let rounds = pair(round.body(), round.seat(2.5));
   let keys = pair(key.body(), key.seat(2.5));
@@ -55,7 +55,7 @@ pub(super) fn lights(look: Look) -> Scene {
   // each button with the meshes of its body and its seat, where it is, how far it is lit
   // and in which color, and how far it is held down
   let mut button = |shape: Button,
-                    [body, gap]: &[Arc<skeuo::Mesh>; 2],
+                    [body, gap]: &[Arc<potpot::Mesh>; 2],
                     x: f32,
                     y: f32,
                     level: f32,

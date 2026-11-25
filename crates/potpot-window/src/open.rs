@@ -8,9 +8,9 @@ use std::sync::mpsc;
 
 use baseview::dpi::LogicalSize;
 use baseview::{HandlerError, WindowSettings, WindowWaker};
-use controls::Point;
-use controls::furniture::{GripLook, MenuLook};
-use controls::interaction::{Control, Dial, Key};
+use potpot_controls::Point;
+use potpot_controls::furniture::{GripLook, MenuLook};
+use potpot_controls::interaction::{Control, Dial, Key};
 use tracing::error;
 use wgpu::rwh::HasWindowHandle;
 

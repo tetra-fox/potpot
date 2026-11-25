@@ -12,13 +12,13 @@ use baseview::{
   EventStatus, HandlerError, MouseButton, MouseEvent, ScrollDelta, TimerHandle, WindowContext,
   WindowEvent, WindowHandler, WindowSize,
 };
-use controls::Point;
-use controls::fit::{fitted, point_at};
-use controls::flat::Flat;
-use controls::interaction::{
+use potpot_controls::Point;
+use potpot_controls::fit::{fitted, point_at};
+use potpot_controls::flat::Flat;
+use potpot_controls::interaction::{
   Action, Button, Control, Edit, Event, Interaction, Key, Menu, Moment, Target,
 };
-use controls::sent::Sent;
+use potpot_controls::sent::Sent;
 use tracing::error;
 
 use crate::flat::FlatRenderer;
@@ -1007,7 +1007,7 @@ mod tests {
 
   /// the first of a panel's parameters
   const PITCH: usize = 0;
-  use controls::interaction::Item;
+  use potpot_controls::interaction::Item;
 
   /// a frame of a window of the panel's own size, with nothing typed or chosen
   fn frame(values: [f32; 3]) -> Frame {

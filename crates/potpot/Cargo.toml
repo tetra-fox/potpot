@@ -1,5 +1,5 @@
 [package]
-name = "skeuo"
+name = "potpot"
 version = "0.1.0"
 edition = "2024"
 description = "a small lit 3d scene renderer on wgpu, for skeuomorphic plugin panels"
@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 bytemuck = { version = "1", features = ["derive"] }
 # the strokes of the face its lettering is in
-controls.workspace = true
+potpot-controls.workspace = true
 glam = { version = "0.30", features = ["bytemuck"] }
 wgpu.workspace = true
 

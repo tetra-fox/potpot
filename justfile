@@ -3,11 +3,11 @@ default:
 
 # open the example panel that is drawn with flat shapes alone
 flat:
-    cargo run -p controls-window --example flat
+    cargo run -p potpot-window --example flat
 
-# draw one of skeuo's example panels to a png: `just picture out.png synth`
+# draw one of potpot's example panels to a png: `just picture out.png synth`
 picture *args:
-    cargo run -p skeuo --example picture -- {{ args }}
+    cargo run -p potpot --example picture -- {{ args }}
 
 test:
     cargo test --workspace

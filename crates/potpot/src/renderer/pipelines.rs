@@ -64,11 +64,11 @@ impl Layouts {
     };
     Self {
       globals: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("skeuo globals"),
+        label: Some("potpot globals"),
         entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT)],
       }),
       maps: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("skeuo shadow map"),
+        label: Some("potpot shadow map"),
         entries: &[
           texture(0, wgpu::TextureSampleType::Depth),
           sampler(1, wgpu::SamplerBindingType::Comparison),
@@ -76,7 +76,7 @@ impl Layouts {
         ],
       }),
       present: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("skeuo present"),
+        label: Some("potpot present"),
         entries: &[
           texture(0, wgpu::TextureSampleType::Float { filterable: true }),
           sampler(1, wgpu::SamplerBindingType::Filtering),
@@ -100,11 +100,11 @@ impl Pipelines {
   /// `target` is the format of what the present pipeline draws onto
   pub(super) fn new(device: &wgpu::Device, layouts: &Layouts, target: wgpu::TextureFormat) -> Self {
     let scene_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-      label: Some("skeuo scene"),
+      label: Some("potpot scene"),
       source: wgpu::ShaderSource::Wgsl(scene_source().into()),
     });
     let present_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-      label: Some("skeuo present"),
+      label: Some("potpot present"),
       source: wgpu::ShaderSource::Wgsl(PRESENT_SOURCE.into()),
     });
 
@@ -153,11 +153,11 @@ impl Pipelines {
         cache: None,
       })
     };
-    let scene_layout = layout("skeuo scene", &[&layouts.globals, &layouts.maps]);
+    let scene_layout = layout("potpot scene", &[&layouts.globals, &layouts.maps]);
     // one for each count of samples, since a pipeline draws at only one
     let scene = [1, SAMPLES].map(|count| {
       device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("skeuo scene"),
+        label: Some("potpot scene"),
         layout: Some(&scene_layout),
         vertex: wgpu::VertexState {
           module: &scene_shader,
@@ -182,8 +182,8 @@ impl Pipelines {
       })
     });
     let present = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-      label: Some("skeuo present"),
-      layout: Some(&layout("skeuo present", &[&layouts.present])),
+      label: Some("potpot present"),
+      layout: Some(&layout("potpot present", &[&layouts.present])),
       vertex: wgpu::VertexState {
         module: &present_shader,
         entry_point: Some("vertex"),
@@ -204,8 +204,8 @@ impl Pipelines {
     });
 
     Self {
-      shadow: depth_only("skeuo shadow", "shadow_vertex"),
-      height: depth_only("skeuo heights", "height_vertex"),
+      shadow: depth_only("potpot shadow", "shadow_vertex"),
+      height: depth_only("potpot heights", "height_vertex"),
       scene,
       present,
     }

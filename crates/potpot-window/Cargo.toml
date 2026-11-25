@@ -1,5 +1,5 @@
 [package]
-name = "controls-window"
+name = "potpot-window"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.100"
@@ -13,7 +13,7 @@ default = ["nice-plug"]
 nice-plug = ["dep:nice-plug"]
 
 [dependencies]
-controls.workspace = true
+potpot-controls.workspace = true
 nice-plug = { version = "0.4.2", optional = true }
 # the window, which the panel is put in and its input comes from
 baseview = "0.4.2"

@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use skeuo::glam::{Mat4, Vec2, Vec3};
-use skeuo::parts::{self, Fader};
-use skeuo::{Light, Look, Material, Object, Scene};
+use potpot::glam::{Mat4, Vec2, Vec3};
+use potpot::parts::{self, Fader};
+use potpot::{Light, Look, Material, Object, Scene};
 
 use crate::SIZE;
 
