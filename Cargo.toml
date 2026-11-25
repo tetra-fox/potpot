@@ -2,6 +2,9 @@
 resolver = "3"
 members = ["crates/potpot-controls", "crates/potpot-window", "crates/potpot"]
 
+[workspace.package]
+license = "MIT OR Apache-2.0"
+
 # what every crate is warned of, which each takes with `[lints] workspace = true`
 [workspace.lints.rust]
 missing_docs = "warn"

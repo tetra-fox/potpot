@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.100"
 description = "a baseview window for a panel of controls, drawn with wgpu by whatever skin it is given"
-license = "GPL-3.0-or-later"
+license.workspace = true
 publish = false
 
 [lints]

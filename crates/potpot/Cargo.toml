@@ -3,7 +3,7 @@ name = "potpot"
 version = "0.1.0"
 edition = "2024"
 description = "a small lit 3d scene renderer on wgpu, for skeuomorphic plugin panels"
-license = "GPL-3.0-or-later"
+license.workspace = true
 publish = false
 
 [lints]
