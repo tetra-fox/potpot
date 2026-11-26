@@ -141,14 +141,19 @@ pub struct Renderer {
   ///
   /// The vector is kept for its room.
   differing: Vec<Differing>,
+  /// The boxes around what differs in its look alone.
+  ///
+  /// Each is around objects that differ and throw the shadows they threw, or none. The vector is
+  /// kept for its room.
+  painted: Vec<Bounds>,
   /// The corners of the triangles over what is drawn again.
   ///
   /// They are in the picture's clip space. The vector is kept for its room.
   wiped: Vec<[f32; 2]>,
-  /// The start and end across each band of what is drawn again.
+  /// Where what is drawn again lies across each band.
   ///
   /// The bands are of the picture. The vector is kept for its room.
-  bands: Vec<[f32; 2]>,
+  bands: Vec<damage::Band>,
   /// The corners as the wipe pipeline is handed them.
   wipe: wgpu::Buffer,
   /// The number of corners the wipe buffer has room for.
@@ -193,14 +198,35 @@ enum Map {
 struct Differing {
   /// The object's place among the scene's.
   index: usize,
-  /// Whether it differs in shape or place.
-  ///
-  /// If it does not, it differs in its material alone.
-  reshaped: bool,
+  change: Change,
   /// The box around it in the drawn scene, in the panel's space.
   was: Option<Bounds>,
   /// The box around it in the scene that is being prepared.
   now: Option<Bounds>,
+}
+
+/// The way an object differs from the drawn scene's.
+///
+/// The object is compared with the one at its place among the drawn scene's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Change {
+  /// Another material alone.
+  Recolored,
+  /// Another shape or place of an object without a shadow.
+  ///
+  /// It throws none in either scene, so the shadow map and the height map hold nothing of it.
+  Repainted,
+  /// Another shape or place, or a shadow in one scene alone.
+  Reshaped,
+}
+
+/// The objects a pass draws.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Objects {
+  /// Every object.
+  All,
+  /// The objects that throw a shadow.
+  Shadowing,
 }
 
 /// A mesh on the GPU, and the allocation it came from.
@@ -329,6 +355,7 @@ impl Renderer {
       spanned: false,
       sound: false,
       differing: Vec::new(),
+      painted: Vec::new(),
       wiped: Vec::new(),
       bands: Vec::new(),
       wipe: wipe_buffer(device, 0),
@@ -404,14 +431,23 @@ impl Renderer {
         if !few {
           continue;
         }
-        let reshaped = !same_mesh || placed.model != held.model;
-        if reshaped || placed != held {
+        let moved = !same_mesh || placed.model != held.model;
+        if moved || placed != held {
           alike = false;
-          shapes += if reshaped { damage::MOVED_SHAPES } else { 1 };
+          let change = match (moved, placed.shadowless(), held.shadowless()) {
+            (true, true, true) => Change::Repainted,
+            (false, shadowless, was) if shadowless == was => Change::Recolored,
+            _ => Change::Reshaped,
+          };
+          shapes += if change == Change::Reshaped {
+            damage::MOVED_SHAPES
+          } else {
+            1
+          };
           few = shapes <= damage::MOST_SHAPES;
           self.differing.push(Differing {
             index,
-            reshaped,
+            change,
             was: None,
             now: None,
           });
@@ -446,7 +482,9 @@ impl Renderer {
     let sound = few && damage::bounded(&globals, &self.held_placed, boxes);
     let bounded = sound && self.sound && lit_alike && few;
     self.sound = sound;
-    let reshaped = || (self.differing.iter()).filter(|differing| differing.reshaped);
+    let changed =
+      |change: Change| (self.differing.iter()).filter(move |differing| differing.change == change);
+    let reshaped = || changed(Change::Reshaped);
 
     // where each object is drawn, which tells the objects to draw in a part. a map is stale
     // where an object that is elsewhere was and where it is
@@ -472,7 +510,7 @@ impl Renderer {
     if bounded && differs {
       if kept {
         let before = gather([NOWHERE; 2], &self.spans);
-        for differing in reshaped() {
+        for differing in reshaped().chain(changed(Change::Repainted)) {
           self.spans[differing.index] = spans(differing.index);
         }
         stale = Some(gather(before, &self.spans));
@@ -498,21 +536,28 @@ impl Renderer {
       std::mem::take(&mut self.wiped),
       std::mem::take(&mut self.bands),
     );
+    let mut painted = std::mem::take(&mut self.painted);
+    painted.clear();
     let (redrawn, light) = if !differs {
       (Redrawn::Nothing, Redrawn::Nothing)
     } else if bounded && !fresh {
       let mut reach = Reach::new(&before, &globals, picture_size, &mut wiped, &mut bands);
-      let moved = reshaped().flat_map(|differing| differing.was.into_iter().chain(differing.now));
-      let recolored = self.differing.len() - reshaped().count();
-      if reach.takes(&before, &globals, moved.clone(), recolored) <= damage::MOST_SHAPES {
+      // where each was and where it is, once if that is the same box
+      let moved = reshaped().flat_map(|differing| {
+        let was = differing.was.filter(|was| Some(*was) != differing.now);
+        was.into_iter().chain(differing.now)
+      });
+      // what shows otherwise and throws the shadows it threw, or none. boxes over one another
+      // are taken as one, so that the pictures of one screen are one box
+      let shown = (changed(Change::Repainted).flat_map(|differing| [differing.was, differing.now]))
+        .chain(changed(Change::Recolored).map(|differing| differing.now));
+      for bounds in shown.flatten() {
+        damage::add_box(&mut painted, bounds);
+      }
+      if reach.takes(&before, &globals, moved.clone(), painted.len()) <= damage::MOST_SHAPES {
         reach.relight(&before, &globals);
         moved.for_each(|bounds| reach.moved(bounds));
-        let recolored = self
-          .differing
-          .iter()
-          .filter(|differing| !differing.reshaped);
-        (recolored.filter_map(|differing| differing.now))
-          .for_each(|bounds| reach.recolored(bounds));
+        (painted.iter()).for_each(|bounds| reach.recolored(*bounds));
         (reach.redrawn(), reach.relit())
       } else {
         (Redrawn::Whole, Redrawn::Whole)
@@ -521,7 +566,7 @@ impl Renderer {
       (Redrawn::Whole, Redrawn::Whole)
     };
     let redrawn = if fresh { Redrawn::Whole } else { redrawn };
-    (self.wiped, self.bands) = (wiped, bands);
+    (self.wiped, self.bands, self.painted) = (wiped, bands, painted);
     if let Redrawn::Within(_) = redrawn {
       if self.wiped.len() > self.wipe_room {
         self.wipe_room = self.wiped.len().next_power_of_two();
@@ -658,7 +703,7 @@ impl Renderer {
       }
       pass.set_pipeline(pipeline);
       pass.set_bind_group(0, &self.globals_group, &[]);
-      self.draw_objects(&mut pass, within);
+      self.draw_objects(&mut pass, within, Objects::Shadowing);
     }
     if light != Redrawn::Nothing {
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -694,7 +739,7 @@ impl Renderer {
       pass.draw(0..3, 0..1);
       pass.set_pipeline(&self.pipelines.bounce);
       pass.set_bind_group(1, &self.shadow_group, &[]);
-      self.draw_objects(&mut pass, within);
+      self.draw_objects(&mut pass, within, Objects::All);
     }
     if redrawn != Redrawn::Nothing {
       let whole = redrawn == Redrawn::Whole;
@@ -734,7 +779,7 @@ impl Renderer {
       pass.set_pipeline(&self.pipelines.scene[smooth]);
       pass.set_bind_group(0, &self.globals_group, &[]);
       pass.set_bind_group(1, &self.maps_group, &[]);
-      self.draw_objects(&mut pass, within);
+      self.draw_objects(&mut pass, within, Objects::All);
       drop(pass);
 
       // the glow map follows the picture, in the cells that what was drawn again lies in. the
@@ -819,13 +864,18 @@ impl Renderer {
   ///
   /// Each is drawn with its place and material. `within` is a rectangle of what is drawn on, as
   /// x, y, width and height in its pixels, and what that is. With it, only the objects drawn in
-  /// the rectangle are drawn.
-  fn draw_objects(&self, pass: &mut wgpu::RenderPass<'_>, within: Option<([f32; 4], Map)>) {
+  /// the rectangle are drawn, and of those the ones `objects` names.
+  fn draw_objects(
+    &self,
+    pass: &mut wgpu::RenderPass<'_>,
+    within: Option<([f32; 4], Map)>,
+    objects: Objects,
+  ) {
     pass.set_vertex_buffer(1, self.placed.slice(..));
-    for (object, &mesh) in (0..).zip(&self.draws) {
+    for ((object, &mesh), placed) in (0..).zip(&self.draws).zip(&self.held_placed) {
       let mesh = &self.meshes[mesh];
       // wgpu has no slice of an empty buffer, and such a mesh has nothing to draw
-      if mesh.count == 0 {
+      if mesh.count == 0 || (placed.shadowless() && objects == Objects::Shadowing) {
         continue;
       }
       if within.is_some_and(|([x, y, width, height], on)| {

@@ -75,7 +75,7 @@ struct Placed {
   // x how much it mirrors, y how far it is metal, z how far its highlight is spun, w the
   // size of the pane it is or zero
   @location(8) finish: vec4<f32>,
-  // x how grainy it is, y how deeply brushed, z how worn
+  // x how grainy it is, y how deeply brushed, z how worn. w is not read here
   @location(9) texture: vec4<f32>,
 }
 
@@ -90,6 +90,9 @@ struct Lit {
   @location(5) center: vec3<f32>,
   @location(6) axis: vec3<f32>,
   @location(7) texture: vec4<f32>,
+  // `world` taken where the triangle covers the pixel, which is a place on the triangle for a
+  // pixel covered in part too. the bounce map is read at it
+  @location(8) @interpolate(perspective, centroid) on_triangle: vec3<f32>,
 }
 
 fn model(placed: Placed) -> mat4x4<f32> {
@@ -119,6 +122,7 @@ fn seen_through(view: mat4x4<f32>, corner: Corner, placed: Placed) -> Lit {
   var lit: Lit;
   lit.clip = view * world;
   lit.world = world.xyz;
+  lit.on_triangle = world.xyz;
   lit.normal = (model(placed) * vec4<f32>(corner.normal, 0.0)).xyz;
   lit.color = placed.color;
   lit.highlight = placed.highlight;
@@ -459,7 +463,7 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
     lamps_mirrored += lamp.color.rgb * sqrt(reach.w) * disc * reached;
   }
   if globals.ambient.w > 0.0 {
-    lighting_with_lamps += bounced(lit.world, normalize(lit.normal)) * globals.ambient.w;
+    lighting_with_lamps += bounced(lit.on_triangle, normalize(lit.normal)) * globals.ambient.w;
   }
   let glow = lit.color.a;
   var color = surface * mix(lighting_with_lamps, vec3<f32>(1.0), glow) * (1.0 - 0.7 * metal);

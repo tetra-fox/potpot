@@ -50,6 +50,16 @@ pub struct Material {
   /// Wear shows as blotches of grime and patches of fine scratches that catch the light. Like
   /// the grain it is made up on the spot from where a point is on the panel.
   pub wear: f32,
+  /// Whether the surface throws no shadow.
+  ///
+  /// Such a surface also keeps no light off what is near it, whatever the shape of its object,
+  /// as print and a screen's picture do. It is lit and shadowed itself as any other, and its
+  /// own light is thrown on what is around it.
+  ///
+  /// A change of its shape or place costs the drawing of where it is seen. While
+  /// [`Light::bounce`](crate::Light::bounce) is on, it also costs the drawing of everything its
+  /// light is thrown on.
+  pub shadowless: bool,
 }
 
 impl Material {
@@ -68,6 +78,7 @@ impl Material {
       grain: 0.0,
       brushed: 0.0,
       wear: 0.0,
+      shadowless: false,
     }
   }
 

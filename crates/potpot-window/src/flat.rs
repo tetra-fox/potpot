@@ -255,17 +255,17 @@ impl FlatRenderer {
     }
   }
 
-  /// Returns the rectangle of the target where shapes are new.
+  /// Returns the rectangles of the target where shapes are new.
   ///
-  /// `flat`, `size` and `place` are as [`FlatRenderer::prepare`] takes them, and the rectangle
-  /// is given as `place` is. It holds every pixel that the shapes are drawn otherwise in than
-  /// the ones last prepared, and is `None` if they are drawn the same.
-  pub(crate) fn differing(&self, flat: &Flat, size: Point, place: [u32; 4]) -> Option<[u32; 4]> {
+  /// `flat`, `size` and `place` are as [`FlatRenderer::prepare`] takes them, and each rectangle
+  /// is given as `place` is. Together they hold every pixel that the shapes are drawn otherwise
+  /// in than the ones last prepared, and there is none if they are drawn the same.
+  pub(crate) fn differing(&self, flat: &Flat, size: Point, place: [u32; 4]) -> Vec<[u32; 4]> {
     let options = self.options(size, place);
     if options == self.held_options {
       differing(self.held.shapes(), flat.shapes(), &options)
     } else {
-      Some(place)
+      vec![place]
     }
   }
 
@@ -331,35 +331,70 @@ impl FlatRenderer {
   }
 }
 
-/// Returns the rectangle of a target that two lists differ in.
+/// The most rectangles two lists of shapes differ in.
 ///
-/// It is around every shape of either list that the other does not have at the same place in
-/// it, as `[left, top, width, height]` in the target's pixels, and `None` for the same lists.
-fn differing(before: &[Shape], now: &[Shape], options: &Options) -> Option<[u32; 4]> {
-  let (shorter, longer) = if before.len() <= now.len() {
-    (before, now)
-  } else {
-    (now, before)
-  };
-  let changed = (before.iter().zip(now)).filter(|(before, now)| before != now);
-  let all = changed
-    .flat_map(|(before, now)| [before, now])
-    .chain(&longer[shorter.len()..])
-    .map(|shape| reach(shape, options));
-  let [left, top, right, foot] = all.reduce(|[left, top, right, foot], shape| {
+/// More than that are told as the one rectangle around them.
+const MOST_DIFFERING: usize = 8;
+/// The most pixels between shapes that one rectangle holds.
+///
+/// Two shapes that differ and are that near one another are told as one rectangle. The strokes
+/// of one piece of lettering are that near.
+const TOGETHER: f32 = 16.0;
+
+/// Returns the rectangles of a target that two lists differ in.
+///
+/// They are around the shapes that are not the same in both, each as `[left, top, width,
+/// height]` in the target's pixels, with those near one another in one rectangle. The shapes
+/// that both lists start with and those that both end with are the same, however many lie
+/// between them in each, and so are those between them at the same place in lists as long.
+fn differing(before: &[Shape], now: &[Shape], options: &Options) -> Vec<[u32; 4]> {
+  let starts = (before.iter().zip(now))
+    .take_while(|(before, now)| before == now)
+    .count();
+  let (before, now) = (&before[starts..], &now[starts..]);
+  let ends = (before.iter().rev().zip(now.iter().rev()))
+    .take_while(|(before, now)| before == now)
+    .count();
+  let (before, now) = (&before[..before.len() - ends], &now[..now.len() - ends]);
+  let alike = |index: usize| before.len() == now.len() && before[index] == now[index];
+  let differing = (before.iter().enumerate())
+    .chain(now.iter().enumerate())
+    .filter(|(index, _)| !alike(*index));
+  let around = |one: [f32; 4], other: [f32; 4]| {
     [
-      left.min(shape[0]),
-      top.min(shape[1]),
-      right.max(shape[2]),
-      foot.max(shape[3]),
+      one[0].min(other[0]),
+      one[1].min(other[1]),
+      one[2].max(other[2]),
+      one[3].max(other[3]),
     ]
-  })?;
+  };
+  let near = |one: &[f32; 4], other: &[f32; 4]| {
+    one[0] - TOGETHER <= other[2]
+      && other[0] <= one[2] + TOGETHER
+      && one[1] - TOGETHER <= other[3]
+      && other[1] <= one[3] + TOGETHER
+  };
+  let mut apart: Vec<[f32; 4]> = Vec::new();
+  for (_, shape) in differing {
+    let mut shape = reach(shape, options);
+    while let Some(held) = apart.iter().position(|held| near(held, &shape)) {
+      shape = around(shape, apart.swap_remove(held));
+    }
+    apart.push(shape);
+  }
+  if apart.len() > MOST_DIFFERING {
+    apart = apart.into_iter().reduce(around).into_iter().collect();
+  }
   let [x, y] = options.origin;
   let [width, height] = options.pixels;
-  let (left, top) = (left.floor().max(0.0), top.floor().max(0.0));
-  let (right, foot) = (right.ceil().min(width), foot.ceil().min(height));
-  (left < right && top < foot)
-    .then(|| [x + left, y + top, right - left, foot - top].map(|side| side as u32))
+  (apart.into_iter())
+    .filter_map(|[left, top, right, foot]| {
+      let (left, top) = (left.floor().max(0.0), top.floor().max(0.0));
+      let (right, foot) = (right.ceil().min(width), foot.ceil().min(height));
+      (left < right && top < foot)
+        .then(|| [x + left, y + top, right - left, foot - top].map(|side| side as u32))
+    })
+    .collect()
 }
 
 /// Returns the rectangle of pixels a shape is drawn in.
@@ -421,14 +456,16 @@ mod tests {
     before.line([20.0, 10.0], [30.0, 10.0], 2.0, ink);
     before.area(&[[50.0, 30.0], [60.0, 40.0]], 45.0, ink);
     let differ = |now: &Flat| differing(before.shapes(), now.shapes(), &options);
-    assert_eq!(differ(&before), None);
+    assert_eq!(differ(&before), [[0; 4]; 0]);
 
     // the line somewhere else: around where it was and where it is, as far as it is drawn
     let mut moved = Flat::default();
     moved.rect([0.0, 0.0], [100.0, 50.0], ink);
     moved.line([20.0, 15.0], [35.0, 15.0], 2.0, ink);
     moved.area(&[[50.0, 30.0], [60.0, 40.0]], 45.0, ink);
-    let [left, top, width, height] = differ(&moved).expect("the lines differ");
+    let [[left, top, width, height]] = differ(&moved)[..] else {
+      panic!("the lines differ in one rectangle");
+    };
     // its ends at 40 and 70 across and 20 and 30 down, each a pixel of half its width past them
     assert!((10 + 34..=10 + 37).contains(&left), "{left}");
     assert!((20 + 14..=20 + 17).contains(&top), "{top}");
@@ -439,10 +476,12 @@ mod tests {
     let mut fewer = Flat::default();
     fewer.rect([0.0, 0.0], [100.0, 50.0], ink);
     fewer.line([20.0, 10.0], [30.0, 10.0], 2.0, ink);
-    let around_area = differ(&fewer).expect("one has a shape more");
+    let [around_area] = differ(&fewer)[..] else {
+      panic!("one has a shape more, in one rectangle");
+    };
     assert_eq!(
       differing(fewer.shapes(), before.shapes(), &options),
-      Some(around_area)
+      [around_area]
     );
     let [left, top, width, height] = around_area;
     assert!(
@@ -457,7 +496,51 @@ mod tests {
     ground.rect([0.0, 0.0], [100.0, 50.0], [0.5; 4]);
     ground.line([20.0, 10.0], [30.0, 10.0], 2.0, ink);
     ground.area(&[[50.0, 30.0], [60.0, 40.0]], 45.0, ink);
-    assert_eq!(differ(&ground), Some([10, 20, 200, 100]));
+    assert_eq!(differ(&ground), [[10, 20, 200, 100]]);
+  }
+
+  #[test]
+  fn shapes_that_differ_far_apart_differ_in_rectangles_of_their_own() {
+    let options = Options {
+      size: [400.0, 200.0],
+      pixels: [400.0, 200.0],
+      origin: [0.0; 2],
+      options: [0.0; 2],
+    };
+    let ink = [1.0; 4];
+    // two values written far apart with a line between them, the first of them a stroke longer
+    let written = |first: &[f32], second: f32| {
+      let mut flat = Flat::default();
+      for across in first {
+        flat.line([20.0 + across, 20.0], [20.0 + across, 30.0], 1.0, ink);
+      }
+      flat.line([100.0, 100.0], [300.0, 100.0], 1.0, ink);
+      flat.line([350.0, 170.0], [350.0 + second, 180.0], 1.0, ink);
+      flat
+    };
+    let before = written(&[0.0, 6.0], 0.0);
+    let differ = |now: &Flat| differing(before.shapes(), now.shapes(), &options);
+    let holds = |part: &[u32; 4], [across, down]: [u32; 2]| {
+      (part[0]..part[0] + part[2]).contains(&across) && (part[1]..part[1] + part[3]).contains(&down)
+    };
+    // a stroke more in the first: around that value alone, though every shape after it is at
+    // another place in the list
+    let longer = differ(&written(&[0.0, 6.0, 12.0], 0.0));
+    assert_eq!(longer.len(), 1, "{longer:?}");
+    assert!(holds(&longer[0], [32, 25]) && longer[0][2] < 40 && longer[0][3] < 30);
+    // both values differ: a rectangle around each, and the line between them in neither
+    let both = differ(&written(&[0.0, 9.0], 5.0));
+    assert_eq!(both.len(), 2, "{both:?}");
+    assert!(both.iter().any(|part| holds(part, [29, 25])));
+    assert!(both.iter().any(|part| holds(part, [353, 175])));
+    assert!(!both.iter().any(|part| holds(part, [200, 100])));
+    // more places than are told apart are one rectangle around them all
+    let mut many = Flat::default();
+    for place in 0..MOST_DIFFERING + 1 {
+      let across = 20.0 + place as f32 * 40.0;
+      many.line([across, 20.0], [across, 30.0], 1.0, ink);
+    }
+    assert_eq!(differing(&[], many.shapes(), &options).len(), 1);
   }
 
   #[test]

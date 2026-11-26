@@ -10,6 +10,10 @@
 //! sight through the middle, at any height at all for a triangle seen nearly edge on. So a
 //! change is taken to show wherever a line of sight passes through what the change reaches,
 //! whether anything is drawn there or not.
+//!
+//! The bounce map is read at a place of its own, which `scene.wgsl` takes where the triangle
+//! covers the pixel. That place is on the triangle, between the scene's heights, and is seen
+//! inside the pixel.
 
 use glam::{Mat4, Vec2, Vec3};
 
@@ -81,8 +85,29 @@ const BOUNCE_REACH: f32 = BOUNCE_REACHES[BOUNCE_REACHES.len() - 1];
 const MARGIN: f32 = 2.0;
 /// The height in pixels of a band of the picture.
 ///
-/// A bound keeps how wide it is in each band.
+/// A bound keeps where it lies across each band.
 pub(super) const BAND: f32 = 16.0;
+/// The most stretches of a band that a bound is kept as.
+///
+/// Changes far apart in the same rows stay apart, and the two nearest of more become one.
+const SPANS: usize = 4;
+/// The stretches of a band that a bound lies in, from the left.
+///
+/// Each is its start and end in pixels, and they are apart from one another. The ones after the
+/// last are [`NO_SPAN`].
+pub(super) type Band = [[f32; 2]; SPANS];
+/// A stretch that holds nothing, which starts past its end.
+const NO_SPAN: [f32; 2] = [f32::MAX, f32::MIN];
+/// The most rectangles of a target that a bound is told as.
+///
+/// Each is a copy of its own for whoever reads the target back.
+const MOST_PARTS: usize = 16;
+/// The shares of a rectangle that may lie outside a bound.
+///
+/// A rectangle is put around stretches under one another while no more of it than that is
+/// outside them. The first share is tried first, and the next while the rectangles are more
+/// than [`MOST_PARTS`].
+const WASTES: [f32; 3] = [0.1, 0.25, 0.5];
 /// The share of the picture that counts as all of it.
 ///
 /// A bound of that many of its pixels is taken for the whole picture. Wiping a part costs a
@@ -148,11 +173,10 @@ pub(super) struct Reach<'a> {
   ///
   /// They are in the picture's clip space.
   corners: &'a mut Vec<[f32; 2]>,
-  /// The start and end of the bound across each band, in pixels.
+  /// Where the bound lies across each band.
   ///
-  /// The bands are [`BAND`] pixels high, from the top of the picture. One the bound is not in
-  /// starts past its end.
-  bands: &'a mut Vec<[f32; 2]>,
+  /// The bands are [`BAND`] pixels high, from the top of the picture.
+  bands: &'a mut Vec<Band>,
   /// The rectangle of the panel whose bounced light differs.
   ///
   /// Light comes off it otherwise in one scene than in the other. It is the least and greatest
@@ -171,14 +195,14 @@ impl<'a> Reach<'a> {
   /// Creates the bound of two scenes that are lit alike.
   ///
   /// Both are scenes that [`bounded`] holds for. `picture` is the width and height of the
-  /// picture in pixels. The triangles are gathered in `corners` and the widths in `bands`, in
-  /// place of what the two held.
+  /// picture in pixels. The triangles are gathered in `corners` and the stretches in `bands`,
+  /// in place of what the two held.
   pub(super) fn new(
     before: &Globals,
     now: &Globals,
     picture: [u32; 2],
     corners: &'a mut Vec<[f32; 2]>,
-    bands: &'a mut Vec<[f32; 2]>,
+    bands: &'a mut Vec<Band>,
   ) -> Self {
     let [toward_x, toward_y, toward_z, softness] = now.toward_light;
     let picture = Vec2::new(picture[0] as f32, picture[1] as f32);
@@ -194,7 +218,7 @@ impl<'a> Reach<'a> {
     let places = SHADOW_SPREAD as f32 * softness.abs() + 2.0;
     corners.clear();
     bands.clear();
-    bands.resize((picture.y / BAND).ceil() as usize, [f32::MAX, f32::MIN]);
+    bands.resize((picture.y / BAND).ceil() as usize, [NO_SPAN; SPANS]);
     let mut reach = Self {
       to_pixels: to_pixels(&now.view, picture),
       light_view,
@@ -224,7 +248,7 @@ impl<'a> Reach<'a> {
   /// Returns the count of shapes the bound is made of.
   ///
   /// `moved` is where each object that differs in shape or place was and is, and `recolored`
-  /// the count of objects that differ in their material alone. A bound of more than
+  /// the count of boxes around what differs in what it shows alone. A bound of more than
   /// [`MOST_SHAPES`] is not worth building.
   pub(super) fn takes(
     &self,
@@ -298,33 +322,37 @@ impl<'a> Reach<'a> {
       self.everywhere = true;
       return;
     }
-    // each side of the shape, from its higher end down through the bands it crosses. a level
-    // side ends where two others do
-    for (index, &from) in around.iter().enumerate() {
-      let to = around[(index + 1) % around.len()];
-      let (top, foot) = if from.y <= to.y {
-        (from, to)
-      } else {
-        (to, from)
-      };
-      if top.y == foot.y {
-        continue;
+    let (top, foot) = (around.iter()).fold((f32::MAX, f32::MIN), |(top, foot), corner| {
+      (top.min(corner.y), foot.max(corner.y))
+    });
+    let sides = || (around.iter()).zip(around.iter().cycle().skip(1));
+    let highest = (top / BAND).floor().max(0.0) as usize;
+    for (band, spans) in self.bands.iter_mut().enumerate().skip(highest) {
+      let (upper, lower) = (band as f32 * BAND, (band + 1) as f32 * BAND);
+      if foot < upper {
+        break;
       }
-      let first = (top.y / BAND).floor().max(0.0) as usize;
-      for (band, [starts, ends]) in self.bands.iter_mut().enumerate().skip(first) {
-        let (upper, lower) = (band as f32 * BAND, (band + 1) as f32 * BAND);
-        if foot.y < upper {
-          break;
+      // the shape has no dent, so it is one stretch of the band: between where its sides come
+      // into the band and where they leave it. a level side ends where two others do
+      let mut span = NO_SPAN;
+      for (from, to) in sides() {
+        let (high, low) = if from.y <= to.y {
+          (from, to)
+        } else {
+          (to, from)
+        };
+        if high.y == low.y || low.y < upper || high.y > lower {
+          continue;
         }
-        // where the side comes into the band and where it leaves it
-        for down in [upper.max(top.y), lower.min(foot.y)] {
-          let across = top.x + (foot.x - top.x) * (down - top.y) / (foot.y - top.y);
-          (*starts, *ends) = (starts.min(across), ends.max(across));
+        for down in [upper.max(high.y), lower.min(low.y)] {
+          let across = high.x + (low.x - high.x) * (down - high.y) / (low.y - high.y);
+          span = [span[0].min(across), span[1].max(across)];
         }
       }
+      join(spans, span);
     }
     // the picture's pixels that the bands hold between them
-    let held: f32 = (self.bands.iter())
+    let held: f32 = (self.bands.iter().flatten())
       .map(|&[starts, ends]| (ends.min(self.picture.x) - starts.max(0.0)).max(0.0) * BAND)
       .sum();
     self.shapes += 1;
@@ -363,7 +391,7 @@ impl<'a> Reach<'a> {
   /// Adds all that takes light off a rectangle of the panel.
   ///
   /// Nothing does unless light bounces. Such a point is over or under a place near the
-  /// rectangle, at any height.
+  /// rectangle, between the scene's heights, where the place the bounce map is read at is.
   fn add_bounced(&mut self, [min, max]: [Vec2; 2]) {
     let Some(texel) = self.bounce else {
       return;
@@ -378,14 +406,16 @@ impl<'a> Reach<'a> {
     // from them out to the last ring, and half a texel more for the texels a place is mixed from
     let [min, max] = self.past_edges([min, max]);
     let carried = (BOUNCE_REACH + 0.5) * texel;
-    let far = self.far();
+    let [low, high] = self.heights;
     self.cover(corners([
-      (min - carried).extend(-far),
-      (max + carried).extend(far),
+      (min - carried).extend(low),
+      (max + carried).extend(high),
     ]));
   }
 
-  /// Adds an object that differs in its material alone.
+  /// Adds a box whose objects cast the shadows they did.
+  ///
+  /// What differs in it is drawn again, and so is what its light is thrown on.
   pub(super) fn recolored(&mut self, bounds: Bounds) {
     self.add_drawn(bounds);
     self.add_bounced([bounds[0].truncate(), bounds[1].truncate()]);
@@ -477,7 +507,9 @@ impl<'a> Reach<'a> {
       return Redrawn::Whole;
     }
     // the bands the bound is in, cut to the picture
-    let within = (self.bands.iter().enumerate()).filter_map(|(band, &[starts, ends])| {
+    let spans = (self.bands.iter().enumerate())
+      .flat_map(|(band, spans)| spans.iter().map(move |span| (band, *span)));
+    let within = spans.filter_map(|(band, [starts, ends])| {
       let (starts, ends) = (starts.floor().max(0.0), ends.ceil().min(self.picture.x));
       (starts < ends).then_some((band, starts, ends))
     });
@@ -531,16 +563,102 @@ pub(super) fn corners([min, max]: Bounds) -> impl Iterator<Item = Vec3> + Clone 
   })
 }
 
+/// Adds a box to boxes that lie apart seen from above.
+///
+/// The box and every one it lies over become the one box around them.
+pub(super) fn add_box(boxes: &mut Vec<Bounds>, mut added: Bounds) {
+  let over = |[min, max]: &Bounds, [least, most]: &Bounds| {
+    min.truncate().cmple(most.truncate()).all() && least.truncate().cmple(max.truncate()).all()
+  };
+  while let Some(under) = boxes.iter().position(|held| over(held, &added)) {
+    let [min, max] = boxes.swap_remove(under);
+    added = [added[0].min(min), added[1].max(max)];
+  }
+  boxes.push(added);
+}
+
+/// Adds a stretch to those of a band.
+///
+/// It and every stretch it touches become one. If that leaves more than a band keeps, the two
+/// with the least between them become one too. A stretch that holds nothing adds nothing.
+fn join(spans: &mut Band, mut added: [f32; 2]) {
+  if added[0] > added[1] {
+    return;
+  }
+  let mut apart = [NO_SPAN; SPANS + 1];
+  let mut count = 0;
+  for span in spans.iter().filter(|span| span[0] <= span[1]) {
+    if span[0] <= added[1] && added[0] <= span[1] {
+      added = [added[0].min(span[0]), added[1].max(span[1])];
+    } else {
+      apart[count] = *span;
+      count += 1;
+    }
+  }
+  apart[count] = added;
+  count += 1;
+  apart[..count].sort_unstable_by(|one, other| one[0].total_cmp(&other[0]));
+  if count > SPANS {
+    let gap = |before: &usize| apart[before + 1][0] - apart[*before][1];
+    let nearest = (0..SPANS)
+      .min_by(|one, other| gap(one).total_cmp(&gap(other)))
+      .expect("there is more than one stretch");
+    apart[nearest][1] = apart[nearest + 1][1];
+    apart.copy_within(nearest + 2.., nearest + 1);
+    apart[SPANS] = NO_SPAN;
+  }
+  spans.copy_from_slice(&apart[..SPANS]);
+}
+
 /// Gathers the rectangles of a target that a bound shows in.
 ///
-/// `bands` is how far across the bound starts and ends in each band of a picture of `picture`
-/// pixels, which is stretched over `target` pixels. Each rectangle is x, y, width and height in
-/// the target's pixels, and they are added to `parts`. What the present pass gathers around a
-/// pixel is taken in.
+/// `bands` is where the bound lies across each band of a picture of `picture` pixels, which is
+/// stretched over `target` pixels. Each rectangle is x, y, width and height in the target's
+/// pixels, and they are added to `parts`, [`MOST_PARTS`] of them at most. What the present pass
+/// gathers around a pixel is taken in.
 pub(super) fn parts(
-  bands: &[[f32; 2]],
+  bands: &[Band],
   picture: [u32; 2],
   target: [u32; 2],
+  parts: &mut Vec<[u32; 4]>,
+) {
+  let kept = parts.len();
+  for waste in WASTES {
+    parts.truncate(kept);
+    gather_parts(bands, picture, target, waste, parts);
+    if parts.len() - kept <= MOST_PARTS {
+      return;
+    }
+  }
+  // too many still, and the one rectangle around them all is told in their place
+  let around = parts[kept..]
+    .iter()
+    .fold([u32::MAX, u32::MAX, 0, 0], |around, part| {
+      [
+        around[0].min(part[0]),
+        around[1].min(part[1]),
+        around[2].max(part[0] + part[2]),
+        around[3].max(part[1] + part[3]),
+      ]
+    });
+  parts.truncate(kept);
+  parts.push([
+    around[0],
+    around[1],
+    around[2] - around[0],
+    around[3] - around[1],
+  ]);
+}
+
+/// Adds the rectangles of a target that a bound shows in.
+///
+/// Everything is as [`parts`] takes it. A rectangle is put around the stretches of bands under
+/// one another, while no more than `waste` of it lies outside them.
+fn gather_parts(
+  bands: &[Band],
+  picture: [u32; 2],
+  target: [u32; 2],
+  waste: f32,
   parts: &mut Vec<[u32; 4]>,
 ) {
   let [picture, target] =
@@ -548,30 +666,63 @@ pub(super) fn parts(
   let scale = target / picture;
   // one more for the pixel of the picture that a pixel of the target is given
   let reach = HAZE_REACH + 1.0;
+  // the rectangles that reach down to the band before, each with the count of its pixels that
+  // lie in the stretches it is around, and those that reach down to this one
+  let (mut open, mut next) = (Vec::<([u32; 4], u64)>::new(), Vec::new());
   for band in 0..bands.len() {
-    let near = &bands[band.saturating_sub(1)..(band + 2).min(bands.len())];
-    let starts = near.iter().map(|near| near[0]).fold(f32::MAX, f32::min);
-    let ends = near.iter().map(|near| near[1]).fold(f32::MIN, f32::max);
-    let left = ((starts - reach) * scale.x).floor().max(0.0);
-    let right = ((ends + reach) * scale.x).ceil().min(target.x);
     let top = (band as f32 * BAND * scale.y).floor();
     let foot = (((band + 1) as f32 * BAND).min(picture.y) * scale.y)
       .ceil()
       .min(target.y);
-    if left >= right || top >= foot {
-      continue;
-    }
-    let [left, top, width, height] = [left, top, right - left, foot - top].map(|side| side as u32);
-    match parts.last_mut() {
-      // as wide as the band over it, and so one rectangle with it
-      Some([last_left, last_top, last_width, last_height])
-        if (*last_left, *last_width) == (left, width) && *last_top + *last_height >= top =>
-      {
-        *last_height = top + height - *last_top;
+    // what shows in this band of the target is in this band of the picture or in one next to it
+    let near = &bands[band.saturating_sub(1)..(band + 2).min(bands.len())];
+    let mut spans = [NO_SPAN; SPANS * 3];
+    let mut count = 0;
+    for &[starts, ends] in near.iter().flatten().filter(|span| span[0] <= span[1]) {
+      let left = ((starts - reach) * scale.x).floor().max(0.0);
+      let right = ((ends + reach) * scale.x).ceil().min(target.x);
+      if left < right && top < foot {
+        spans[count] = [left, right];
+        count += 1;
       }
-      _ => parts.push([left, top, width, height]),
     }
+    spans[..count].sort_unstable_by(|one, other| one[0].total_cmp(&other[0]));
+    let mut span = 0;
+    while span < count {
+      // the stretches that touch are one
+      let [left, mut right] = spans[span];
+      span += 1;
+      while span < count && spans[span][0] <= right {
+        right = right.max(spans[span][1]);
+        span += 1;
+      }
+      let [left, right, top, foot] = [left, right, top, foot].map(|side| side as u32);
+      let lies = u64::from(right - left) * u64::from(foot - top);
+      // the rectangle around this and one from the band before that it is under
+      let both = |&([last_left, last_top, last_width, _], held): &([u32; 4], u64)| {
+        let (least, most) = (last_left.min(left), (last_left + last_width).max(right));
+        (
+          [least, last_top, most - least, foot - last_top],
+          held + lies,
+        )
+      };
+      let over = open.iter().position(|last| {
+        let ([last_left, _, last_width, _], _) = *last;
+        let ([_, _, width, height], held) = both(last);
+        let around = u64::from(width) * u64::from(height);
+        last_left < right
+          && left < last_left + last_width
+          && around.saturating_sub(held) as f32 <= around as f32 * waste
+      });
+      next.push(match over {
+        Some(last) => both(&open.swap_remove(last)),
+        None => ([left, top, right - left, foot - top], lies),
+      });
+    }
+    parts.extend(open.drain(..).map(|(part, _)| part));
+    std::mem::swap(&mut open, &mut next);
   }
+  parts.extend(open.into_iter().map(|(part, _)| part));
 }
 
 /// Returns the lamps two scenes share, or those they do not.
@@ -770,7 +921,7 @@ mod tests {
   /// Returns whether the triangles gathered cover a pixel.
   ///
   /// A pixel they cover has to be in its band too.
-  fn shows(corners: &[[f32; 2]], bands: &[[f32; 2]], pixel: Vec2) -> bool {
+  fn shows(corners: &[[f32; 2]], bands: &[Band], pixel: Vec2) -> bool {
     let at = pixel / Vec2::new(PICTURE[0] as f32, PICTURE[1] as f32) * 2.0 - 1.0;
     let at = Vec2::new(at.x, -at.y);
     let covered = corners.as_chunks::<3>().0.iter().any(|triangle| {
@@ -779,7 +930,9 @@ mod tests {
       sides.iter().all(|side| *side >= 0.0) || sides.iter().all(|side| *side <= 0.0)
     });
     let band = bands.get((pixel.y / BAND) as usize);
-    let banded = band.is_some_and(|&[starts, ends]| starts <= pixel.x && pixel.x <= ends);
+    let banded = band.is_some_and(|spans| {
+      (spans.iter()).any(|&[starts, ends]| starts <= pixel.x && pixel.x <= ends)
+    });
     let on_picture = pixel.cmpge(Vec2::ZERO).all() && pixel.y < PICTURE[1] as f32;
     assert!(
       !covered || !on_picture || banded,
@@ -966,16 +1119,56 @@ mod tests {
           for step in 0..=20 {
             let on_side = from.lerp(to, step as f32 / 20.0);
             if (0.0..size.y).contains(&on_side.y) {
-              let [starts, ends] = bands[(on_side.y / BAND) as usize];
+              let spans = bands[(on_side.y / BAND) as usize];
               assert!(
-                starts - 1e-2 <= on_side.x && on_side.x <= ends + 1e-2,
-                "{on_side} is outside {starts} to {ends}"
+                (spans.iter())
+                  .any(|[starts, ends]| starts - 1e-2 <= on_side.x && on_side.x <= ends + 1e-2),
+                "{on_side} is outside {spans:?}"
               );
             }
           }
         }
       }
     }
+  }
+
+  /// Asserts that parts hold all a bound shows in.
+  ///
+  /// That is all the present pass gathers around the bound. Returns the count of the target's
+  /// pixels in the parts, with one in two parts counted twice.
+  fn assert_held(bands: &[Band], picture: [u32; 2], target: [u32; 2], found: &[[u32; 4]]) -> u32 {
+    let scale = Vec2::new(target[0] as f32, target[1] as f32)
+      / Vec2::new(picture[0] as f32, picture[1] as f32);
+    for across in 0..target[0] {
+      for down in 0..target[1] {
+        // the pixel of the picture this one of the target is given, as the present pass has it
+        let shown = (Vec2::new(across as f32, down as f32) + 0.5) / scale;
+        let near = |band: usize, [starts, ends]: [f32; 2]| {
+          let (upper, lower) = (band as f32 * BAND, (band + 1) as f32 * BAND);
+          starts <= ends
+            && (starts - HAZE_REACH..=ends + HAZE_REACH).contains(&shown.x)
+            && (upper - HAZE_REACH..=lower + HAZE_REACH).contains(&shown.y)
+        };
+        let spans = (bands.iter().enumerate())
+          .flat_map(|(band, spans)| spans.iter().map(move |span| (band, *span)));
+        if spans.into_iter().any(|(band, span)| near(band, span)) {
+          let held = found.iter().any(|&[left, top, width, height]| {
+            (left..left + width).contains(&across) && (top..top + height).contains(&down)
+          });
+          assert!(
+            held,
+            "{across} {down} of {target:?} is in none of {found:?}"
+          );
+        }
+      }
+    }
+    // no part reaches off the target, and they are few
+    let within = |&[left, top, width, height]: &[u32; 4]| {
+      width > 0 && height > 0 && left + width <= target[0] && top + height <= target[1]
+    };
+    assert!(found.iter().all(within), "{found:?}");
+    assert!(found.len() <= MOST_PARTS, "{found:?}");
+    found.iter().map(|part| part[2] * part[3]).sum()
   }
 
   #[test]
@@ -986,59 +1179,106 @@ mod tests {
       ([400, 200], [800, 400]),
       ([531, 301], [797, 452]),
     ] {
-      // a bound in a few bands, some next to each other and some apart
-      let mut bands = vec![[f32::MAX, f32::MIN]; (picture[1] as f32 / BAND).ceil() as usize];
-      for _ in 0..4 {
+      // a bound in a few bands, some next to each other and some apart, and some of it in the
+      // same band
+      let mut bands = vec![[NO_SPAN; SPANS]; (picture[1] as f32 / BAND).ceil() as usize];
+      for _ in 0..5 {
         let band = (number() * bands.len() as f32) as usize;
         let starts = number() * picture[0] as f32;
-        bands[band] = [starts, starts + number() * 90.0];
+        join(&mut bands[band], [starts, starts + number() * 90.0]);
       }
       let mut found = Vec::new();
       parts(&bands, picture, target, &mut found);
-      let scale = Vec2::new(target[0] as f32, target[1] as f32)
-        / Vec2::new(picture[0] as f32, picture[1] as f32);
-      for across in 0..target[0] {
-        for down in 0..target[1] {
-          // the pixel of the picture this one of the target is given, as the present pass has it
-          let shown = (Vec2::new(across as f32, down as f32) + 0.5) / scale;
-          let near = |band: usize, [starts, ends]: [f32; 2]| {
-            let (upper, lower) = (band as f32 * BAND, (band + 1) as f32 * BAND);
-            starts <= ends
-              && (starts - HAZE_REACH..=ends + HAZE_REACH).contains(&shown.x)
-              && (upper - HAZE_REACH..=lower + HAZE_REACH).contains(&shown.y)
-          };
-          if bands
-            .iter()
-            .enumerate()
-            .any(|(band, bound)| near(band, *bound))
-          {
-            let held = found.iter().any(|&[left, top, width, height]| {
-              (left..left + width).contains(&across) && (top..top + height).contains(&down)
-            });
-            assert!(
-              held,
-              "{across} {down} of {target:?} is in none of {found:?}"
-            );
-          }
-        }
-      }
-      // no part reaches off the target, and they are far from all of it
-      let within = |&[left, top, width, height]: &[u32; 4]| {
-        left + width <= target[0] && top + height <= target[1]
-      };
-      assert!(found.iter().all(within), "{found:?}");
-      let held: u32 = found.iter().map(|part| part[2] * part[3]).sum();
+      // they are far from all of the target
+      let held = assert_held(&bands, picture, target, &found);
       assert!(held < target[0] * target[1] / 2, "{found:?}");
     }
     // a bound of nothing has no parts
     let mut found = Vec::new();
-    parts(
-      &[[f32::MAX, f32::MIN]; 25],
-      [800, 400],
-      [800, 400],
-      &mut found,
-    );
+    parts(&[[NO_SPAN; SPANS]; 25], [800, 400], [800, 400], &mut found);
     assert!(found.is_empty());
+  }
+
+  #[test]
+  fn two_changes_far_apart_in_the_same_rows_are_parts_of_their_own() {
+    let globals = Globals::of(&scene(0.0));
+    let (mut corners, mut bands) = (Vec::new(), Vec::new());
+    let mut reach = Reach::new(&globals, &globals, PICTURE, &mut corners, &mut bands);
+    // a round thing on the left and a tall one on the right, in the same rows
+    let knob = [Vec3::new(40.0, 80.0, 0.0), Vec3::new(70.0, 110.0, 20.0)];
+    let meter = [Vec3::new(360.0, 40.0, 0.0), Vec3::new(368.0, 160.0, 2.0)];
+    reach.recolored(knob);
+    reach.recolored(meter);
+    let Redrawn::Within([left, _, width, _]) = reach.redrawn() else {
+      panic!("the bound is a part of the picture");
+    };
+    // the rectangle around both is most of the picture's width
+    assert!(left < 100 && width > 600);
+    let mut found = Vec::new();
+    parts(&bands, PICTURE, PICTURE, &mut found);
+    let held = assert_held(&bands, PICTURE, PICTURE, &found);
+    // what lies between the two is in no part
+    let between = |&[left, _, width, _]: &[u32; 4]| left < 400 && left + width > 400;
+    assert!(!found.iter().any(between), "{found:?}");
+    assert!(found.len() <= 6, "{found:?}");
+    assert!(held < PICTURE[0] * PICTURE[1] / 6, "{found:?}");
+  }
+
+  #[test]
+  fn a_band_keeps_stretches_apart_and_joins_those_that_touch() {
+    let mut spans = [NO_SPAN; SPANS];
+    join(&mut spans, [50.0, 60.0]);
+    join(&mut spans, [10.0, 20.0]);
+    join(&mut spans, NO_SPAN);
+    assert_eq!(spans[..2], [[10.0, 20.0], [50.0, 60.0]]);
+    assert_eq!(spans[2..], [NO_SPAN; 2]);
+    // one that touches both makes them one
+    join(&mut spans, [18.0, 52.0]);
+    assert_eq!(spans, [[10.0, 60.0], NO_SPAN, NO_SPAN, NO_SPAN]);
+    // one more than a band keeps: the two with the least between them become one
+    for starts in [100.0, 200.0, 300.0, 215.0] {
+      join(&mut spans, [starts, starts + 10.0]);
+    }
+    assert_eq!(
+      spans,
+      [[10.0, 60.0], [100.0, 110.0], [200.0, 225.0], [300.0, 310.0]]
+    );
+    join(&mut spans, [400.0, 410.0]);
+    assert_eq!(
+      spans,
+      [
+        [10.0, 110.0],
+        [200.0, 225.0],
+        [300.0, 310.0],
+        [400.0, 410.0]
+      ]
+    );
+  }
+
+  #[test]
+  fn a_bound_that_slants_across_the_target_is_told_as_few_parts() {
+    // a stretch that moves across by more than its width from each band to the next
+    let mut bands = vec![[NO_SPAN; SPANS]; 60];
+    for (band, spans) in bands.iter_mut().enumerate() {
+      let starts = band as f32 * 30.0;
+      join(spans, [starts, starts + 4.0]);
+    }
+    let (picture, mut found) = ([1900, 960], Vec::new());
+    parts(&bands, picture, picture, &mut found);
+    assert_held(&bands, picture, picture, &found);
+    assert!(found.len() > 1, "{found:?}");
+    // two that cross, each a long way across from one band to the next: no rectangles few
+    // enough hold them closely, and they are told as the one around them all
+    let mut bands = vec![[NO_SPAN; SPANS]; 40];
+    for (band, spans) in bands.iter_mut().enumerate() {
+      let starts = band as f32 * 100.0;
+      join(spans, [starts, starts + 4.0]);
+      join(spans, [3900.0 - starts, 3904.0 - starts]);
+    }
+    let (picture, mut found) = ([4000, 640], Vec::new());
+    parts(&bands, picture, picture, &mut found);
+    assert_held(&bands, picture, picture, &found);
+    assert_eq!(found.len(), 1, "{found:?}");
   }
 
   #[test]
@@ -1101,7 +1341,7 @@ mod tests {
   }
 
   #[test]
-  fn light_that_bounces_carries_a_change_to_every_height_over_and_under_it() {
+  fn light_that_bounces_carries_a_change_to_every_height_a_place_has_over_and_under_it() {
     let scene = scene(3.0);
     let globals = Globals::of(&scene);
     let (mut corners, mut bands) = (Vec::new(), Vec::new());
@@ -1115,8 +1355,19 @@ mod tests {
       let turn = number() * std::f32::consts::TAU;
       let aside = Vec2::from_angle(turn) * number() * BOUNCE_REACH * texel;
       let within = min.truncate() + (max - min).truncate() * Vec2::new(number(), number());
-      let near = (within + aside).extend(-2000.0 + number() * 4000.0);
+      let near = (within + aside).extend(-10.0 + number() * 50.0);
       assert!(shows(&corners, &bands, pixel(&scene, near)), "{near}");
+    }
+    // as far off as the last ring on each side, at the lowest and the highest a place is. under
+    // this view the highest is seen 12 points up the picture from the lowest
+    let reach = BOUNCE_REACH * texel;
+    let middle = (min + max).truncate() / 2.0;
+    for aside in [Vec2::X, Vec2::NEG_X, Vec2::Y, Vec2::NEG_Y] {
+      let edge = middle + aside * (10.0 + reach);
+      for height in scene.heights {
+        let near = edge.extend(height);
+        assert!(shows(&corners, &bands, pixel(&scene, near)), "{near}");
+      }
     }
     assert!(!shows(
       &corners,

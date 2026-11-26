@@ -268,7 +268,7 @@ fn a_scene_drawn_in_part_is_the_scene_drawn_whole() {
     let (mut kept, mut shown) = (Renderer::new(&target.device, FORMAT), Vec::new());
     for frame in 0..48 {
       let object = 1 + (number() * 12.0) as usize;
-      let kind = (number() * 12.0) as u32;
+      let kind = (number() * 14.0) as u32;
       match kind {
         0..=2 => scene.objects[object].transform = place(&mut number),
         // a little way, as a drag takes something
@@ -285,6 +285,16 @@ fn a_scene_drawn_in_part_is_the_scene_drawn_whole() {
           let slot = frame % scene.lamps.len();
           scene.lamps[slot] = lamp(&mut number);
         }
+        // a thing without a shadow made again, as a picture on a screen is, somewhere else
+        11 => {
+          let wide = 4.0 + number() * 20.0;
+          let flat = Mesh::cuboid(Vec3::new(-wide, -3.0, 0.0), Vec3::new(wide, 3.0, 0.5));
+          scene.objects[object].mesh = Arc::new(flat);
+          scene.objects[object].transform = place(&mut number);
+          scene.objects[object].material.shadowless = true;
+        }
+        // something without a shadow throws one, or the other way around
+        12 => scene.objects[object].material.shadowless ^= true,
         // two things at once: something moved and a lamp gone or come back
         _ => {
           scene.objects[object].transform = place(&mut number);
@@ -577,5 +587,190 @@ fn a_scene_that_no_bound_holds_for_is_drawn_whole() {
     let mut scene = plain.clone();
     scene.objects[2].material = material(&mut number);
     target.assert_same(&mut kept, &mut whole, &mut shown, &scene, name);
+  }
+}
+
+/// Returns the share of the target named as new.
+///
+/// It is the pixels of the parts together over those of the target.
+fn share(parts: &[[u32; 4]]) -> f32 {
+  let named: u32 = parts.iter().map(|part| part[2] * part[3]).sum();
+  named as f32 / (SIZE[0] * SIZE[1]) as f32
+}
+
+#[test]
+#[ignore = "needs a graphics device"]
+fn a_screen_whose_picture_is_made_again_is_drawn_again_alone() {
+  use potpot_controls::flat::Flat;
+
+  let target = Target::new();
+  let screen = crate::parts::Screen::new(120.0, 70.0);
+  let middle = Vec2::new(330.0, 120.0);
+  let face = Material::screen(Vec3::splat(0.02), 400.0);
+  let knob = crate::parts::Knob::fluted(16.0, 14.0).body();
+  // a curve over a filled region, as often made again as it is shown
+  let picture = |level: f32| {
+    let mut flat = Flat::default();
+    let points = [
+      [280.0, 130.0],
+      [330.0, 100.0 + level * 30.0],
+      [380.0, 125.0],
+    ];
+    flat.area(&points, 150.0, [1.0, 0.6, 0.1, 0.5]);
+    flat.curve(&points, 2.0, [0.2, 0.9, 1.0, 1.0]);
+    crate::parts::picture(&flat, middle.x, middle.y, face, 0)
+  };
+  for bounce in [0.0, 3.0] {
+    let mut scene = panel(&mut numbers(5), &[Arc::new(knob.clone())]);
+    scene.objects.truncate(1);
+    scene.light.bounce = bounce;
+    scene.lamps = (screen.lamps(middle.x, middle.y, Vec3::new(0.2, 0.9, 1.0), 1.0)).collect();
+    let on_panel = Mat4::from_translation(middle.extend(0.0));
+    for (mesh, material) in [
+      (screen.face(), face),
+      (screen.bezel(), Material::glossy(Vec3::splat(0.04))),
+    ] {
+      scene.objects.push(Object {
+        mesh: Arc::new(mesh),
+        transform: on_panel,
+        material,
+      });
+    }
+    // a knob in the screen's rows, well to the left of it
+    let turned =
+      |turn: f32| Mat4::from_translation(Vec3::new(60.0, 120.0, 0.0)) * Mat4::from_rotation_z(turn);
+    scene.objects.push(Object {
+      mesh: Arc::new(knob.clone()),
+      transform: turned(0.0),
+      material: Material::spun(Vec3::splat(0.7)),
+    });
+    let fixed = scene.objects.len();
+    scene.objects.extend(picture(0.0));
+    let [mut kept, mut whole] = [(); 2].map(|()| Renderer::new(&target.device, FORMAT));
+    let mut shown = Vec::new();
+    target.assert_same(&mut kept, &mut whole, &mut shown, &scene, "at first");
+    for frame in 1..12 {
+      let level = (frame as f32 * 0.9).sin();
+      scene.objects.truncate(fixed);
+      scene.objects.extend(picture(level));
+      // on every third frame the knob is turned too
+      if frame % 3 == 0 {
+        scene.objects[fixed - 1].transform = turned(frame as f32 * 0.3);
+      }
+      let step = format!("with picture {frame} and light bouncing {bounce}");
+      target.assert_same(&mut kept, &mut whole, &mut shown, &scene, &step);
+      // the frame after the first tells whether a bound holds, and is drawn whole
+      if frame == 1 {
+        continue;
+      }
+      let parts = kept.changed().expect("the picture is drawn in part");
+      if frame % 3 == 0 {
+        // nothing of the panel between the knob's shadow and the screen. with light bouncing,
+        // what the shadow falls on throws its light that far
+        let between = |&[left, _, width, _]: &[u32; 4]| left < 210 && left + width > 210;
+        assert!(
+          bounce > 0.0 || !parts.iter().any(between),
+          "{parts:?} {step}"
+        );
+      } else {
+        // the picture alone: the screen, and with light bouncing what its light is thrown on
+        let most = if bounce > 0.0 { 0.4 } else { 0.2 };
+        assert!(share(parts) < most, "{parts:?} {step}");
+      }
+    }
+  }
+}
+
+#[test]
+#[ignore = "needs a graphics device"]
+fn light_off_what_changes_color_shows_on_everything_near_it_at_any_height() {
+  let target = Target::new();
+  // a low block that lights itself between two very tall walls that face it from near by, with
+  // far more of its light thrown on them than any look has. under a view that leans, the top
+  // of a wall is seen far off from where the wall stands
+  let shapes = [
+    Mesh::cuboid(Vec3::new(-10.0, -10.0, 0.0), Vec3::new(10.0, 10.0, 3.0)),
+    Mesh::cuboid(Vec3::new(-14.0, -2.0, 0.0), Vec3::new(14.0, 2.0, 190.0)),
+  ]
+  .map(Arc::new);
+  let at = |x: f32, y: f32| Mat4::from_translation(Vec3::new(x, y, 0.0));
+  for (round, lean) in [Vec2::new(0.0, -0.5), Vec2::new(0.5, 0.5), Vec2::ZERO]
+    .into_iter()
+    .enumerate()
+  {
+    let mut number = numbers(21 + round as u32);
+    let mut scene = panel(&mut number, &shapes);
+    scene.objects.truncate(4);
+    scene.lamps.clear();
+    (scene.lean, scene.light.bounce) = (lean, 40.0);
+    scene.heights = [-8.0, 200.0];
+    let places = [at(224.0, 128.0), at(224.0, 104.0), at(224.0, 152.0)];
+    let meshes = [&shapes[0], &shapes[1], &shapes[1]];
+    for ((object, shape), place) in scene.objects[1..].iter_mut().zip(meshes).zip(places) {
+      (object.mesh, object.transform) = (Arc::clone(shape), place);
+      object.material = Material::matte(Vec3::splat(0.8));
+    }
+    let [mut kept, mut whole] = [(); 2].map(|()| Renderer::new(&target.device, FORMAT));
+    let mut shown = Vec::new();
+    for frame in 0..10 {
+      let color = Vec3::new(number(), number(), number());
+      scene.objects[1].material = Material::matte(color).lit(color, number(), 0.0);
+      let step = format!("with the block in color {frame} under lean {round}");
+      target.assert_same(&mut kept, &mut whole, &mut shown, &scene, &step);
+      // the first frame is drawn whole, and the one after it tells whether a bound holds
+      if frame > 1 {
+        let parts = kept.changed().expect("the color is drawn in part");
+        assert!(share(parts) < 0.5, "{parts:?} {step}");
+      }
+    }
+  }
+}
+
+#[test]
+#[ignore = "needs a graphics device"]
+fn light_off_what_changes_color_shows_on_a_sliver_where_the_sliver_is() {
+  let target = Target::new();
+  let block = Arc::new(Mesh::cuboid(
+    Vec3::new(-10.0, -10.0, 0.0),
+    Vec3::new(10.0, 10.0, 3.0),
+  ));
+  // six walls 40 high that lean nearly along the line of sight, so each is a sliver of a pixel
+  // across. the plane of one runs on along that line to any height, over the block too
+  let (lean, off) = (0.3, 0.004);
+  let mut slivers = Mesh::default();
+  let normal = Vec3::new(-1.0, 0.0, off - lean).normalize();
+  for foot in [154.04, 156.07, 158.10, 160.05, 162.08, 164.03] {
+    let top = foot + (off - lean) * 40.0;
+    let corners = [
+      [foot, 100.0, 0.0],
+      [foot, 156.0, 0.0],
+      [top, 156.0, 40.0],
+      [top, 100.0, 40.0],
+    ];
+    slivers.quad(corners.map(Vec3::from), normal);
+  }
+  let mut number = numbers(77);
+  let mut scene = panel(&mut number, &[Arc::clone(&block)]);
+  scene.objects.truncate(3);
+  scene.lamps.clear();
+  (scene.lean, scene.light.bounce) = (Vec2::new(lean, 0.0), 40.0);
+  scene.objects[1].transform = Mat4::from_translation(Vec3::new(100.0, 128.0, 0.0));
+  scene.objects[2] = Object {
+    mesh: Arc::new(slivers),
+    transform: Mat4::IDENTITY,
+    material: Material::matte(Vec3::splat(0.8)),
+  };
+  let [mut kept, mut whole] = [(); 2].map(|()| Renderer::new(&target.device, FORMAT));
+  let mut shown = Vec::new();
+  for frame in 0..10 {
+    let color = Vec3::new(number(), number(), number());
+    scene.objects[1].material = Material::matte(color).lit(color, 1.0, 0.0);
+    let step = format!("with the block in color {frame} beside the slivers");
+    target.assert_same(&mut kept, &mut whole, &mut shown, &scene, &step);
+    // the first frame is drawn whole, and the one after it tells whether a bound holds
+    if frame > 1 {
+      let parts = kept.changed().expect("the color is drawn in part");
+      assert!(share(parts) < 0.5, "{parts:?} {step}");
+    }
   }
 }

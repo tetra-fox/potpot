@@ -97,6 +97,10 @@ pub(super) struct Placed {
   color: [f32; 4],
   highlight: [f32; 4],
   finish: [f32; 4],
+  /// How grainy, brushed and worn it is, and a mark.
+  ///
+  /// The mark is one if the object throws no shadow. The shaders make nothing of it, and it is
+  /// here for a change of it to be told as any other of the object's.
   texture: [f32; 4],
 }
 
@@ -126,8 +130,20 @@ impl Placed {
         material.spun,
         material.glaze,
       ],
-      texture: [material.grain, material.brushed, material.wear, 0.0],
+      texture: [
+        material.grain,
+        material.brushed,
+        material.wear,
+        f32::from(u8::from(material.shadowless)),
+      ],
     }
+  }
+
+  /// Returns whether the object throws no shadow.
+  ///
+  /// One that throws none is in neither the shadow map nor the height map.
+  pub(super) fn shadowless(&self) -> bool {
+    self.texture[3] != 0.0
   }
 
   pub(super) fn layout() -> wgpu::VertexBufferLayout<'static> {

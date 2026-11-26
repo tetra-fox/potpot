@@ -62,12 +62,6 @@ const WAIT: Duration = Duration::from_millis(if cfg!(target_os = "windows") { 2 
 /// The number of pixels of a wheel that scrolls by them that count as one line.
 const PIXELS_PER_LINE: f32 = 20.0;
 
-/// The share of a window that is read back as all of it.
-///
-/// Parts of a frame that make up that much of it are read back as the whole frame. Each part is
-/// a copy of its own, and together they are as much to carry as the frame.
-const MOSTLY: f32 = 0.75;
-
 /// The number of ticks a window keeps a size of another shape than the panel's.
 ///
 /// After that many it is asked to take the panel's.
@@ -398,17 +392,18 @@ fn due(shown: Option<&Frame>, now: &Frame) -> bool {
 /// Gathers the parts of a window where a frame is new.
 ///
 /// They are where the frame differs from the one before it. `skin` is the parts of its place
-/// that the skin names, and `flat` the rectangle of the window that the flat shapes over it
+/// that the skin names, and `flat` the rectangles of the window that the flat shapes over it
 /// differ in. `place` is the skin's place in the window, which is `window` pixels. The parts
 /// are put in `parts` as `[left, top, width, height]` in the window's pixels, in place of what
 /// it held.
 ///
 /// Returns whether the parts are to be read back in place of the whole frame, which they are
-/// unless they make up most of the window.
+/// while they are fewer pixels than the window. Each part is a copy of its own, and a part of
+/// the window costs its share of what the whole does.
 fn patches(
   parts: &mut Vec<[u32; 4]>,
   skin: &[[u32; 4]],
-  flat: Option<[u32; 4]>,
+  flat: &[[u32; 4]],
   place: [u32; 4],
   window: [u32; 2],
 ) -> bool {
@@ -424,12 +419,13 @@ fn patches(
       height.min(high - top),
     ]
   });
-  parts.extend(placed.chain(flat).filter(|part| part[2] > 0 && part[3] > 0));
+  let both = placed.chain(flat.iter().copied());
+  parts.extend(both.filter(|part| part[2] > 0 && part[3] > 0));
   let read: u64 = (parts.iter())
     .map(|part| u64::from(part[2]) * u64::from(part[3]))
     .sum();
   let all = u64::from(window[0]) * u64::from(window[1]);
-  (read as f32) < all as f32 * MOSTLY
+  read < all
 }
 
 /// Returns whether the next frame after `now` is asked for.
@@ -966,11 +962,15 @@ impl<S: Skin> Window<S> {
       // window painted. while a shown note is down every frame looks at the notes afresh
       let shown = self.settings.notes.shown().any();
       let follows = !state.stopped && (shown || follows(state.fed, at));
-      if (!follows || exposed)
-        && let Err(error) = state.screen.again()
-      {
-        stop(&mut state.stopped, error);
+      if !follows || exposed {
+        match state.screen.again() {
+          Ok(true) => {}
+          // the window has no picture to put back, and is drawn one
+          Ok(false) => state.shown = None,
+          Err(error) => stop(&mut state.stopped, error),
+        }
       }
+      let follows = follows || (!state.stopped && state.shown.is_none());
       drop(state);
       if follows {
         self.redraw();
@@ -1016,15 +1016,12 @@ impl<S: Skin> Window<S> {
     let named = skin.changed().filter(|_| shown.is_some());
     let patched = named.is_some_and(|named| {
       let lettered = flat.differing(&over, size, place);
-      patches(parts, named, lettered, place, window)
+      patches(parts, named, &lettered, place, window)
     });
     flat.prepare(device, queue, &over, size, place);
-    if patched && parts.is_empty() {
+    let put = if patched && parts.is_empty() {
       // a frame that differs in nothing is in the window already, unless the window lost it
-      if let Err(error) = screen.patch(&[], 0, &[], exposed) {
-        stop(stopped, error);
-        return Ok(());
-      }
+      screen.patch(&[], 0, &[], exposed)
     } else {
       let encoder = drawing(device, drawn_on, skin, flat, place);
       let whole = [[0, 0, window[0], window[1]]];
@@ -1050,11 +1047,23 @@ impl<S: Skin> Window<S> {
       let put = if patched {
         screen.patch(parts, rows.top, &pixels, exposed)
       } else {
-        screen.show(window, drawn_on.row, &pixels)
+        screen.show(window, drawn_on.row, &pixels).map(|()| true)
       };
       drop(pixels);
       drawn_on.read.unmap();
-      if let Err(error) = put {
+      put
+    };
+    match put {
+      Ok(true) => {}
+      // the screen no longer has the frame before this one to put the parts in, so the window
+      // is drawn the next frame whole
+      Ok(false) => {
+        *shown = None;
+        drop(state);
+        self.redraw();
+        return Ok(());
+      }
+      Err(error) => {
         stop(stopped, error);
         return Ok(());
       }
@@ -1482,28 +1491,82 @@ mod tests {
     let (place, window) = ([50, 0, 800, 400], [900, 400]);
     // a skin's parts are moved to its place and kept to it, and one of no size is left out
     let skin = [[10, 20, 30, 40], [790, 390, 30, 30], [100, 100, 0, 9]];
-    assert!(patches(
-      &mut parts,
-      &skin,
-      Some([60, 10, 5, 5]),
-      place,
-      window
-    ));
+    assert!(patches(&mut parts, &skin, &[[60, 10, 5, 5]], place, window));
     assert_eq!(
       parts,
       [[60, 20, 30, 40], [840, 390, 10, 10], [60, 10, 5, 5]]
     );
     // a frame that differs in nothing has no parts, and is not read back at all
-    assert!(patches(&mut parts, &[], None, place, window));
+    assert!(patches(&mut parts, &[], &[], place, window));
     assert!(parts.is_empty());
-    // parts that make up most of the window are no better than the whole
+    // parts that are most of the window are still less to read back than the whole
+    assert!(patches(&mut parts, &[[0, 0, 800, 350]], &[], place, window));
+    // and parts that are as many pixels as the window are not
+    let halves = [[0, 0, 800, 250], [0, 150, 800, 250]];
     assert!(!patches(
       &mut parts,
-      &[[0, 0, 800, 350]],
-      None,
+      &halves,
+      &[[0, 0, 50, 400]],
       place,
       window
     ));
+  }
+
+  /// A picture as this system's screen keeps it.
+  #[cfg(any(target_os = "windows", target_os = "macos"))]
+  struct Shown(crate::screen::Kept);
+
+  #[cfg(any(target_os = "windows", target_os = "macos"))]
+  impl Shown {
+    fn whole(size: [u32; 2], row: u32, pixels: &[u8]) -> Self {
+      Self(crate::screen::Kept {
+        size,
+        row,
+        pixels: pixels.to_vec(),
+      })
+    }
+
+    fn patch(&mut self, parts: &[[u32; 4]], top: u32, pixels: &[u8]) {
+      self.0.patch(parts, top, pixels);
+    }
+
+    /// Returns the pixels of each row.
+    fn rows(&self) -> impl Iterator<Item = &[u8]> {
+      let wide = self.0.size[0] as usize * 4;
+      (self.0.pixels.chunks(self.0.row as usize)).map(move |row| &row[..wide])
+    }
+  }
+
+  /// A picture as this system's screen keeps it.
+  ///
+  /// It is a surface's pixels, in rows of `wide`, each `row` bytes when read back.
+  #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+  struct Shown {
+    pixels: Vec<u32>,
+    wide: usize,
+    row: usize,
+  }
+
+  #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+  impl Shown {
+    fn whole(size: [u32; 2], row: u32, pixels: &[u8]) -> Self {
+      let mut shown = Self {
+        pixels: vec![0; (size[0] * size[1]) as usize],
+        wide: size[0] as usize,
+        row: row as usize,
+      };
+      shown.patch(&[[0, 0, size[0], size[1]]], 0, pixels);
+      shown
+    }
+
+    fn patch(&mut self, parts: &[[u32; 4]], top: u32, pixels: &[u8]) {
+      crate::screen::write(&mut self.pixels, self.wide, parts, top, pixels, self.row);
+    }
+
+    /// Returns the pixels of each row.
+    fn rows(&self) -> impl Iterator<Item = &[u32]> {
+      self.pixels.chunks(self.wide)
+    }
   }
 
   /// Returns numbers from zero to one, the same ones every time.
@@ -1520,8 +1583,6 @@ mod tests {
   #[test]
   #[ignore = "needs a graphics device"]
   fn a_picture_patched_with_the_parts_of_each_frame_is_the_frame_read_back_whole() {
-    use crate::screen::Kept;
-
     let graphics = Graphics::new().expect("a device opens");
     let (device, queue) = (&graphics.device, &graphics.queue);
     // a panel one and a half times its size, in rows longer than their pixels
@@ -1535,7 +1596,8 @@ mod tests {
     let mut lines: Vec<[[f32; 2]; 2]> = (0..6)
       .map(|_| [point(&mut number), point(&mut number)])
       .collect();
-    let mut kept: Option<Kept> = None;
+    // the picture as the screen keeps it, which is the frame before the parts go in it
+    let mut kept: Option<Shown> = None;
     let (mut parts, mut patched_frames) = (Vec::new(), 0);
     let whole = [[0, 0, window[0], window[1]]];
     for frame in 0..40 {
@@ -1559,7 +1621,7 @@ mod tests {
       let named = [[250, 120 - frame as u32, 40, 9]];
       let patched = kept.is_some() && {
         let lettered = flat.differing(&over, size, place);
-        patches(&mut parts, &named, lettered, place, window)
+        patches(&mut parts, &named, &lettered, place, window)
       };
       flat.prepare(device, queue, &over, size, place);
       let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
@@ -1569,13 +1631,7 @@ mod tests {
       let pixels = canvas.read.slice(rows.bytes).get_mapped_range();
       match &mut kept {
         Some(kept) if patched => kept.patch(&parts, rows.top, &pixels),
-        _ => {
-          kept = Some(Kept {
-            size: window,
-            row: canvas.row,
-            pixels: pixels.to_vec(),
-          });
-        }
+        _ => kept = Some(Shown::whole(window, canvas.row, &pixels)),
       }
       drop(pixels);
       canvas.read.unmap();
@@ -1586,11 +1642,11 @@ mod tests {
       let rows = (canvas.read(&graphics, encoder, &whole)).expect("the frame is read back");
       let pixels = canvas.read.slice(rows.bytes).get_mapped_range();
       let kept = kept.as_ref().expect("a frame was kept");
-      let row = canvas.row as usize;
-      for (down, (kept, drawn)) in (kept.pixels.chunks(row).zip(pixels.chunks(row))).enumerate() {
-        let wide = window[0] as usize * 4;
+      let drawn = Shown::whole(window, canvas.row, &pixels);
+      let rows = (kept.rows().zip(drawn.rows())).enumerate();
+      for (down, (kept, drawn)) in rows {
         assert!(
-          kept[..wide] == drawn[..wide],
+          kept == drawn,
           "row {down} of frame {frame} is not as it was drawn"
         );
       }

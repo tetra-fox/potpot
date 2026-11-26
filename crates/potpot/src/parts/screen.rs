@@ -99,7 +99,9 @@ impl Screen {
 /// The shapes of `flat` are in the panel's points, as they are when they are drawn flat, and
 /// (`x`, `y`) is the middle of the [`Screen`] they show on. `face` is the material of its face.
 /// Each [`Object`] lights itself in the color of its shapes and is finished as the face is, so
-/// the shine and the sheen of the face's glass lie over the picture too.
+/// the shine and the sheen of the face's glass lie over the picture too. Each is
+/// [shadowless](Material::shadowless), so a picture made again costs the drawing of where it is
+/// seen and, while light bounces, of what its light is thrown on.
 ///
 /// Each run of shapes of one color is one object, a hundredth of a point over the one before
 /// it, so every change of color along `flat` costs an object and that much height. `under` is
@@ -167,6 +169,7 @@ pub fn picture(flat: &Flat, x: f32, y: f32, face: Material, under: usize) -> Vec
           color: face.color.lerp(Vec3::new(red, green, blue), cover),
           glow: face.glow + (1.0 - face.glow) * cover,
           glow_radius: 0.0,
+          shadowless: true,
           ..face
         },
       }

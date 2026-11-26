@@ -12,19 +12,27 @@ pub(super) struct Screen {
   ///
   /// It goes in the window again whenever the system wants the window painted and nothing on
   /// the panel has changed.
+  #[cfg(any(target_os = "windows", target_os = "macos"))]
   kept: Option<Kept>,
+  /// The bytes in a row of the picture last shown.
+  ///
+  /// The row is as it was read back.
+  #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+  row: u32,
 }
 
 /// A picture of `size` pixels.
 ///
 /// `pixels` holds its rows from the top. Each row is `row` bytes long and starts with four
 /// bytes for every pixel across: blue, green, red and one more.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 pub(super) struct Kept {
   pub(super) size: [u32; 2],
   pub(super) row: u32,
   pub(super) pixels: Vec<u8>,
 }
 
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 impl Kept {
   /// Takes the parts of a picture that differ from this one.
   ///
@@ -43,6 +51,7 @@ impl Kept {
   }
 }
 
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 impl Screen {
   /// Shows a picture over the whole window and keeps it.
   ///
@@ -73,6 +82,8 @@ impl Screen {
   /// `all` is whether the window may have lost any of the picture shown last. If it has not,
   /// the parts are all that has to go in it.
   ///
+  /// Returns whether the picture is in the window, which it always is here.
+  ///
   /// # Panics
   ///
   /// Panics if no picture has been shown.
@@ -82,17 +93,20 @@ impl Screen {
     top: u32,
     pixels: &[u8],
     all: bool,
-  ) -> Result<(), HandlerError> {
+  ) -> Result<bool, HandlerError> {
     let kept = self.kept.as_mut().expect("a picture was shown before");
     kept.patch(parts, top, pixels);
-    self.put(Some(parts), all)
+    self.put(Some(parts), all)?;
+    Ok(true)
   }
 
   /// Puts the picture last shown in the window again.
   ///
-  /// With none shown yet it does nothing.
-  pub(super) fn again(&mut self) -> Result<(), HandlerError> {
-    self.put(Some(&[]), true)
+  /// With none shown yet it does nothing. Returns whether the window has its picture, which it
+  /// always has here.
+  pub(super) fn again(&mut self) -> Result<bool, HandlerError> {
+    self.put(Some(&[]), true)?;
+    Ok(true)
   }
 }
 
@@ -181,7 +195,42 @@ impl Screen {
   }
 }
 
+/// The byte that makes a pixel opaque.
+///
+/// baseview's X11 window has a 32 bit visual, where a compositor reads that byte of a pixel as
+/// how opaque the pixel is.
 #[cfg(not(target_os = "windows"))]
+const OPAQUE: u32 = 0xff00_0000;
+
+/// Writes parts of a picture into the pixels of a surface.
+///
+/// `shown` is the surface's rows from the top, `wide` pixels each. Each part is
+/// `[left, top, width, height]` in the picture's pixels and lies on it. `pixels` holds the
+/// picture's rows from `top` on as they are read back: `row` bytes each, which start with four
+/// bytes for every pixel across, blue, green, red and one more. Only the parts are read.
+///
+/// softbuffer has a pixel as a number with blue lowest, and each one written is made opaque.
+#[cfg(not(target_os = "windows"))]
+pub(super) fn write(
+  shown: &mut [u32],
+  wide: usize,
+  parts: &[[u32; 4]],
+  top: u32,
+  pixels: &[u8],
+  row: usize,
+) {
+  for [left, part_top, width, height] in parts.iter().map(|part| part.map(|side| side as usize)) {
+    for down in part_top..part_top + height {
+      let drawn = &pixels[(down - top as usize) * row + left * 4..][..width * 4];
+      let shown = &mut shown[down * wide + left..][..width];
+      for (shown, drawn) in shown.iter_mut().zip(drawn.as_chunks::<4>().0) {
+        *shown = u32::from_le_bytes(*drawn) | OPAQUE;
+      }
+    }
+  }
+}
+
+#[cfg(target_os = "macos")]
 impl Screen {
   pub(super) fn new(context: &WindowContext) -> Result<Self, HandlerError> {
     let window = context.platform_handle();
@@ -194,9 +243,13 @@ impl Screen {
 
   /// Puts the kept picture in the window.
   ///
-  /// `new` is the parts of it that differ from what was put there last, or `None` for any part.
-  /// The surface is written the parts alone where it still holds the rest. All of the picture
-  /// is sent to the window if `all` is set, and else the parts alone.
+  /// `new` is the parts of it that differ from what was put there last, or `None` for any part,
+  /// and `all` whether the window may have lost any of that. Nothing is put if nothing is new
+  /// or lost.
+  ///
+  /// softbuffer 0.4.8 hands out an empty surface for every picture here
+  /// (`CGImpl::buffer_mut` in its `backends/cg.rs`), so all of the picture is written whenever
+  /// any of it is.
   fn put(&mut self, new: Option<&[[u32; 4]]>, all: bool) -> Result<(), HandlerError> {
     use std::num::NonZeroU32;
 
@@ -212,46 +265,126 @@ impl Screen {
     };
     self.surface.resize(width, height)?;
     let mut shown = self.surface.buffer_mut()?;
-    let (wide, row) = (size[0] as usize, *row as usize);
-    let write = |shown: &mut [u32], [left, top, width, height]: [usize; 4]| {
-      for down in top..top + height {
-        let drawn = &pixels[down * row + left * 4..][..width * 4];
-        let shown = &mut shown[down * wide + left..][..width];
-        for (shown, &[blue, green, red, _]) in shown.iter_mut().zip(drawn.as_chunks::<4>().0) {
-          // softbuffer has a pixel as a number with blue lowest. baseview's x11 window has a
-          // 32 bit visual, where a compositor reads the byte above red as how opaque the pixel is
-          *shown = u32::from_le_bytes([blue, green, red, u8::MAX]);
-        }
-      }
-    };
-    // at an age of one the surface holds the picture put there last, and at any other nothing
-    // to go by
-    let Some(new) = new.filter(|_| shown.age() == 1) else {
-      write(&mut shown, [0, 0, wide, size[1] as usize]);
-      shown.present()?;
+    let whole = [[0, 0, size[0], size[1]]];
+    write(
+      &mut shown,
+      size[0] as usize,
+      &whole,
+      0,
+      pixels,
+      *row as usize,
+    );
+    shown.present()?;
+    Ok(())
+  }
+}
+
+/// The window as softbuffer puts pixels in an X11 one.
+///
+/// softbuffer 0.4.8 keeps one surface for a window there, which holds the picture last put in
+/// the window for as long as the window keeps its size (`X11Impl::resize` and `age` in its
+/// `backends/x11.rs`). So the surface is the picture that is kept, and a frame is copied once,
+/// from where it is read back into the surface.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+impl Screen {
+  pub(super) fn new(context: &WindowContext) -> Result<Self, HandlerError> {
+    let window = context.platform_handle();
+    let display = softbuffer::Context::new(window.clone())?;
+    Ok(Self {
+      surface: softbuffer::Surface::new(&display, window)?,
+      row: 0,
+    })
+  }
+
+  /// Shows a picture over the whole window.
+  ///
+  /// `pixels` holds its rows from the top. Each row is `row` bytes long and starts with four
+  /// bytes for every pixel across: blue, green, red and one more.
+  pub(super) fn show(
+    &mut self,
+    size: [u32; 2],
+    row: u32,
+    pixels: &[u8],
+  ) -> Result<(), HandlerError> {
+    use std::num::NonZeroU32;
+
+    assert!(row >= size[0] * 4, "a row holds the picture's width");
+    let [Some(width), Some(height)] = size.map(NonZeroU32::new) else {
       return Ok(());
     };
-    let mut sent = Vec::with_capacity(new.len());
-    for &[left, top, width, height] in new {
-      let [Some(width), Some(height)] = [width, height].map(NonZeroU32::new) else {
-        continue;
-      };
-      write(
-        &mut shown,
-        [left, top, width.get(), height.get()].map(|side| side as usize),
-      );
-      sent.push(softbuffer::Rect {
-        x: left,
-        y: top,
-        width,
-        height,
-      });
+    self.surface.resize(width, height)?;
+    self.row = row;
+    let mut shown = self.surface.buffer_mut()?;
+    let whole = [[0, 0, size[0], size[1]]];
+    write(
+      &mut shown,
+      size[0] as usize,
+      &whole,
+      0,
+      pixels,
+      row as usize,
+    );
+    shown.present()?;
+    Ok(())
+  }
+
+  /// Shows a picture that is new in parts.
+  ///
+  /// The picture is of the size of the one shown last and differs from it in `parts`. Each part
+  /// is `[left, top, width, height]` in the picture's pixels and lies on it. `pixels` holds the
+  /// picture's rows from `top` on as [`Screen::show`] was given them, of which only the parts
+  /// are read.
+  ///
+  /// `all` is whether the window may have lost any of the picture shown last. If it has not,
+  /// the parts are all that is sent to it.
+  ///
+  /// Returns whether the picture is in the window. It is not if the surface no longer holds the
+  /// picture shown last, and then the whole picture has to be shown.
+  pub(super) fn patch(
+    &mut self,
+    parts: &[[u32; 4]],
+    top: u32,
+    pixels: &[u8],
+    all: bool,
+  ) -> Result<bool, HandlerError> {
+    use std::num::NonZeroU32;
+
+    if !all && parts.is_empty() {
+      return Ok(true);
     }
+    let mut shown = self.surface.buffer_mut()?;
+    // at an age of one the surface holds the picture put in the window last
+    if shown.age() != 1 {
+      return Ok(false);
+    }
+    let wide = shown.width().get() as usize;
+    write(&mut shown, wide, parts, top, pixels, self.row as usize);
     if all {
       shown.present()?;
-    } else {
-      shown.present_with_damage(&sent)?;
+      return Ok(true);
     }
-    Ok(())
+    let sent: Vec<softbuffer::Rect> = (parts.iter())
+      .filter_map(|&[x, y, width, height]| {
+        let [Some(width), Some(height)] = [width, height].map(NonZeroU32::new) else {
+          return None;
+        };
+        Some(softbuffer::Rect {
+          x,
+          y,
+          width,
+          height,
+        })
+      })
+      .collect();
+    shown.present_with_damage(&sent)?;
+    Ok(true)
+  }
+
+  /// Puts the picture last shown in the window again.
+  ///
+  /// Returns whether the window has its picture. It has not if none was shown or the surface no
+  /// longer holds it, and then the whole picture has to be shown.
+  pub(super) fn again(&mut self) -> Result<bool, HandlerError> {
+    self.patch(&[], 0, &[], true)
   }
 }
