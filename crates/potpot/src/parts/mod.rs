@@ -28,7 +28,7 @@ pub use fader::{Cap, Fader, fader_slot, fader_transform};
 pub use grip::Grip;
 pub use keybed::Keybed;
 pub use knob::{Edge, KNOB_SWEEP, Knob, Top, knob_transform};
-pub use led::{led, led_lamp, led_material, led_seat};
+pub use led::{led, led_lamp, led_material, led_seat, light_line, light_line_seat};
 pub use legend::legend;
 pub use meter::Meter;
 pub use pad::Pad;

@@ -1,9 +1,11 @@
 //! Small round indicator lights.
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 
+use super::PAINT;
 use super::button::Button;
-use super::outline::Outline;
+use super::legend::{END, add_stroke};
+use super::outline::{Outline, STRIP};
 use crate::material::Material;
 use crate::mesh::Mesh;
 use crate::scene::Lamp;
@@ -53,4 +55,28 @@ pub fn led_lamp(at: Vec3, color: Vec3, level: f32, diameter: f32, reach: f32) ->
     reach,
     radius: diameter / 2.0,
   }
+}
+
+/// Returns a thin line of light inlaid flush with the panel.
+///
+/// The line runs through the points of `path` in turn and is `weight` wide, with round ends. It
+/// lies on the panel, to be drawn in a material that lights itself evenly.
+pub fn light_line(path: &[Vec2], weight: f32) -> Mesh {
+  strokes(path, weight, PAINT)
+}
+
+/// Returns the dark groove a line of light is set in.
+///
+/// The groove follows the line [`light_line`] makes along `path`, `margin` wider to each side.
+pub fn light_line_seat(path: &[Vec2], weight: f32, margin: f32) -> Mesh {
+  strokes(path, weight + margin * 2.0, STRIP)
+}
+
+/// Returns strokes `weight` wide between each point of `path` and the next, at `height`.
+fn strokes(path: &[Vec2], weight: f32, height: f32) -> Mesh {
+  let mut mesh = Mesh::default();
+  for pair in path.windows(2) {
+    add_stroke(&mut mesh, [pair[0], pair[1]], weight, height, END);
+  }
+  mesh
 }
