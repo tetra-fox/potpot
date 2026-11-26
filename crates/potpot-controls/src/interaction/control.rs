@@ -132,8 +132,8 @@ pub struct Control {
   /// The parameter the wheel turns, if another than its own.
   ///
   /// It is neither `parameter` nor the one a [`Touch::Pad`] is dragged across for. The wheel
-  /// turns it at the pace of `feel` and by the steps of its own [`Dial`](super::Dial). With `None` the wheel
-  /// turns `parameter`.
+  /// turns it at the pace of `feel` and by the steps of its own [`Dial`](super::Dial). With
+  /// `None` the wheel turns `parameter`.
   pub wheel: Option<usize>,
 }
 
