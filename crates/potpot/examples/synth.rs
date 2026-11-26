@@ -46,6 +46,7 @@ use potpot::{Light, Look, Material, Mesh, Renderer, Scene};
 use potpot_window::controls::axis::Axis;
 use potpot_window::controls::flat::{Color, Flat};
 use potpot_window::controls::interaction::{Control, Dial, Drag, Push, Readout, Target, Touch};
+use potpot_window::controls::layout;
 use potpot_window::controls::response::{Band, Kind};
 use potpot_window::{Feed, Gpu, Heard, Notes, Played, Pressed, Settings, Skin, View, wgpu};
 
@@ -146,9 +147,7 @@ const ENVELOPE: (f32, f32) = (740.0, 280.0);
 /// The distance from the edge of a face in to its picture.
 const INSET: f32 = 10.0;
 
-// how far across the lines cut in the panel between two sections are, their middle down the
-// panel, and how long they are
-const DIVIDERS: [f32; 2] = [264.0, 580.0];
+// the middle down the panel of the lines cut between two sections, and how long they are
 const DIVIDER_Y: f32 = 235.0;
 const DIVIDER: f32 = 400.0;
 /// How far down the line cut over the keys is.
@@ -554,6 +553,7 @@ impl Synth {
       ("ENVELOPE", ENVELOPE),
     ];
     let glasses = sections.map(|(_, (_, width))| shared::glass(&screen(width)));
+    let faces = sections.map(|(_, (x, width))| [x - width / 2.0, x + width / 2.0]);
     for ((name, (x, width)), glass) in sections.into_iter().zip(glasses) {
       let (screen, middle) = (screen(width), Vec2::new(x, SCREEN_Y));
       fixed.letters(name, Vec2::new(x, 26.0), 8.0, ink);
@@ -564,7 +564,8 @@ impl Synth {
       let line = Mesh::cuboid(-half.extend(0.0), half.extend(0.2));
       fixed.put(line, middle, hole);
     };
-    for x in DIVIDERS {
+    for pair in faces.windows(2) {
+      let x = layout::middle([pair[0][1], pair[1][0]]);
       let half = Vec2::new(0.7, DIVIDER / 2.0);
       cut(&mut fixed, half, Vec2::new(x, DIVIDER_Y));
     }
@@ -616,8 +617,8 @@ impl Synth {
     }
 
     // each fader's slot and scale, with its name and its readout under it
-    let (x, width) = ENVELOPE;
-    let faders = shared::centered([x - width / 2.0, x + width / 2.0], FADER_SLOT);
+    let [_, _, envelope] = faces;
+    let faders = shared::centered(envelope, FADER_SLOT);
     for (control, (name, x)) in (ATTACK..).zip(FADERS.into_iter().zip(faders)) {
       let at = Vec2::new(x, FADER_Y);
       fixed.put(parts::fader_slot(TRAVEL, 5.0), at, hole);
