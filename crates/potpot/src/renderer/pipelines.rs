@@ -3,7 +3,7 @@
 use std::mem::size_of;
 
 use super::damage::{
-  BOUNCE_REACHES, HAZE_CELL, HAZE_TAPS, OPEN_CLEAR, OPEN_REACHES, SHADOW_BIAS, SHADOW_SPREAD,
+  BOUNCE_REACHES, HAZE_CELL, OPEN_CLEAR, OPEN_REACHES, SHADOW_BIAS, SHADOW_SPREAD,
 };
 use super::uniforms::Placed;
 use crate::mesh::Vertex;
@@ -65,12 +65,10 @@ pub(super) fn scene_source() -> String {
 
 /// Returns `present.wgsl` with what it is given ahead of it.
 ///
-/// That is the sRGB curve, the side of a cell of the glow map and the places to each side that
-/// the haze is read at.
+/// That is the sRGB curve and the side of a cell of the glow map.
 pub(super) fn present_source() -> String {
   format!(
     "const HAZE_CELL: i32 = {HAZE_CELL};\n\
-     const HAZE_TAPS: i32 = {HAZE_TAPS};\n\
      {SRGB_SOURCE}{}",
     include_str!("present.wgsl")
   )
@@ -88,10 +86,15 @@ pub(super) struct Layouts {
   pub(super) maps: wgpu::BindGroupLayout,
   /// The picture alone, for the glow pass to read.
   pub(super) glow: wgpu::BindGroupLayout,
+  /// What a pass that blurs the glow map along one axis reads.
+  ///
+  /// That is the present options at the binding the present pass has them at, and the map
+  /// blurred so far.
+  pub(super) spread: wgpu::BindGroupLayout,
   /// Everything the present pass reads.
   ///
-  /// The picture comes with its sampler, then how it is degraded, then the glow map with its
-  /// sampler.
+  /// The picture comes with its sampler, then how it is degraded, then the blurred glow map
+  /// with its sampler.
   pub(super) present: wgpu::BindGroupLayout,
 }
 
@@ -152,6 +155,13 @@ impl Layouts {
           wgpu::TextureSampleType::Float { filterable: true },
         )],
       }),
+      spread: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("potpot spread"),
+        entries: &[
+          uniform(2, wgpu::ShaderStages::FRAGMENT),
+          texture(5, wgpu::TextureSampleType::Float { filterable: true }),
+        ],
+      }),
       present: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("potpot present"),
         entries: &[
@@ -186,6 +196,8 @@ pub(super) struct Pipelines {
   pub(super) wipe_bounce: wgpu::RenderPipeline,
   /// The pipeline that draws the glow map from the picture.
   pub(super) glow: wgpu::RenderPipeline,
+  /// The pipelines that blur the glow map across and then down.
+  pub(super) spread: [wgpu::RenderPipeline; 2],
   pub(super) present: wgpu::RenderPipeline,
 }
 
@@ -396,6 +408,8 @@ impl Pipelines {
       })
     };
     let glow = over_all("potpot glow", &layouts.glow, "glow_fragment", GLOW);
+    let spread = ["spread_across", "spread_down"]
+      .map(|fragment| over_all("potpot spread", &layouts.spread, fragment, GLOW));
     let present = over_all("potpot present", &layouts.present, "fragment", target);
 
     Self {
@@ -407,6 +421,7 @@ impl Pipelines {
       wipe_depth,
       wipe_bounce,
       glow,
+      spread,
       present,
     }
   }

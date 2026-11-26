@@ -17,7 +17,7 @@ use bytemuck::Zeroable;
 use glam::{Mat4, Vec2, Vec3};
 use wgpu::util::DeviceExt;
 
-use self::damage::{Bounds, HAZE_CELL, Reach, Redrawn};
+use self::damage::{Bounds, HAZE_CELL, Reach, Redrawn, Spread};
 use self::picture::Picture;
 use self::pipelines::{BOUNCE, DEPTH, Layouts, Pipelines, SAMPLES};
 use self::uniforms::{Globals, Placed, Present};
@@ -115,6 +115,8 @@ pub struct Renderer {
   held_globals: Globals,
   /// The contents of the present options buffer.
   held_present: Present,
+  /// The blur of the glow map that the blurred maps hold.
+  held_spread: Spread,
   /// The contents of the placed buffer.
   held_placed: Vec<Placed>,
   /// The placed objects of a scene, worked out to compare with the held ones.
@@ -347,6 +349,11 @@ impl Renderer {
       // a new buffer is all zeros
       held_globals: Globals::zeroed(),
       held_present: Present::zeroed(),
+      // the first picture is drawn whole, which blurs all of it whatever this holds
+      held_spread: Spread {
+        taps: [0; 2],
+        falloff: [0.0; 2],
+      },
       held_placed: Vec::new(),
       next_placed: Vec::new(),
       meshes: Vec::new(),
@@ -396,8 +403,13 @@ impl Renderer {
       )
     });
 
+    // the radius is in points, and the glow is as wide on the panel at any size
+    let radius = look.bloom_radius * Vec2::from(picture_size.map(|side| side as f32)) / scene.size;
+    let spread = Spread::new(radius, picture.cells());
+    let reblur = spread != self.held_spread;
+    self.held_spread = spread;
     // the present pass reads these every time it runs, so new ones need no new picture
-    let present = Present::of(look, self.target_encodes);
+    let present = Present::of(look, self.target_encodes, spread);
     let presented_alike = present == self.held_present && size == self.held_size;
     if present != self.held_present {
       queue.write_buffer(&self.present_options, 0, bytemuck::bytes_of(&present));
@@ -577,9 +589,15 @@ impl Renderer {
     self.anywhere = !presented_alike || redrawn == Redrawn::Whole;
     self.parts.clear();
     if let Redrawn::Within(_) = redrawn {
-      damage::parts(&self.bands, picture_size, size, &mut self.parts);
+      // the haze shows only with a bloom, and the soften reaches a pixel
+      let reach = if look.bloom > 0.0 {
+        spread.reach()
+      } else {
+        Vec2::ONE
+      };
+      damage::parts(&self.bands, picture_size, size, reach, &mut self.parts);
     }
-    self.draw_picture(device, queue, &picture, shapes, light, redrawn);
+    self.draw_picture(device, queue, &picture, shapes, light, redrawn, reblur);
     self.picture = Some(picture);
   }
 
@@ -640,7 +658,9 @@ impl Renderer {
   /// Draws what is stale of the maps and then of the picture.
   ///
   /// `shapes` is the parts of the shadow map and of the height map to draw again, and `light`
-  /// the part of the bounce map, which is left alone unless light bounces.
+  /// the part of the bounce map, which is left alone unless light bounces. `reblur` blurs all
+  /// of the glow map again, as a new blur takes.
+  #[expect(clippy::too_many_arguments, reason = "each is a part of what is stale")]
   fn draw_picture(
     &self,
     device: &wgpu::Device,
@@ -649,13 +669,14 @@ impl Renderer {
     shapes: [Redrawn; 2],
     light: Redrawn,
     redrawn: Redrawn,
+    reblur: bool,
   ) {
     let light = if self.held_globals.bounces() {
       light
     } else {
       Redrawn::Nothing
     };
-    if [shapes[0], shapes[1], light, redrawn] == [Redrawn::Nothing; 4] {
+    if [shapes[0], shapes[1], light, redrawn] == [Redrawn::Nothing; 4] && !reblur {
       return;
     }
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -741,6 +762,8 @@ impl Renderer {
       pass.set_bind_group(1, &self.shadow_group, &[]);
       self.draw_objects(&mut pass, within, Objects::All);
     }
+    // the cells of the glow map drawn again, as left, top, right and foot
+    let mut glowing = None;
     if redrawn != Redrawn::Nothing {
       let whole = redrawn == Redrawn::Whole;
       let smooth = usize::from(picture.smoothed.is_some());
@@ -816,6 +839,51 @@ impl Renderer {
       pass.set_pipeline(&self.pipelines.glow);
       pass.set_bind_group(0, &picture.lit, &[]);
       pass.draw(0..3, 0..1);
+      glowing = Some([left + 1, top + 1, right + 1, foot + 1]);
+    }
+
+    // the blurred maps follow the glow map as far as the blur carries what differs in it, each
+    // pass that far along its axis. a picture drawn whole or a new blur takes all of them
+    let cells = picture.cells();
+    if redrawn == Redrawn::Whole || reblur {
+      glowing = Some([0, 0, cells[0], cells[1]]);
+    }
+    if let Some([left, top, right, foot]) = glowing {
+      let [across, down] = self.held_spread.taps;
+      let (left, right) = (left.saturating_sub(across), (right + across).min(cells[0]));
+      let parts = [
+        [left, top, right, foot],
+        [
+          left,
+          top.saturating_sub(down),
+          right,
+          (foot + down).min(cells[1]),
+        ],
+      ];
+      let passes = (self.pipelines.spread.iter())
+        .zip(&picture.spread)
+        .zip(&picture.unspread);
+      for (((pipeline, view), unspread), [left, top, right, foot]) in passes.zip(parts) {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+          label: Some("potpot spread"),
+          color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+              load: wgpu::LoadOp::Load,
+              store: wgpu::StoreOp::Store,
+            },
+          })],
+          depth_stencil_attachment: None,
+          timestamp_writes: None,
+          occlusion_query_set: None,
+        });
+        pass.set_scissor_rect(left, top, right - left, foot - top);
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, unspread, &[]);
+        pass.draw(0..3, 0..1);
+      }
     }
     queue.submit([encoder.finish()]);
   }

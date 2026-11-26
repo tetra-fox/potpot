@@ -60,20 +60,43 @@ pub(super) const BOUNCE_REACHES: [f32; 3] = {
 
 /// The side of a glow map cell in the picture's pixels.
 ///
-/// `present.wgsl` is given this and [`HAZE_TAPS`].
+/// `present.wgsl` is given this.
 pub(super) const HAZE_CELL: u32 = 4;
-/// The places to each side that the haze is read at.
+
+/// The Gaussian the glow map is blurred by, along each axis.
 ///
-/// They are one cell apart.
-pub(super) const HAZE_TAPS: i32 = 2;
-/// The reach of the haze in the picture's pixels.
-///
-/// The haze around what lights itself is gathered from that far off: out to the last place it
-/// is read at, a cell more for the cells that place is mixed from, and half a cell to their far
-/// edges. The blur `present.wgsl` also does reaches one pixel.
-pub(super) const HAZE_REACH: f32 = (HAZE_TAPS as f32 + 1.5) * HAZE_CELL as f32;
-// what shows in a band of the target is in that band of the picture or in one next to it
-const _: () = assert!(HAZE_REACH < BAND);
+/// The blur is in the map's cells. A cell far enough off to be past the radius is not read.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Spread {
+  /// The cells read to each side.
+  pub(super) taps: [u32; 2],
+  /// The weight of a cell `i` cells off is `exp(-falloff * i * i)`.
+  pub(super) falloff: [f32; 2],
+}
+
+impl Spread {
+  /// Creates the blur that fades to nothing `radius` picture pixels off.
+  ///
+  /// The radius is three standard deviations, where the weight is about a hundredth. `cells` is
+  /// the glow map's width and height, which no blur reads further than.
+  pub(super) fn new(radius: Vec2, cells: [u32; 2]) -> Self {
+    // a radius that is no number reads no cell to either side
+    let radius = (radius / HAZE_CELL as f32).max(Vec2::ZERO);
+    let taps = [0, 1].map(|axis| (radius[axis].ceil() as u32).min(cells[axis]));
+    // a radius of nothing gives a falloff past every number, which leaves only the middle cell
+    let falloff = radius.to_array().map(|radius| 4.5 / (radius * radius));
+    Self { taps, falloff }
+  }
+
+  /// Returns the reach of the haze in the picture's pixels along each axis.
+  ///
+  /// A pixel that changes changes its cell, each cell the blur reads it from, and each pixel
+  /// given a mix of those: out to the last tap, a cell more for the cells a pixel is mixed from,
+  /// and half a cell to their far edges.
+  pub(super) fn reach(&self) -> Vec2 {
+    Vec2::from(self.taps.map(|taps| (taps as f32 + 1.5) * HAZE_CELL as f32))
+  }
+}
 
 /// The reach in points of the last of [`OPEN_REACHES`].
 const OPEN_REACH: f32 = OPEN_REACHES[OPEN_REACHES.len() - 1];
@@ -615,17 +638,18 @@ fn join(spans: &mut Band, mut added: [f32; 2]) {
 /// `bands` is where the bound lies across each band of a picture of `picture` pixels, which is
 /// stretched over `target` pixels. Each rectangle is x, y, width and height in the target's
 /// pixels, and they are added to `parts`, [`MOST_PARTS`] of them at most. What the present pass
-/// gathers around a pixel is taken in.
+/// gathers around a pixel is taken in, which is `reach` of the picture's pixels along each axis.
 pub(super) fn parts(
   bands: &[Band],
   picture: [u32; 2],
   target: [u32; 2],
+  reach: Vec2,
   parts: &mut Vec<[u32; 4]>,
 ) {
   let kept = parts.len();
   for waste in WASTES {
     parts.truncate(kept);
-    gather_parts(bands, picture, target, waste, parts);
+    gather_parts(bands, picture, target, reach, waste, parts);
     if parts.len() - kept <= MOST_PARTS {
       return;
     }
@@ -658,6 +682,7 @@ fn gather_parts(
   bands: &[Band],
   picture: [u32; 2],
   target: [u32; 2],
+  reach: Vec2,
   waste: f32,
   parts: &mut Vec<[u32; 4]>,
 ) {
@@ -665,7 +690,10 @@ fn gather_parts(
     [picture, target].map(|[width, height]| Vec2::new(width as f32, height as f32));
   let scale = target / picture;
   // one more for the pixel of the picture that a pixel of the target is given
-  let reach = HAZE_REACH + 1.0;
+  let reach = reach + 1.0;
+  // the bands to each side of one that what shows in it may come from
+  let aside = (reach.y / BAND).ceil() as usize;
+  let mut spans = Vec::with_capacity((2 * aside + 1) * SPANS);
   // the rectangles that reach down to the band before, each with the count of its pixels that
   // lie in the stretches it is around, and those that reach down to this one
   let (mut open, mut next) = (Vec::<([u32; 4], u64)>::new(), Vec::new());
@@ -674,19 +702,19 @@ fn gather_parts(
     let foot = (((band + 1) as f32 * BAND).min(picture.y) * scale.y)
       .ceil()
       .min(target.y);
-    // what shows in this band of the target is in this band of the picture or in one next to it
-    let near = &bands[band.saturating_sub(1)..(band + 2).min(bands.len())];
-    let mut spans = [NO_SPAN; SPANS * 3];
-    let mut count = 0;
+    // what shows in this band of the target is in this band of the picture or in one `aside`
+    // or fewer from it
+    let near = &bands[band.saturating_sub(aside)..(band + aside + 1).min(bands.len())];
+    spans.clear();
     for &[starts, ends] in near.iter().flatten().filter(|span| span[0] <= span[1]) {
-      let left = ((starts - reach) * scale.x).floor().max(0.0);
-      let right = ((ends + reach) * scale.x).ceil().min(target.x);
+      let left = ((starts - reach.x) * scale.x).floor().max(0.0);
+      let right = ((ends + reach.x) * scale.x).ceil().min(target.x);
       if left < right && top < foot {
-        spans[count] = [left, right];
-        count += 1;
+        spans.push([left, right]);
       }
     }
-    spans[..count].sort_unstable_by(|one, other| one[0].total_cmp(&other[0]));
+    let count = spans.len();
+    spans.sort_unstable_by(|one, other| one[0].total_cmp(&other[0]));
     let mut span = 0;
     while span < count {
       // the stretches that touch are one
@@ -1132,11 +1160,21 @@ mod tests {
     }
   }
 
+  /// The reach of a haze two cells to each side.
+  const HAZE: Vec2 = Vec2::splat(3.5 * HAZE_CELL as f32);
+
   /// Asserts that parts hold all a bound shows in.
   ///
-  /// That is all the present pass gathers around the bound. Returns the count of the target's
-  /// pixels in the parts, with one in two parts counted twice.
-  fn assert_held(bands: &[Band], picture: [u32; 2], target: [u32; 2], found: &[[u32; 4]]) -> u32 {
+  /// That is all the present pass gathers around the bound, `reach` pixels of the picture
+  /// along each axis. Returns the count of the target's pixels in the parts, with one in two
+  /// parts counted twice.
+  fn assert_held(
+    bands: &[Band],
+    picture: [u32; 2],
+    target: [u32; 2],
+    reach: Vec2,
+    found: &[[u32; 4]],
+  ) -> u32 {
     let scale = Vec2::new(target[0] as f32, target[1] as f32)
       / Vec2::new(picture[0] as f32, picture[1] as f32);
     for across in 0..target[0] {
@@ -1146,8 +1184,8 @@ mod tests {
         let near = |band: usize, [starts, ends]: [f32; 2]| {
           let (upper, lower) = (band as f32 * BAND, (band + 1) as f32 * BAND);
           starts <= ends
-            && (starts - HAZE_REACH..=ends + HAZE_REACH).contains(&shown.x)
-            && (upper - HAZE_REACH..=lower + HAZE_REACH).contains(&shown.y)
+            && (starts - reach.x..=ends + reach.x).contains(&shown.x)
+            && (upper - reach.y..=lower + reach.y).contains(&shown.y)
         };
         let spans = (bands.iter().enumerate())
           .flat_map(|(band, spans)| spans.iter().map(move |span| (band, *span)));
@@ -1172,30 +1210,76 @@ mod tests {
   }
 
   #[test]
+  fn the_haze_reaches_past_the_blur_radius_by_the_cells_a_pixel_is_mixed_from() {
+    let cell = HAZE_CELL as f32;
+    let reach = |radius: Vec2| Spread::new(radius, [64, 32]).reach();
+    // a radius of whole cells reads that many, and one part way into a cell reads it too
+    assert_eq!(reach(Vec2::splat(2.0 * cell)), Vec2::splat(3.5 * cell));
+    assert_eq!(
+      reach(Vec2::new(2.2 * cell, 5.0 * cell)),
+      Vec2::new(4.5, 6.5) * cell
+    );
+    // past the radius by at least a cell and a half and by less than two and a half
+    for radius in [0.5, 3.0, 17.0, 40.0, 101.0] {
+      let past = reach(Vec2::splat(radius)) - radius;
+      assert!(past.cmpge(Vec2::splat(1.5 * cell)).all(), "{radius} {past}");
+      assert!(past.cmplt(Vec2::splat(2.5 * cell)).all(), "{radius} {past}");
+    }
+    // no radius reads only the cell itself, and none reads past the map
+    for none in [0.0, -3.0, f32::NAN] {
+      assert_eq!(reach(Vec2::splat(none)), Vec2::splat(1.5 * cell));
+    }
+    assert_eq!(
+      Spread::new(Vec2::splat(f32::INFINITY), [64, 32]).taps,
+      [64, 32]
+    );
+  }
+
+  #[test]
   fn the_parts_of_a_target_hold_all_that_the_present_pass_gathers_around_a_bound() {
     let mut number = numbers();
-    for (picture, target) in [
-      ([800, 400], [800, 400]),
-      ([400, 200], [800, 400]),
-      ([531, 301], [797, 452]),
-    ] {
-      // a bound in a few bands, some next to each other and some apart, and some of it in the
-      // same band
-      let mut bands = vec![[NO_SPAN; SPANS]; (picture[1] as f32 / BAND).ceil() as usize];
-      for _ in 0..5 {
-        let band = (number() * bands.len() as f32) as usize;
-        let starts = number() * picture[0] as f32;
-        join(&mut bands[band], [starts, starts + number() * 90.0]);
+    // the soften alone, a haze two cells to each side, and hazes that reach past a band, as
+    // far along both axes and not
+    let wide = |radius: Vec2| Spread::new(radius, [200, 100]).reach();
+    let reaches = [
+      Vec2::ONE,
+      HAZE,
+      wide(Vec2::splat(BAND * 2.5)),
+      wide(Vec2::new(6.0, BAND * 4.0)),
+      wide(Vec2::new(BAND * 3.0, 2.0)),
+    ];
+    for reach in reaches {
+      for (picture, target) in [
+        ([800, 400], [800, 400]),
+        ([400, 200], [800, 400]),
+        ([531, 301], [797, 452]),
+      ] {
+        // a bound in a few bands, some next to each other and some apart, and some of it in
+        // the same band
+        let mut bands = vec![[NO_SPAN; SPANS]; (picture[1] as f32 / BAND).ceil() as usize];
+        for _ in 0..5 {
+          let band = (number() * bands.len() as f32) as usize;
+          let starts = number() * picture[0] as f32;
+          join(&mut bands[band], [starts, starts + number() * 90.0]);
+        }
+        let mut found = Vec::new();
+        parts(&bands, picture, target, reach, &mut found);
+        let held = assert_held(&bands, picture, target, reach, &found);
+        // a short reach keeps them far from all of the target
+        if reach.max_element() < BAND {
+          assert!(held < target[0] * target[1] / 2, "{found:?}");
+        }
       }
-      let mut found = Vec::new();
-      parts(&bands, picture, target, &mut found);
-      // they are far from all of the target
-      let held = assert_held(&bands, picture, target, &found);
-      assert!(held < target[0] * target[1] / 2, "{found:?}");
     }
     // a bound of nothing has no parts
     let mut found = Vec::new();
-    parts(&[[NO_SPAN; SPANS]; 25], [800, 400], [800, 400], &mut found);
+    parts(
+      &[[NO_SPAN; SPANS]; 25],
+      [800, 400],
+      [800, 400],
+      HAZE,
+      &mut found,
+    );
     assert!(found.is_empty());
   }
 
@@ -1215,8 +1299,8 @@ mod tests {
     // the rectangle around both is most of the picture's width
     assert!(left < 100 && width > 600);
     let mut found = Vec::new();
-    parts(&bands, PICTURE, PICTURE, &mut found);
-    let held = assert_held(&bands, PICTURE, PICTURE, &found);
+    parts(&bands, PICTURE, PICTURE, HAZE, &mut found);
+    let held = assert_held(&bands, PICTURE, PICTURE, HAZE, &found);
     // what lies between the two is in no part
     let between = |&[left, _, width, _]: &[u32; 4]| left < 400 && left + width > 400;
     assert!(!found.iter().any(between), "{found:?}");
@@ -1264,8 +1348,8 @@ mod tests {
       join(spans, [starts, starts + 4.0]);
     }
     let (picture, mut found) = ([1900, 960], Vec::new());
-    parts(&bands, picture, picture, &mut found);
-    assert_held(&bands, picture, picture, &found);
+    parts(&bands, picture, picture, HAZE, &mut found);
+    assert_held(&bands, picture, picture, HAZE, &found);
     assert!(found.len() > 1, "{found:?}");
     // two that cross, each a long way across from one band to the next: no rectangles few
     // enough hold them closely, and they are told as the one around them all
@@ -1276,8 +1360,8 @@ mod tests {
       join(spans, [3900.0 - starts, 3904.0 - starts]);
     }
     let (picture, mut found) = ([4000, 640], Vec::new());
-    parts(&bands, picture, picture, &mut found);
-    assert_held(&bands, picture, picture, &found);
+    parts(&bands, picture, picture, HAZE, &mut found);
+    assert_held(&bands, picture, picture, HAZE, &found);
     assert_eq!(found.len(), 1, "{found:?}");
   }
 

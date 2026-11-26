@@ -243,12 +243,22 @@ fn a_scene_drawn_in_part_is_the_scene_drawn_whole() {
   .map(Arc::new);
   let mut whole = Renderer::new(&target.device, FORMAT);
   let mut in_part = 0;
-  // under a view that leans one way, both ways and not at all, with and without bounced light
+  // under a view that leans one way, both ways and not at all, with and without bounced light,
+  // and with a glow that reaches past a band
   let rounds = [
     (Vec2::new(0.0, -0.25), 0.0, Look::default()),
     (Vec2::new(0.0, -0.25), 3.0, Look::default()),
     (Vec2::new(0.2, 0.3), 0.0, Look::default()),
     (Vec2::ZERO, 2.0, Look::default()),
+    (
+      Vec2::new(0.1, -0.2),
+      0.0,
+      Look {
+        bloom: 2.0,
+        bloom_radius: 40.0,
+        ..Look::default()
+      },
+    ),
     (
       Vec2::new(-0.1, -0.3),
       1.0,
@@ -390,7 +400,7 @@ fn differing(one: &[u8], other: &[u8]) -> [i32; 4] {
 #[test]
 #[ignore = "needs a graphics device"]
 fn the_haze_shows_as_far_from_what_lights_itself_as_its_reach_and_no_further() {
-  use super::damage::{HAZE_CELL, HAZE_REACH};
+  use super::damage::{HAZE_CELL, Spread};
 
   let target = Target::new();
   let block = Arc::new(Mesh::cuboid(
@@ -399,7 +409,7 @@ fn the_haze_shows_as_far_from_what_lights_itself_as_its_reach_and_no_further() {
   ));
   // a block, dark and then lighting itself, without a haze and then with one far brighter than
   // any look has it, which shows the least of it. rough edges keep the block to whole pixels
-  let scene = |level: f32, bloom: f32| {
+  let scene = |level: f32, bloom: f32, bloom_radius: f32| {
     let mut scene = panel(&mut numbers(1), &[Arc::clone(&block)]);
     scene.objects.truncate(2);
     scene.objects[1].transform = Mat4::from_translation((PANEL / 2.0).extend(0.0));
@@ -408,28 +418,37 @@ fn the_haze_shows_as_far_from_what_lights_itself_as_its_reach_and_no_further() {
     scene.look = Look {
       antialias: false,
       bloom,
+      bloom_radius,
       ..Look::default()
     };
     scene
   };
   let mut renderer = Renderer::new(&target.device, FORMAT);
-  let mut drawn = |level, bloom| target.drawn(&mut renderer, &scene(level, bloom));
-  let lit = differing(&drawn(0.0, 0.0), &drawn(1.0, 0.0));
-  let hazed = differing(&drawn(0.0, 1e4), &drawn(1.0, 1e4));
-  // a cell holds the pixels of what lights itself together, wherever in the cell they are
-  let (reach, cell) = (HAZE_REACH as i32, HAZE_CELL as i32);
-  let further = [
-    lit[0] - hazed[0],
-    lit[1] - hazed[1],
-    hazed[2] - lit[2],
-    hazed[3] - lit[3],
-  ];
-  assert!(
-    further
-      .iter()
-      .all(|side| (reach - cell..=reach).contains(side)),
-    "the haze shows {further:?} pixels past what lights itself, and reaches {reach}"
-  );
+  // the panel is as many points as the target is pixels, so a radius in points is one in pixels
+  assert_eq!(PANEL, Vec2::new(SIZE[0] as f32, SIZE[1] as f32));
+  let cells = SIZE.map(|side| side.div_ceil(HAZE_CELL) + 2);
+  // the radius of the look by default, one past a band, and one in no whole count of cells
+  for radius in [Look::default().bloom_radius, 40.0, 9.0] {
+    let mut drawn = |level, bloom| target.drawn(&mut renderer, &scene(level, bloom, radius));
+    let lit = differing(&drawn(0.0, 0.0), &drawn(1.0, 0.0));
+    let hazed = differing(&drawn(0.0, 1e4), &drawn(1.0, 1e4));
+    // a cell holds the pixels of what lights itself together, wherever in the cell they are
+    let reach = Spread::new(Vec2::splat(radius), cells).reach();
+    let (reach, cell) = (reach.x as i32, HAZE_CELL as i32);
+    let further = [
+      lit[0] - hazed[0],
+      lit[1] - hazed[1],
+      hazed[2] - lit[2],
+      hazed[3] - lit[3],
+    ];
+    assert!(
+      further
+        .iter()
+        .all(|side| (reach - cell..=reach).contains(side)),
+      "the haze of radius {radius} shows {further:?} pixels past what lights itself, and \
+       reaches {reach}"
+    );
+  }
 }
 
 #[test]
@@ -673,8 +692,9 @@ fn a_screen_whose_picture_is_made_again_is_drawn_again_alone() {
           "{parts:?} {step}"
         );
       } else {
-        // the picture alone: the screen, and with light bouncing what its light is thrown on
-        let most = if bounce > 0.0 { 0.4 } else { 0.2 };
+        // the picture alone and the bands its glow reaches: the screen, and with light bouncing
+        // what its light is thrown on
+        let most = if bounce > 0.0 { 0.4 } else { 0.25 };
         assert!(share(parts) < most, "{parts:?} {step}");
       }
     }

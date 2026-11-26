@@ -158,8 +158,16 @@ pub struct Look {
   ///
   /// An old render leaves them rough.
   pub antialias: bool,
-  /// How much the parts that light themselves spill a haze around them.
+  /// How much the parts that light themselves spill a glow around them.
+  ///
+  /// Zero is none, and at one the middle of a wide face that lights itself fully gains its own
+  /// color once more.
   pub bloom: f32,
+  /// How far the glow reaches, in points.
+  ///
+  /// It fades as a Gaussian bell and is gone at this distance. The blur is in cells of four of
+  /// the picture's pixels a side, so no glow reaches less than about six pixels.
+  pub bloom_radius: f32,
   /// How much darker the picture is toward its corners than in its middle.
   pub vignette: f32,
   /// How far the picture is blurred.
@@ -177,6 +185,7 @@ impl Default for Look {
       soft_shadows: true,
       antialias: true,
       bloom: 0.5,
+      bloom_radius: 12.0,
       vignette: 0.25,
       soften: 0.0,
     }

@@ -7,6 +7,7 @@ use std::mem::size_of;
 use bytemuck::{Pod, Zeroable};
 
 use super::SHADOW_SIZE;
+use super::damage::Spread;
 use crate::scene::{LAMPS, Look, Object, Scene};
 
 #[repr(C)]
@@ -168,10 +169,16 @@ pub(super) struct Present {
   options: [f32; 4],
   /// How far the picture is blurred, in x.
   more: [f32; 4],
+  /// The Gaussian the glow map is blurred by.
+  ///
+  /// It is the falloff across and down, then the cells read to each side across and down.
+  spread: [f32; 4],
 }
 
 impl Present {
-  pub(super) fn of(look: Look, target_encodes: bool) -> Self {
+  pub(super) fn of(look: Look, target_encodes: bool, spread: Spread) -> Self {
+    let [across, down] = spread.falloff;
+    let taps = spread.taps.map(|taps| taps as f32);
     Self {
       options: [
         look.color_steps as f32,
@@ -180,6 +187,7 @@ impl Present {
         look.vignette,
       ],
       more: [look.soften, 0.0, 0.0, 0.0],
+      spread: [across, down, taps[0], taps[1]],
     }
   }
 }
@@ -316,6 +324,7 @@ mod tests {
     let present = named([
       ("options", offset_of!(Present, options)),
       ("more", offset_of!(Present, more)),
+      ("spread", offset_of!(Present, spread)),
     ]);
     assert_eq!(fields(&module, "Present"), (present, size_of::<Present>()));
   }

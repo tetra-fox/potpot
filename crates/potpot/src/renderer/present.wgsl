@@ -1,5 +1,5 @@
 // the rendered picture stretched over its place in the window, as blocks, and cut to few colors
-// srgb.wgsl, with `decode`, and HAZE_CELL and HAZE_TAPS are put ahead of this source when loaded
+// srgb.wgsl, with `decode`, and HAZE_CELL are put ahead of this source when loaded
 
 struct Present {
   // x the steps each channel is cut to if two or more, y one when the target encodes srgb
@@ -7,15 +7,20 @@ struct Present {
   options: vec4<f32>,
   // x how far the picture is blurred
   more: vec4<f32>,
+  // the Gaussian the glow map is blurred by: xy the falloff across and down, a cell `i` off
+  // weighing exp(-falloff i^2), and zw the cells read to each side across and down
+  spread: vec4<f32>,
 }
 
 @group(0) @binding(0) var picture: texture_2d<f32>;
 @group(0) @binding(1) var picture_sampler: sampler;
 @group(0) @binding(2) var<uniform> present: Present;
-// what lights itself in each cell of HAZE_CELL of the picture's pixels a side, with one dark
-// cell more all around
-@group(0) @binding(3) var glow: texture_2d<f32>;
-@group(0) @binding(4) var glow_sampler: sampler;
+// what lights itself in each cell of HAZE_CELL of the picture's pixels a side, with one cell
+// more all around, blurred
+@group(0) @binding(3) var haze: texture_2d<f32>;
+@group(0) @binding(4) var haze_sampler: sampler;
+// the glow map as blurred so far, for a pass that blurs it along one axis
+@group(0) @binding(5) var unspread: texture_2d<f32>;
 
 struct Spread {
   @builtin(position) clip: vec4<f32>,
@@ -62,6 +67,35 @@ fn glow_fragment(@builtin(position) cell: vec4<f32>) -> @location(0) vec4<f32> {
   return vec4<f32>(lit / f32(HAZE_CELL * HAZE_CELL), 1.0);
 }
 
+// a cell of `unspread` blurred along `step` by the Gaussian, reading `taps` cells to each side.
+// what lies past the map is dark
+fn blurred(cell: vec2<i32>, step: vec2<i32>, falloff: f32, taps: i32) -> vec4<f32> {
+  let last = vec2<i32>(textureDimensions(unspread)) - 1;
+  var lit = textureLoad(unspread, cell, 0).rgb;
+  var counted = 1.0;
+  for (var i = 1; i <= taps; i++) {
+    let weight = exp(-falloff * f32(i * i));
+    for (var side = -1; side <= 1; side += 2) {
+      let at = cell + step * i * side;
+      if all(at >= vec2<i32>(0)) && all(at <= last) {
+        lit += textureLoad(unspread, at, 0).rgb * weight;
+      }
+    }
+    counted += weight * 2.0;
+  }
+  return vec4<f32>(lit / counted, 1.0);
+}
+
+@fragment
+fn spread_across(@builtin(position) cell: vec4<f32>) -> @location(0) vec4<f32> {
+  return blurred(vec2<i32>(cell.xy), vec2<i32>(1, 0), present.spread.x, i32(present.spread.z));
+}
+
+@fragment
+fn spread_down(@builtin(position) cell: vec4<f32>) -> @location(0) vec4<f32> {
+  return blurred(vec2<i32>(cell.xy), vec2<i32>(0, 1), present.spread.y, i32(present.spread.w));
+}
+
 @fragment
 fn fragment(spread: Spread) -> @location(0) vec4<f32> {
   let size = vec2<f32>(textureDimensions(picture));
@@ -83,22 +117,10 @@ fn fragment(spread: Spread) -> @location(0) vec4<f32> {
     color = mix(color, around / 16.0, present.more.x);
   }
   if present.options.z > 0.0 {
-    // what lights itself around the pixel, read at HAZE_TAPS places to each side, a cell apart.
-    // each is a mix of the four cells around it, so nothing between two places is left out
-    let cells = vec2<f32>(textureDimensions(glow));
+    // a mix of the four blurred cells around the pixel
+    let cells = vec2<f32>(textureDimensions(haze));
     let middle = (spread.at * size / f32(HAZE_CELL) + 1.0) / cells;
-    var haze = vec3<f32>(0.0);
-    var counted = 0.0;
-    for (var x = -HAZE_TAPS; x <= HAZE_TAPS; x++) {
-      for (var y = -HAZE_TAPS; y <= HAZE_TAPS; y++) {
-        let aside = vec2<f32>(f32(x), f32(y));
-        // less the further it has to come
-        let weight = 1.0 - 0.3 * length(aside) / (f32(HAZE_TAPS) * sqrt(2.0));
-        haze += textureSampleLevel(glow, glow_sampler, middle + aside / cells, 0.0).rgb * weight;
-        counted += weight;
-      }
-    }
-    color += haze / counted * 0.96 * present.options.z;
+    color += textureSampleLevel(haze, haze_sampler, middle, 0.0).rgb * present.options.z;
   }
   // darker toward the corners, by how far out along the picture's own shape
   let out = (spread.at - 0.5) * 2.0;
