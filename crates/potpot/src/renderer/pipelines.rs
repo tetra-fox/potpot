@@ -3,7 +3,7 @@
 use std::mem::size_of;
 
 use super::damage::{
-  BOUNCE_REACHES, HAZE_REACH, OPEN_CLEAR, OPEN_REACHES, SHADOW_BIAS, SHADOW_SPREAD,
+  BOUNCE_REACHES, HAZE_CELL, HAZE_TAPS, OPEN_CLEAR, OPEN_REACHES, SHADOW_BIAS, SHADOW_SPREAD,
 };
 use super::uniforms::Placed;
 use crate::mesh::Vertex;
@@ -19,6 +19,11 @@ pub(super) const PICTURE: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 ///
 /// The map holds linear light in rgb and a height in a, and a height lies outside zero to one.
 pub(super) const BOUNCE: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// The format of the glow map.
+///
+/// The map holds the mean of a few lit pixels among many unlit ones, which eight bits to a
+/// channel would round away.
+pub(super) const GLOW: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// The samples of each pixel when edges are smoothed.
 pub(super) const SAMPLES: u32 = 4;
 
@@ -60,10 +65,13 @@ pub(super) fn scene_source() -> String {
 
 /// Returns `present.wgsl` with what it is given ahead of it.
 ///
-/// That is the sRGB curve and the reach of its haze.
+/// That is the sRGB curve, the side of a cell of the glow map and the places to each side that
+/// the haze is read at.
 pub(super) fn present_source() -> String {
   format!(
-    "const HAZE_REACH: f32 = {HAZE_REACH:?};\n{SRGB_SOURCE}{}",
+    "const HAZE_CELL: i32 = {HAZE_CELL};\n\
+     const HAZE_TAPS: i32 = {HAZE_TAPS};\n\
+     {SRGB_SOURCE}{}",
     include_str!("present.wgsl")
   )
 }
@@ -78,7 +86,12 @@ pub(super) struct Layouts {
   /// The shadow map comes with its sampler, then the height map, then the bounce map with its
   /// sampler.
   pub(super) maps: wgpu::BindGroupLayout,
-  /// The picture with its sampler, and how it is degraded.
+  /// The picture alone, for the glow pass to read.
+  pub(super) glow: wgpu::BindGroupLayout,
+  /// Everything the present pass reads.
+  ///
+  /// The picture comes with its sampler, then how it is degraded, then the glow map with its
+  /// sampler.
   pub(super) present: wgpu::BindGroupLayout,
 }
 
@@ -132,12 +145,21 @@ impl Layouts {
           sampler(4, wgpu::SamplerBindingType::Filtering),
         ],
       }),
+      glow: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("potpot glow"),
+        entries: &[texture(
+          0,
+          wgpu::TextureSampleType::Float { filterable: true },
+        )],
+      }),
       present: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("potpot present"),
         entries: &[
           texture(0, wgpu::TextureSampleType::Float { filterable: true }),
           sampler(1, wgpu::SamplerBindingType::Filtering),
           uniform(2, wgpu::ShaderStages::FRAGMENT),
+          texture(3, wgpu::TextureSampleType::Float { filterable: true }),
+          sampler(4, wgpu::SamplerBindingType::Filtering),
         ],
       }),
     }
@@ -162,6 +184,8 @@ pub(super) struct Pipelines {
   pub(super) wipe_depth: wgpu::RenderPipeline,
   /// The pipeline that wipes the bounce map the same way.
   pub(super) wipe_bounce: wgpu::RenderPipeline,
+  /// The pipeline that draws the glow map from the picture.
+  pub(super) glow: wgpu::RenderPipeline,
   pub(super) present: wgpu::RenderPipeline,
 }
 
@@ -346,27 +370,33 @@ impl Pipelines {
         cache: None,
       })
     });
-    let present = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-      label: Some("potpot present"),
-      layout: Some(&layout("potpot present", &[&layouts.present])),
-      vertex: wgpu::VertexState {
-        module: &present_shader,
-        entry_point: Some("vertex"),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-        buffers: &[],
-      },
-      fragment: Some(wgpu::FragmentState {
-        module: &present_shader,
-        entry_point: Some("fragment"),
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-        targets: &[Some(target.into())],
-      }),
-      primitive,
-      depth_stencil: None,
-      multisample: wgpu::MultisampleState::default(),
-      multiview: None,
-      cache: None,
-    });
+    // a pipeline that draws one triangle over all of a target, by one of the present shader's
+    // fragment entry points
+    let over_all = |label, group: &wgpu::BindGroupLayout, fragment, format| {
+      device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(&layout(label, &[group])),
+        vertex: wgpu::VertexState {
+          module: &present_shader,
+          entry_point: Some("vertex"),
+          compilation_options: wgpu::PipelineCompilationOptions::default(),
+          buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+          module: &present_shader,
+          entry_point: Some(fragment),
+          compilation_options: wgpu::PipelineCompilationOptions::default(),
+          targets: &[Some(wgpu::ColorTargetState::from(format))],
+        }),
+        primitive,
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+      })
+    };
+    let glow = over_all("potpot glow", &layouts.glow, "glow_fragment", GLOW);
+    let present = over_all("potpot present", &layouts.present, "fragment", target);
 
     Self {
       shadow: depth_only("potpot shadow", "shadow_vertex"),
@@ -376,6 +406,7 @@ impl Pipelines {
       wipe,
       wipe_depth,
       wipe_bounce,
+      glow,
       present,
     }
   }

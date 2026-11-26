@@ -54,11 +54,20 @@ pub(super) const BOUNCE_REACHES: [f32; 3] = {
   reaches
 };
 
+/// The side of a glow map cell in the picture's pixels.
+///
+/// `present.wgsl` is given this and [`HAZE_TAPS`].
+pub(super) const HAZE_CELL: u32 = 4;
+/// The places to each side that the haze is read at.
+///
+/// They are one cell apart.
+pub(super) const HAZE_TAPS: i32 = 2;
 /// The reach of the haze in the picture's pixels.
 ///
-/// The haze around what lights itself is gathered from that far off. `present.wgsl` is given
-/// it. The blur it also does reaches one pixel.
-pub(super) const HAZE_REACH: f32 = 13.0;
+/// The haze around what lights itself is gathered from that far off: out to the last place it
+/// is read at, a cell more for the cells that place is mixed from, and half a cell to their far
+/// edges. The blur `present.wgsl` also does reaches one pixel.
+pub(super) const HAZE_REACH: f32 = (HAZE_TAPS as f32 + 1.5) * HAZE_CELL as f32;
 // what shows in a band of the target is in that band of the picture or in one next to it
 const _: () = assert!(HAZE_REACH < BAND);
 

@@ -5,8 +5,8 @@
 
 use std::cell::{Cell, RefCell, RefMut};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
 use std::sync::mpsc;
-use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use baseview::dpi::LogicalSize;
@@ -25,6 +25,7 @@ use tracing::error;
 
 use crate::feed::same;
 use crate::flat::FlatRenderer;
+use crate::graphics::Graphics;
 use crate::open::{Param, Remembered, Settings, Shared, ToWindow};
 use crate::screen::Screen;
 use crate::skin::{Gpu, Skin, View};
@@ -48,6 +49,15 @@ const AROUND: wgpu::Color = wgpu::Color {
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 /// The longest a frame may take the graphics device before it is given up on.
 const DRAWN_WITHIN: Duration = Duration::from_secs(1);
+/// The longest a single wait for a frame lasts.
+///
+/// A frame is waited for in as many waits as it takes. wgpu holds back whatever is submitted to
+/// a device while a wait on it goes on, and the windows of a plugin draw with one device.
+/// Between two waits another window's frame is taken.
+///
+/// wgpu's wait on Direct3D 12 drops what is left of a millisecond, so a wait of one millisecond
+/// there is over at once, and one of two lasts one.
+const WAIT: Duration = Duration::from_millis(if cfg!(target_os = "windows") { 2 } else { 1 });
 /// The number of pixels of a wheel that scrolls by them that count as one line.
 const PIXELS_PER_LINE: f32 = 20.0;
 
@@ -119,8 +129,7 @@ struct Host {
 }
 
 struct State<S> {
-  device: wgpu::Device,
-  queue: wgpu::Queue,
+  graphics: Arc<Graphics>,
   /// The canvas frames are drawn on.
   ///
   /// It is made at the first frame of each size the window takes.
@@ -156,10 +165,6 @@ struct State<S> {
   ///
   /// The window becomes it once for each frame at most.
   wanted_scale: Option<f32>,
-  /// The first fault the graphics device reported once the window was open.
-  ///
-  /// wgpu would otherwise panic over it.
-  fault: Arc<OnceLock<String>>,
   /// Whether drawing has been given up for as long as this window is open.
   ///
   /// The window keeps the last picture it had.
@@ -171,27 +176,6 @@ fn stop(stopped: &mut bool, why: impl std::fmt::Display) {
   if !std::mem::replace(stopped, true) {
     error!("the editor has stopped drawing: {why}");
   }
-}
-
-/// Returns what `build` makes with the device, or what went wrong with it.
-///
-/// wgpu reports a shader or pipeline it cannot build, and memory it cannot get, to whoever
-/// is listening for each kind, and panics if nobody is.
-fn built<T>(device: &wgpu::Device, build: impl FnOnce() -> T) -> Result<T, wgpu::Error> {
-  let kinds = [
-    wgpu::ErrorFilter::Validation,
-    wgpu::ErrorFilter::OutOfMemory,
-    wgpu::ErrorFilter::Internal,
-  ];
-  for kind in kinds {
-    device.push_error_scope(kind);
-  }
-  let built = build();
-  let mut wrong = None;
-  for _ in kinds {
-    wrong = pollster::block_on(device.pop_error_scope()).or(wrong);
-  }
-  wrong.map_or(Ok(built), Err)
 }
 
 /// Everything a frame shows that can change between frames.
@@ -274,8 +258,7 @@ impl Canvas {
   /// cannot be mapped.
   fn read(
     &self,
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    graphics: &Graphics,
     mut encoder: wgpu::CommandEncoder,
     parts: &[[u32; 4]],
   ) -> Result<Rows, String> {
@@ -305,7 +288,7 @@ impl Canvas {
         },
       );
     }
-    let submitted = queue.submit([encoder.finish()]);
+    let submitted = graphics.queue.submit([encoder.finish()]);
     let top = parts.iter().map(|part| part[1]).min().unwrap_or(0);
     let foot = (parts.iter().map(|part| part[1] + part[3]).max()).unwrap_or(0);
     let bytes = u64::from(top) * row..u64::from(foot) * row;
@@ -314,15 +297,41 @@ impl Canvas {
       // the receiver is only gone once the frame has been given up on
       let _ = mapped.send(result);
     });
-    let waited = device.poll(wgpu::PollType::Wait {
-      submission_index: Some(submitted),
-      timeout: Some(DRAWN_WITHIN),
-    });
-    match (waited, when_mapped.try_recv()) {
-      (Ok(_), Ok(Ok(()))) => Ok(Rows { top, bytes }),
-      (waited, mapped) => Err(format!(
-        "the frame could not be read back: {waited:?}, {mapped:?}"
-      )),
+    // wgpu drops a mapping's report unsent if the poll that held it panics
+    const DROPPED: &str = "the frame could not be read back: its mapping was dropped";
+    let until = Instant::now() + DRAWN_WITHIN;
+    loop {
+      let left = until.saturating_duration_since(Instant::now());
+      let wait = WAIT.min(left);
+      let polled = graphics.poll(wgpu::PollType::Wait {
+        submission_index: Some(submitted.clone()),
+        timeout: Some(wait),
+      });
+      // wgpu reports the mapping on whichever thread polls the device or submits to it first
+      // after it. while another thread polls, that is waited for in place of a poll
+      let mapped = match polled {
+        Some(Ok(_) | Err(wgpu::PollError::Timeout)) => match when_mapped.try_recv() {
+          Ok(mapped) => Some(mapped),
+          Err(mpsc::TryRecvError::Empty) => None,
+          Err(mpsc::TryRecvError::Disconnected) => return Err(DROPPED.to_owned()),
+        },
+        Some(Err(wrong)) => return Err(format!("the frame could not be read back: {wrong}")),
+        None => match when_mapped.recv_timeout(wait) {
+          Ok(mapped) => Some(mapped),
+          Err(mpsc::RecvTimeoutError::Timeout) => None,
+          Err(mpsc::RecvTimeoutError::Disconnected) => return Err(DROPPED.to_owned()),
+        },
+      };
+      match mapped {
+        Some(Ok(())) => return Ok(Rows { top, bytes }),
+        Some(Err(wrong)) => return Err(format!("the frame could not be read back: {wrong}")),
+        None if left.is_zero() => {
+          return Err(format!(
+            "the frame could not be read back: it was not drawn within {DRAWN_WITHIN:?}"
+          ));
+        }
+        None => {}
+      }
     }
   }
 }
@@ -478,20 +487,7 @@ impl<S: Skin> Window<S> {
       error!("the window manager could not be told the editor's shape: {error}");
     }
 
-    // direct3d 12 is tried last. wine runs it on vulkan anyway, and its shader compiler builds
-    // no shader with a sampler as naga writes it for direct3d, so there the editor needs vulkan
-    let adapter = match adapter_of(wgpu::Backends::VULKAN | wgpu::Backends::METAL) {
-      Ok(adapter) => adapter,
-      Err(first) => adapter_of(wgpu::Backends::DX12).map_err(|second| {
-        HandlerError::from_boxed(format!("{first}, and with direct3d 12: {second}").into())
-      })?,
-    };
-    // no more is asked of the adapter than every one has, apart from textures as large as
-    // this one has, for the window's own size
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-      required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
-      ..Default::default()
-    }))?;
+    let graphics = Graphics::shared()?;
     let window = [size.physical.width, size.physical.height];
     let (dials, hosts): (Vec<_>, Vec<_>) = (params.into_iter())
       .map(|param| {
@@ -510,10 +506,10 @@ impl<S: Skin> Window<S> {
     let scale = scale_in(window, size.scale_factor, settings.size);
     // the editor opens only if the device can build all it is drawn with and lay out the panel
     // as it is. what goes wrong after that is kept for the next frame to find, and drawing stops
-    let (skin, flat) = built(&device, || {
+    let (skin, flat) = graphics.built(|| {
       let gpu = Gpu {
-        device: &device,
-        queue: &queue,
+        device: &graphics.device,
+        queue: &graphics.queue,
         format: FORMAT,
       };
       let mut skin = skin(&gpu);
@@ -529,25 +525,9 @@ impl<S: Skin> Window<S> {
         pixels: [width, height],
       };
       skin.prepare(&gpu, &view, &mut Flat::default());
-      (skin, FlatRenderer::new(&device, FORMAT))
+      (skin, FlatRenderer::new(&graphics.device, FORMAT))
     })?;
-    let fault = Arc::new(OnceLock::new());
-    device.on_uncaptured_error(Arc::new({
-      let fault = Arc::clone(&fault);
-      move |error: wgpu::Error| {
-        // only the first is kept: the rest follow from it
-        let _ = fault.set(error.to_string());
-      }
-    }));
-    device.set_device_lost_callback({
-      let fault = Arc::clone(&fault);
-      move |reason, message| {
-        // the same, and a device let go of as the window closes is lost to nobody
-        let _ = fault.set(format!(
-          "the graphics device was lost: {reason:?} {message}"
-        ));
-      }
-    });
+    shared.keep(Arc::clone(&graphics));
     let screen = Screen::new(&context)?;
     let tick = context.create_timer(TICK)?;
     Ok(Self {
@@ -565,8 +545,7 @@ impl<S: Skin> Window<S> {
       sized: Cell::new(None),
       clipboard: RefCell::new(None),
       state: RefCell::new(State {
-        device,
-        queue,
+        graphics,
         canvas: None,
         screen,
         window,
@@ -581,7 +560,6 @@ impl<S: Skin> Window<S> {
         parts: Vec::new(),
         fed: None,
         wanted_scale: None,
-        fault,
         stopped: false,
       }),
     })
@@ -770,8 +748,10 @@ impl<S: Skin> Window<S> {
     let Some(mut state) = self.state() else {
       return Ok(());
     };
-    let State { fault, stopped, .. } = &mut *state;
-    if let Some(fault) = fault.get() {
+    let State {
+      graphics, stopped, ..
+    } = &mut *state;
+    if let Some(fault) = graphics.fault.get() {
       stop(stopped, fault);
     }
     let now = state.now(&self.hosts, &self.settings);
@@ -794,15 +774,14 @@ impl<S: Skin> Window<S> {
     }
     // a window with no size, as a minimized one has, has nothing to draw, and one larger
     // than the device can draw on in one piece is left as it is
-    let most = state.device.limits().max_texture_dimension_2d;
+    let most = state.graphics.device.limits().max_texture_dimension_2d;
     if now.window.iter().any(|&side| side == 0 || side > most) {
       return Ok(());
     }
     let (settings, size) = (&self.settings, self.settings.size);
     let (window, scale) = (now.window, now.scale);
     let State {
-      device,
-      queue,
+      graphics,
       canvas,
       screen,
       skin,
@@ -811,10 +790,15 @@ impl<S: Skin> Window<S> {
       shown,
       parts,
       fed,
-      fault,
       stopped,
       ..
     } = &mut *state;
+    let Graphics {
+      device,
+      queue,
+      fault,
+      ..
+    } = &**graphics;
     let drawn_on = match canvas {
       Some(canvas) if canvas.size == window => canvas,
       _ => canvas.insert(Canvas::new(device, window)),
@@ -887,17 +871,20 @@ impl<S: Skin> Window<S> {
       flat.render(&mut encoder, view);
       let whole = [[0, 0, window[0], window[1]]];
       let parts: &[[u32; 4]] = if patched { parts } else { &whole };
-      let read = drawn_on.read(device, queue, encoder, parts);
+      let read = drawn_on.read(graphics, encoder, parts);
       if let Some(fault) = fault.get() {
         stop(stopped, fault);
         return Ok(());
       }
       let rows = match read {
         Ok(rows) => rows,
-        // the buffer may still be on its way to being read, and is not drawn on again
+        // the buffer may still be on its way to being read, and is not drawn on again. a device
+        // that does not finish a frame is one no window is to go on with
         Err(why) => {
           *canvas = None;
-          stop(stopped, why);
+          stop(stopped, &why);
+          // a fault already kept is the first, which this follows from
+          let _ = fault.set(why);
           return Ok(());
         }
       };
@@ -1049,15 +1036,6 @@ impl<S: Skin> Window<S> {
       _ => {}
     }
   }
-}
-
-/// Returns a graphics adapter of one of `backends`.
-fn adapter_of(backends: wgpu::Backends) -> Result<wgpu::Adapter, wgpu::RequestAdapterError> {
-  let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-    backends,
-    ..Default::default()
-  });
-  pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
 }
 
 /// Tells the window manager the window's shape and how small and large it may be.
@@ -1352,19 +1330,14 @@ mod tests {
   fn a_picture_patched_with_the_parts_of_each_frame_is_the_frame_read_back_whole() {
     use crate::screen::Kept;
 
-    let instance = wgpu::Instance::default();
-    let adapter =
-      pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-        .expect("a graphics adapter is found");
-    let (device, queue) =
-      pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-        .expect("the adapter opens a device");
+    let graphics = Graphics::new().expect("a device opens");
+    let (device, queue) = (&graphics.device, &graphics.queue);
     // a panel one and a half times its size, in rows longer than their pixels
     let (size, window) = ([200.0, 100.0], [300, 150]);
     let place = fitted(window, size);
-    let canvas = Canvas::new(&device, window);
+    let canvas = Canvas::new(device, window);
     assert!(canvas.row > window[0] * 4);
-    let mut flat = FlatRenderer::new(&device, FORMAT);
+    let mut flat = FlatRenderer::new(device, FORMAT);
     let mut number = numbers();
     let point = |number: &mut dyn FnMut() -> f32| [number() * 200.0, number() * 100.0];
     let mut lines: Vec<[[f32; 2]; 2]> = (0..6)
@@ -1396,11 +1369,11 @@ mod tests {
         let lettered = flat.differing(&over, size, place);
         patches(&mut parts, &named, lettered, place, window)
       };
-      flat.prepare(&device, &queue, &over, size, place);
+      flat.prepare(device, queue, &over, size, place);
       let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
       flat.render(&mut encoder, &canvas.view);
       let read: &[[u32; 4]] = if patched { &parts } else { &whole };
-      let rows = (canvas.read(&device, &queue, encoder, read)).expect("the frame is read back");
+      let rows = (canvas.read(&graphics, encoder, read)).expect("the frame is read back");
       let pixels = canvas.read.slice(rows.bytes).get_mapped_range();
       match &mut kept {
         Some(kept) if patched => kept.patch(&parts, rows.top, &pixels),
@@ -1418,7 +1391,7 @@ mod tests {
 
       // the same frame, all of it
       let encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-      let rows = (canvas.read(&device, &queue, encoder, &whole)).expect("the frame is read back");
+      let rows = (canvas.read(&graphics, encoder, &whole)).expect("the frame is read back");
       let pixels = canvas.read.slice(rows.bytes).get_mapped_range();
       let kept = kept.as_ref().expect("a frame was kept");
       let row = canvas.row as usize;
@@ -1433,6 +1406,60 @@ mod tests {
       canvas.read.unmap();
     }
     assert!(patched_frames > 20, "{patched_frames} frames were patched");
+  }
+
+  #[test]
+  #[ignore = "needs a graphics device"]
+  fn windows_on_threads_of_their_own_each_read_back_their_own_frames_from_one_device() {
+    let graphics = Graphics::new().expect("a device opens");
+    let whole = [[0, 0, 2048, 2048]];
+    std::thread::scope(|scope| {
+      for window in 0..4_u32 {
+        let graphics = &graphics;
+        scope.spawn(move || {
+          let canvas = Canvas::new(&graphics.device, [2048, 2048]);
+          for frame in 0..200_u32 {
+            // all of one color, another for each window at each frame, each channel all or none
+            let lit = |channel: u32| f64::from((window + frame) >> channel & 1);
+            let color = wgpu::Color {
+              r: lit(0),
+              g: lit(1),
+              b: lit(2),
+              a: 1.0,
+            };
+            let mut encoder =
+              (graphics.device).create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+              label: None,
+              color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &canvas.view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                  load: wgpu::LoadOp::Clear(color),
+                  store: wgpu::StoreOp::Store,
+                },
+              })],
+              depth_stencil_attachment: None,
+              timestamp_writes: None,
+              occlusion_query_set: None,
+            });
+            let rows = (canvas.read(graphics, encoder, &whole)).expect("the frame is read back");
+            let pixels = canvas.read.slice(rows.bytes).get_mapped_range();
+            let drawn = [color.b, color.g, color.r].map(|channel| channel as u8 * u8::MAX);
+            assert!(
+              pixels[..3] == drawn && pixels[pixels.len() - 4..][..3] == drawn,
+              "frame {frame} of window {window} is not as it was drawn"
+            );
+            drop(pixels);
+            canvas.read.unmap();
+            // a pause now and then, in which the device has nothing left to do
+            std::thread::sleep(Duration::from_millis(u64::from((window + frame) % 3)));
+          }
+        });
+      }
+    });
+    assert_eq!(graphics.fault.get(), None);
   }
 
   #[test]

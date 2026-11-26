@@ -1,6 +1,5 @@
 // the rendered picture stretched over its place in the window, as blocks, and cut to few colors
-// `decode` is in srgb.wgsl, which is put ahead of this source when it is loaded, as is HAZE_REACH,
-// how many of the picture's pixels off the haze around what lights itself is gathered from
+// srgb.wgsl, with `decode`, and HAZE_CELL and HAZE_TAPS are put ahead of this source when loaded
 
 struct Present {
   // x the steps each channel is cut to if two or more, y one when the target encodes srgb
@@ -13,6 +12,10 @@ struct Present {
 @group(0) @binding(0) var picture: texture_2d<f32>;
 @group(0) @binding(1) var picture_sampler: sampler;
 @group(0) @binding(2) var<uniform> present: Present;
+// what lights itself in each cell of HAZE_CELL of the picture's pixels a side, with one dark
+// cell more all around
+@group(0) @binding(3) var glow: texture_2d<f32>;
+@group(0) @binding(4) var glow_sampler: sampler;
 
 struct Spread {
   @builtin(position) clip: vec4<f32>,
@@ -40,6 +43,25 @@ fn threshold(cell: vec2<u32>) -> f32 {
   return bayer[(cell.y % 4u) * 4u + cell.x % 4u] / 16.0;
 }
 
+// a cell of the glow map: the mean over its pixels of each one's color by how much it lights
+// itself. what a cell holds past the picture's edge is dark
+@fragment
+fn glow_fragment(@builtin(position) cell: vec4<f32>) -> @location(0) vec4<f32> {
+  let last = vec2<i32>(textureDimensions(picture)) - 1;
+  let corner = (vec2<i32>(cell.xy) - 1) * HAZE_CELL;
+  var lit = vec3<f32>(0.0);
+  for (var x = 0; x < HAZE_CELL; x++) {
+    for (var y = 0; y < HAZE_CELL; y++) {
+      let at = corner + vec2<i32>(x, y);
+      if all(at <= last) {
+        let pixel = textureLoad(picture, at, 0);
+        lit += pixel.rgb * pixel.a;
+      }
+    }
+  }
+  return vec4<f32>(lit / f32(HAZE_CELL * HAZE_CELL), 1.0);
+}
+
 @fragment
 fn fragment(spread: Spread) -> @location(0) vec4<f32> {
   let size = vec2<f32>(textureDimensions(picture));
@@ -61,19 +83,22 @@ fn fragment(spread: Spread) -> @location(0) vec4<f32> {
     color = mix(color, around / 16.0, present.more.x);
   }
   if present.options.z > 0.0 {
-    // what lights itself, gathered from a spiral of places around the pixel, so that the
-    // haze has no shape of its own
+    // what lights itself around the pixel, read at HAZE_TAPS places to each side, a cell apart.
+    // each is a mix of the four cells around it, so nothing between two places is left out
+    let cells = vec2<f32>(textureDimensions(glow));
+    let middle = (spread.at * size / f32(HAZE_CELL) + 1.0) / cells;
     var haze = vec3<f32>(0.0);
-    const PLACES: i32 = 40;
-    for (var step = 0; step < PLACES; step++) {
-      let out = sqrt((f32(step) + 0.5) / f32(PLACES));
-      let turn = f32(step) * 2.3999632;
-      let aside = vec2<f32>(cos(turn), sin(turn)) * out * HAZE_REACH * pixel;
-      let near = textureSampleLevel(picture, picture_sampler, spread.at + aside, 0.0);
-      // less the further it has to come
-      haze += near.rgb * near.a * (1.0 - 0.6 * out);
+    var counted = 0.0;
+    for (var x = -HAZE_TAPS; x <= HAZE_TAPS; x++) {
+      for (var y = -HAZE_TAPS; y <= HAZE_TAPS; y++) {
+        let aside = vec2<f32>(f32(x), f32(y));
+        // less the further it has to come
+        let weight = 1.0 - 0.3 * length(aside) / (f32(HAZE_TAPS) * sqrt(2.0));
+        haze += textureSampleLevel(glow, glow_sampler, middle + aside / cells, 0.0).rgb * weight;
+        counted += weight;
+      }
     }
-    color += haze / f32(PLACES) * 1.6 * present.options.z;
+    color += haze / counted * 0.96 * present.options.z;
   }
   // darker toward the corners, by how far out along the picture's own shape
   let out = (spread.at - 0.5) * 2.0;

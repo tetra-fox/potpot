@@ -4,9 +4,8 @@
 //! to talk to the open window with.
 
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 
 use baseview::dpi::LogicalSize;
 use baseview::{HandlerError, WindowSettings, WindowWaker};
@@ -17,6 +16,7 @@ use tracing::error;
 use wgpu::rwh::HasWindowHandle;
 
 use crate::feed::Feed;
+use crate::graphics::Graphics;
 use crate::skin::{Gpu, Skin};
 use crate::window::{Guarded, Window};
 
@@ -170,11 +170,21 @@ impl fmt::Debug for Remembered {
 /// The state an open window and its opener both know.
 ///
 /// The opener may want it before any window is open and after one has closed.
+///
+/// It also holds the graphics device of the window last opened with it. The windows of one
+/// plugin draw with one device, which is made when a window opens and nothing holds one. A
+/// window opened with a [`Shared`] that has had a window before finds the device made, unless
+/// the device has had a fault or been lost since.
+///
+/// Frames of windows on one device run one after another on it, so a window's frame can wait
+/// for a neighbor's.
 #[derive(Debug)]
 pub struct Shared {
   /// The display's scale factor as the bits of an `f64`.
   display_scale: AtomicU64,
   typing: AtomicBool,
+  /// The graphics device of the window last opened with this.
+  graphics: Mutex<Option<Arc<Graphics>>>,
 }
 
 impl Default for Shared {
@@ -189,6 +199,7 @@ impl Default for Shared {
     Self {
       display_scale: AtomicU64::new(display_scale.to_bits()),
       typing: AtomicBool::new(false),
+      graphics: Mutex::new(None),
     }
   }
 }
@@ -215,6 +226,13 @@ impl Shared {
 
   pub(crate) fn set_typing(&self, typing: bool) {
     self.typing.store(typing, Ordering::Relaxed);
+  }
+
+  /// Holds a graphics device in place of the one held before.
+  pub(crate) fn keep(&self, graphics: Arc<Graphics>) {
+    // a panic under the lock leaves what it guards whole
+    let mut kept = (self.graphics.lock()).unwrap_or_else(PoisonError::into_inner);
+    *kept = Some(graphics);
   }
 }
 

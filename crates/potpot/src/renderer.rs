@@ -1,9 +1,9 @@
 //! The drawing of a [`Scene`] with `wgpu`.
 //!
-//! A scene is drawn as a few maps, then the lit picture at its own resolution, then that picture
-//! stretched into place on a target. The picture is kept. For a scene that differs from the one
-//! it shows, the maps that the difference is in are drawn again, and of the picture as much as
-//! the difference shows in.
+//! A scene is drawn as a few maps, then the lit picture at its own resolution with a map of what
+//! lights itself in it, then that picture stretched into place on a target. The picture is kept.
+//! For a scene that differs from the one it shows, the maps that the difference is in are drawn
+//! again, and of the picture as much as the difference shows in.
 
 mod damage;
 mod picture;
@@ -17,7 +17,7 @@ use bytemuck::Zeroable;
 use glam::{Mat4, Vec2, Vec3};
 use wgpu::util::DeviceExt;
 
-use self::damage::{Bounds, Reach, Redrawn};
+use self::damage::{Bounds, HAZE_CELL, Reach, Redrawn};
 use self::picture::Picture;
 use self::pipelines::{BOUNCE, DEPTH, Layouts, Pipelines, SAMPLES};
 use self::uniforms::{Globals, Placed, Present};
@@ -99,7 +99,7 @@ pub struct Renderer {
   bounce_map: wgpu::TextureView,
   /// Every map, for the scene pass to read.
   maps_group: wgpu::BindGroup,
-  present_layout: wgpu::BindGroupLayout,
+  layouts: Layouts,
   present_options: wgpu::Buffer,
   /// Whether the target encodes sRGB itself.
   target_encodes: bool,
@@ -312,7 +312,6 @@ impl Renderer {
       bounce_depth,
       bounce_map,
       maps_group,
-      present_layout: layouts.present,
       present_options: uniform("potpot present", size_of::<Present>()),
       target_encodes: target.is_srgb(),
       max_side: device.limits().max_texture_dimension_2d,
@@ -337,6 +336,7 @@ impl Renderer {
       held_size: [0; 2],
       parts: Vec::new(),
       anywhere: true,
+      layouts,
     }
   }
 
@@ -362,7 +362,7 @@ impl Renderer {
     let picture = kept.unwrap_or_else(|| {
       Picture::new(
         device,
-        &self.present_layout,
+        &self.layouts,
         &self.present_options,
         picture_size,
         look.antialias,
@@ -735,6 +735,42 @@ impl Renderer {
       pass.set_bind_group(0, &self.globals_group, &[]);
       pass.set_bind_group(1, &self.maps_group, &[]);
       self.draw_objects(&mut pass, within);
+      drop(pass);
+
+      // the glow map follows the picture, in the cells that what was drawn again lies in. the
+      // dark cells around them are cleared with the whole map and never drawn
+      let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("potpot glow"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+          view: &picture.glow,
+          depth_slice: None,
+          resolve_target: None,
+          ops: wgpu::Operations {
+            load: if whole {
+              wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+            } else {
+              wgpu::LoadOp::Load
+            },
+            store: wgpu::StoreOp::Store,
+          },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+      });
+      let [x, y, width, height] = match redrawn {
+        Redrawn::Within(part) => part,
+        _ => [0, 0, picture.size[0], picture.size[1]],
+      };
+      let (left, top) = (x / HAZE_CELL, y / HAZE_CELL);
+      let (right, foot) = (
+        (x + width).div_ceil(HAZE_CELL),
+        (y + height).div_ceil(HAZE_CELL),
+      );
+      pass.set_scissor_rect(left + 1, top + 1, right - left, foot - top);
+      pass.set_pipeline(&self.pipelines.glow);
+      pass.set_bind_group(0, &picture.lit, &[]);
+      pass.draw(0..3, 0..1);
     }
     queue.submit([encoder.finish()]);
   }

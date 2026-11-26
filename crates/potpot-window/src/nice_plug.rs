@@ -161,7 +161,7 @@ impl Held {
 /// The error of a panel with a control that is bound wrongly.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
-pub struct NotOurs {
+pub struct Misbound {
   /// The place among the panel's controls of the first at fault.
   pub control: usize,
   /// The fault of that control.
@@ -181,7 +181,7 @@ pub enum Fault {
   NotAnother,
 }
 
-impl fmt::Display for NotOurs {
+impl fmt::Display for Misbound {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let Self { control, fault } = self;
     match fault {
@@ -197,7 +197,7 @@ impl fmt::Display for NotOurs {
   }
 }
 
-impl Error for NotOurs {}
+impl Error for Misbound {}
 
 /// A panel as a nice-plug editor, drawn by the skin `S`.
 ///
@@ -238,7 +238,7 @@ impl Error for NotOurs {}
 ///   Remembered::new(1.0),
 ///   |_| Bar,
 /// )?;
-/// # Ok::<(), potpot_window::nice_plug::NotOurs>(())
+/// # Ok::<(), potpot_window::nice_plug::Misbound>(())
 /// ```
 pub struct Editor<S> {
   params: Arc<dyn Params>,
@@ -276,7 +276,7 @@ impl<S: Skin> Editor<S> {
     bound: Vec<Bound>,
     remembered: Remembered,
     skin: impl Fn(&Gpu) -> S + Send + Sync + 'static,
-  ) -> Result<Self, NotOurs> {
+  ) -> Result<Self, Misbound> {
     let ours: Vec<ParamPtr> = (params.param_map().into_iter())
       .map(|(_, param, _)| param)
       .collect();
@@ -288,7 +288,7 @@ impl<S: Skin> Editor<S> {
       } else {
         return None;
       };
-      Some(NotOurs { control, fault })
+      Some(Misbound { control, fault })
     });
     match fault {
       Some(fault) => Err(fault),
@@ -564,7 +564,7 @@ mod tests {
   use potpot_controls::furniture::{GripLook, MenuLook};
   use potpot_controls::interaction::{Drag, Target};
 
-  use super::{Arc, Bound, Fault, Gpu, Held, NotOurs, Readout, Remembered, Settings, Skin, Touch};
+  use super::{Arc, Bound, Fault, Gpu, Held, Misbound, Readout, Remembered, Settings, Skin, Touch};
   use crate::feed::Feed;
   use crate::skin::View;
 
@@ -597,7 +597,7 @@ mod tests {
     }
   }
 
-  fn editor(params: Arc<Two>, bound: Vec<Bound>) -> Result<super::Editor<Blank>, NotOurs> {
+  fn editor(params: Arc<Two>, bound: Vec<Bound>) -> Result<super::Editor<Blank>, Misbound> {
     let settings = Settings {
       title: String::new(),
       size: [200.0, 100.0],

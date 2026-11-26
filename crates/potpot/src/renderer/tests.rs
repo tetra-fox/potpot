@@ -62,17 +62,24 @@ impl Target {
 
   /// Returns the target's pixels with a scene drawn on it.
   fn drawn(&self, renderer: &mut Renderer, scene: &Scene) -> Vec<u8> {
-    renderer.prepare(&self.device, &self.queue, scene, SIZE);
+    self.drawn_at(renderer, scene, SIZE)
+  }
+
+  /// Returns the target's pixels with a scene on its top left.
+  ///
+  /// The scene is drawn `size` pixels wide and high, which the target has room for.
+  fn drawn_at(&self, renderer: &mut Renderer, scene: &Scene, size: [u32; 2]) -> Vec<u8> {
+    renderer.prepare(&self.device, &self.queue, scene, size);
     let mut encoder =
       (self.device).create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     let place = Place {
       x: 0.0,
       y: 0.0,
-      width: SIZE[0] as f32,
-      height: SIZE[1] as f32,
+      width: size[0] as f32,
+      height: size[1] as f32,
     };
     let view = (self.texture).create_view(&wgpu::TextureViewDescriptor::default());
-    renderer.render(&mut encoder, &view, place, [0, 0, SIZE[0], SIZE[1]]);
+    renderer.render(&mut encoder, &view, place, [0, 0, size[0], size[1]]);
     encoder.copy_texture_to_buffer(
       self.texture.as_image_copy(),
       wgpu::TexelCopyBufferInfo {
@@ -112,8 +119,17 @@ impl Target {
 
   /// Asserts that a scene drawn in part is as it is drawn whole.
   ///
-  /// `kept` draws it after the ones it drew before.
-  fn assert_same(&self, kept: &mut Renderer, whole: &mut Renderer, scene: &Scene, step: &str) {
+  /// `kept` draws it after the ones it drew before, and `shown` holds the pixels it drew last,
+  /// which this scene's take the place of. Outside the parts `kept` names as new, the pixels
+  /// have to be those.
+  fn assert_same(
+    &self,
+    kept: &mut Renderer,
+    whole: &mut Renderer,
+    shown: &mut Vec<u8>,
+    scene: &Scene,
+    step: &str,
+  ) {
     let (in_part, in_whole) = (self.drawn(kept, scene), self.drawn_whole(whole, scene));
     let differing = (in_part.as_chunks::<4>().0.iter())
       .zip(in_whole.as_chunks::<4>().0)
@@ -123,6 +139,24 @@ impl Target {
       differing, 0,
       "pixels differ from the scene drawn whole, {step}"
     );
+    if let Some(parts) = kept.changed() {
+      let named = |across: u32, down: u32| {
+        parts.iter().any(|&[left, top, width, height]| {
+          (left..left + width).contains(&across) && (top..top + height).contains(&down)
+        })
+      };
+      let pixels = (0..SIZE[1]).flat_map(|down| (0..SIZE[0]).map(move |across| (across, down)));
+      let unnamed = (pixels.zip(in_part.as_chunks::<4>().0))
+        .zip(shown.as_chunks::<4>().0)
+        .filter(|(((across, down), now), before)| now != before && !named(*across, *down))
+        .count();
+      assert_eq!(
+        (shown.len(), unnamed),
+        (in_part.len(), 0),
+        "pixels differ from the frame before outside the parts named, {step}"
+      );
+    }
+    *shown = in_part;
   }
 }
 
@@ -231,7 +265,7 @@ fn a_scene_drawn_in_part_is_the_scene_drawn_whole() {
     let mut scene = panel(&mut number, &shapes);
     (scene.lean, scene.light.bounce, scene.look) = (lean, bounce, look);
     scene.light.softness = 1.0 + number() * 4.0;
-    let mut kept = Renderer::new(&target.device, FORMAT);
+    let (mut kept, mut shown) = (Renderer::new(&target.device, FORMAT), Vec::new());
     for frame in 0..48 {
       let object = 1 + (number() * 12.0) as usize;
       let kind = (number() * 12.0) as u32;
@@ -262,7 +296,7 @@ fn a_scene_drawn_in_part_is_the_scene_drawn_whole() {
         }
       }
       let step = format!("at frame {frame} of round {round} after a change of kind {kind}");
-      target.assert_same(&mut kept, &mut whole, &scene, &step);
+      target.assert_same(&mut kept, &mut whole, &mut shown, &scene, &step);
       in_part += usize::from(kept.changed().is_some());
       // and against a renderer that has drawn nothing before
       if frame % 16 == 15 {
@@ -282,16 +316,211 @@ fn a_scene_drawn_in_part_is_the_scene_drawn_whole() {
     reach: 120.0,
     radius: 2.0,
   }];
-  let mut kept = Renderer::new(&target.device, FORMAT);
+  let (mut kept, mut shown) = (Renderer::new(&target.device, FORMAT), Vec::new());
   for step in 0..16 {
     let around = PANEL / 2.0 + Vec2::from_angle(step as f32 * 0.7) * 26.0;
     scene.objects[1].transform = Mat4::from_translation(around.extend(0.0));
     let step = format!("with the post at step {step} of its way around the lamp");
-    target.assert_same(&mut kept, &mut whole, &scene, &step);
+    target.assert_same(&mut kept, &mut whole, &mut shown, &scene, &step);
     in_part += usize::from(kept.changed().is_some());
   }
   // most of those frames have to have been drawn in part for this to have tested anything
   assert!(in_part > 120, "{in_part} frames were drawn in part");
+  // a tall post under a low light with wide shadow edges, whose long shadow is looked up far
+  // to each side of where it falls
+  let post = Arc::new(Mesh::cuboid(
+    Vec3::new(-4.0, -4.0, 0.0),
+    Vec3::new(4.0, 4.0, 36.0),
+  ));
+  let mut low = 0;
+  for (round, (height, softness)) in [(0.25, 8.0), (0.3, 25.0), (0.27, 16.0)]
+    .into_iter()
+    .enumerate()
+  {
+    let mut number = numbers(11 + round as u32);
+    let mut scene = panel(&mut number, &shapes);
+    scene.objects.truncate(2);
+    scene.objects[1].mesh = Arc::clone(&post);
+    scene.lamps.clear();
+    scene.light.toward.z = height;
+    scene.light.softness = softness;
+    let (mut kept, mut shown) = (Renderer::new(&target.device, FORMAT), Vec::new());
+    for step in 0..12 {
+      scene.objects[1].transform = place(&mut number);
+      let step = format!("with the post at step {step} under low light {round}");
+      target.assert_same(&mut kept, &mut whole, &mut shown, &scene, &step);
+      low += usize::from(kept.changed().is_some());
+    }
+  }
+  assert!(
+    low > 24,
+    "{low} frames under a low light were drawn in part"
+  );
+}
+
+/// Returns the rectangle around where two pictures differ.
+///
+/// It is its left, top, right and foot, the last two one past it.
+fn differing(one: &[u8], other: &[u8]) -> [i32; 4] {
+  let pixels = (0..SIZE[1]).flat_map(|down| (0..SIZE[0]).map(move |across| (across, down)));
+  (pixels.zip(one.as_chunks::<4>().0))
+    .zip(other.as_chunks::<4>().0)
+    .filter(|((_, one), other)| one != other)
+    .fold([i32::MAX, i32::MAX, 0, 0], |around, (((x, y), _), _)| {
+      let (x, y) = (x as i32, y as i32);
+      [
+        around[0].min(x),
+        around[1].min(y),
+        around[2].max(x + 1),
+        around[3].max(y + 1),
+      ]
+    })
+}
+
+#[test]
+#[ignore = "needs a graphics device"]
+fn the_haze_shows_as_far_from_what_lights_itself_as_its_reach_and_no_further() {
+  use super::damage::{HAZE_CELL, HAZE_REACH};
+
+  let target = Target::new();
+  let block = Arc::new(Mesh::cuboid(
+    Vec3::new(-11.0, -7.0, 0.0),
+    Vec3::new(11.0, 7.0, 4.0),
+  ));
+  // a block, dark and then lighting itself, without a haze and then with one far brighter than
+  // any look has it, which shows the least of it. rough edges keep the block to whole pixels
+  let scene = |level: f32, bloom: f32| {
+    let mut scene = panel(&mut numbers(1), &[Arc::clone(&block)]);
+    scene.objects.truncate(2);
+    scene.objects[1].transform = Mat4::from_translation((PANEL / 2.0).extend(0.0));
+    scene.objects[1].material = Material::matte(Vec3::splat(0.5)).lit(Vec3::ONE, level, 0.0);
+    scene.lamps.clear();
+    scene.look = Look {
+      antialias: false,
+      bloom,
+      ..Look::default()
+    };
+    scene
+  };
+  let mut renderer = Renderer::new(&target.device, FORMAT);
+  let mut drawn = |level, bloom| target.drawn(&mut renderer, &scene(level, bloom));
+  let lit = differing(&drawn(0.0, 0.0), &drawn(1.0, 0.0));
+  let hazed = differing(&drawn(0.0, 1e4), &drawn(1.0, 1e4));
+  // a cell holds the pixels of what lights itself together, wherever in the cell they are
+  let (reach, cell) = (HAZE_REACH as i32, HAZE_CELL as i32);
+  let further = [
+    lit[0] - hazed[0],
+    lit[1] - hazed[1],
+    hazed[2] - lit[2],
+    hazed[3] - lit[3],
+  ];
+  assert!(
+    further
+      .iter()
+      .all(|side| (reach - cell..=reach).contains(side)),
+    "the haze shows {further:?} pixels past what lights itself, and reaches {reach}"
+  );
+}
+
+#[test]
+#[ignore = "needs a graphics device"]
+fn what_lights_itself_on_an_edge_spills_as_it_does_with_the_dark_beside_it() {
+  let target = Target::new();
+  let mut renderer = Renderer::new(&target.device, FORMAT);
+  // the haze alone, of a picture with one bar that lights itself: the picture with a haze less
+  // the picture without. it is each pixel's red, green and blue together
+  let mut haze = |size: [u32; 2], [left, top, right, foot]: [u32; 4]| {
+    let [wide, high] = size.map(|side| side as f32);
+    let [left, top, right, foot] = [left, top, right, foot].map(|side| side as f32);
+    let bar = Mesh::cuboid(Vec3::new(left, top, 0.0), Vec3::new(right, foot, 1.0));
+    let mut scene = Scene {
+      size: Vec2::new(wide, high),
+      heights: [-8.0, 48.0],
+      lean: Vec2::ZERO,
+      light: Light::default(),
+      look: Look {
+        antialias: false,
+        vignette: 0.0,
+        ..Look::default()
+      },
+      objects: vec![
+        Object {
+          mesh: Arc::new(crate::parts::plate(wide, high, 6.0)),
+          transform: Mat4::IDENTITY,
+          material: Material::matte(Vec3::splat(0.1)),
+        },
+        Object {
+          mesh: Arc::new(bar),
+          transform: Mat4::IDENTITY,
+          material: Material::matte(Vec3::splat(0.5)).lit(Vec3::ONE, 1.0, 0.0),
+        },
+      ],
+      lamps: Vec::new(),
+    };
+    let mut drawn = |bloom: f32| {
+      scene.look.bloom = bloom;
+      target.drawn_at(&mut renderer, &scene, size)
+    };
+    let (plain, hazed) = (drawn(0.0), drawn(4.0));
+    let sum = |pixel: &[u8; 4]| pixel[..3].iter().map(|&channel| i32::from(channel)).sum();
+    let sums = hazed.as_chunks::<4>().0.iter().map(sum);
+    let alone: Vec<i32> = (sums.zip(plain.as_chunks::<4>().0.iter().map(sum)))
+      .map(|(hazed, plain): (i32, i32)| hazed - plain)
+      .collect();
+    move |across: u32, down: u32| alone[(down * SIZE[0] + across) as usize]
+  };
+  // a bar one pixel wide on an edge, and the same bar with `MORE` pixels of the picture past
+  // it. the haze on the picture's side of the bar is to be the same, which is looked at as
+  // far from the bar as `MORE`
+  const MORE: u32 = 16;
+  let mut assert_alike = |name: &str, edge: ([u32; 2], [u32; 4]), inner: ([u32; 2], [u32; 4])| {
+    let (on_edge, inside) = (haze(edge.0, edge.1), haze(inner.0, inner.1));
+    let [left, top, right, foot] = edge.1;
+    let shift = [inner.1[0] - left, inner.1[1] - top];
+    let around =
+      |least: u32, most: u32, side: u32| least.saturating_sub(MORE)..(most + MORE).min(side);
+    let mut most = 0;
+    for across in around(left, right, edge.0[0]) {
+      for down in around(top, foot, edge.0[1]) {
+        let (here, there) = (
+          on_edge(across, down),
+          inside(across + shift[0], down + shift[1]),
+        );
+        assert!(
+          (here - there).abs() <= 3,
+          "the haze at {across} {down} is {here} with the bar on the {name} edge of {:?} and \
+           {there} with it inside",
+          edge.0
+        );
+        most = most.max(here);
+      }
+    }
+    assert!(most > 60, "the haze of the bar is {most} at most");
+  };
+  // at each count of pixels over a whole count of cells, for the edges the cells end at
+  for over in 0..4 {
+    let [wide, high] = [200 + over, 100 + over];
+    assert_alike(
+      "right",
+      ([wide, 100], [wide - 1, 30, wide, 70]),
+      ([wide + MORE, 100], [wide - 1, 30, wide, 70]),
+    );
+    assert_alike(
+      "bottom",
+      ([200, high], [80, high - 1, 120, high]),
+      ([200, high + MORE], [80, high - 1, 120, high]),
+    );
+  }
+  assert_alike(
+    "left",
+    ([200, 100], [0, 30, 1, 70]),
+    ([200 + MORE, 100], [MORE, 30, MORE + 1, 70]),
+  );
+  assert_alike(
+    "top",
+    ([200, 100], [80, 0, 120, 1]),
+    ([200, 100 + MORE], [80, MORE, 120, MORE + 1]),
+  );
 }
 
 /// A name for what no bound takes, and what breaks a scene so.
@@ -309,6 +538,7 @@ fn a_scene_that_no_bound_holds_for_is_drawn_whole() {
   let mut number = numbers(7);
   let plain = panel(&mut number, &shapes);
   let [mut kept, mut whole] = [(); 2].map(|()| Renderer::new(&target.device, FORMAT));
+  let mut shown = Vec::new();
   // each of these is drawn in one way only, which a part of the picture drawn again would miss
   let odd: [Odd; 6] = [
     ("with a lamp that reaches less than nowhere", |scene| {
@@ -332,14 +562,20 @@ fn a_scene_that_no_bound_holds_for_is_drawn_whole() {
   ];
   for (name, breaks) in odd {
     let mut scene = plain.clone();
-    target.assert_same(&mut kept, &mut whole, &scene, "before anything is odd");
+    target.assert_same(
+      &mut kept,
+      &mut whole,
+      &mut shown,
+      &scene,
+      "before anything is odd",
+    );
     breaks(&mut scene);
-    target.assert_same(&mut kept, &mut whole, &scene, name);
+    target.assert_same(&mut kept, &mut whole, &mut shown, &scene, name);
     // and something else moved while it is odd, and once it is plain again
     scene.objects[1].transform = place(&mut number);
-    target.assert_same(&mut kept, &mut whole, &scene, name);
+    target.assert_same(&mut kept, &mut whole, &mut shown, &scene, name);
     let mut scene = plain.clone();
     scene.objects[2].material = material(&mut number);
-    target.assert_same(&mut kept, &mut whole, &scene, name);
+    target.assert_same(&mut kept, &mut whole, &mut shown, &scene, name);
   }
 }

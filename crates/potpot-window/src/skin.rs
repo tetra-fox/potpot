@@ -6,7 +6,15 @@ use potpot_controls::interaction::{Edit, Menu, Reading, Target};
 
 /// The graphics device the window draws with.
 ///
-/// A [`Skin`] makes what it draws from it.
+/// A [`Skin`] makes what it draws from it. Every window of the plugin draws with the same device
+/// and queue, on a thread of its own on some systems, so a skin leaves alone what would reach
+/// the other windows:
+///
+/// - [`wgpu::Device::destroy`]
+/// - [`wgpu::Device::on_uncaptured_error`] and [`wgpu::Device::set_device_lost_callback`], which
+///   the window sets
+/// - [`wgpu::Device::poll`], which the window calls for all of them
+/// - an error scope left pushed, which takes the errors of every window
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct Gpu<'a> {

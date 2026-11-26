@@ -44,9 +44,20 @@
 //! graphics driver's own window code runs in a host's process. Where a skin names the parts of
 //! its picture that a frame differs in, with [`Skin::changed`], those parts alone are read back
 //! and put in the window.
+//!
+//! The windows of one plugin draw with one graphics device: every window that one loaded copy
+//! of this crate has open, and each plugin binary has a copy of its own. Their frames run one
+//! after another on the device, so a window's frame can wait for a neighbor's. The device is
+//! let go of when no window is open on it and no [`Shared`] holds it.
+//!
+//! A fault of the device stops the drawing of every window on it, and the next window to open
+//! draws with a new one. An error while a window opens fails that window alone. wgpu reports an
+//! error to the device, so an error of one window's drawing at that moment can fail the opening
+//! of another.
 
 mod feed;
 mod flat;
+mod graphics;
 #[cfg(feature = "nice-plug")]
 pub mod nice_plug;
 mod open;
