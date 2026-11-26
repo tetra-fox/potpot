@@ -68,7 +68,6 @@ struct Axis {
 /// A drag of a control, from the press to the release.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Dragging {
-  /// The control being dragged.
   pub(super) control: usize,
   /// The control's own parameter.
   own: Axis,
