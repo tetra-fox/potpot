@@ -81,7 +81,10 @@ pub(super) struct Dragging {
 }
 
 impl Dragging {
-  /// Creates the drag of the control at `place`, pressed at `at`.
+  /// Creates the drag of a control pressed at `at`.
+  ///
+  /// `place` is the control's place among the panel's controls, and each parameter starts from
+  /// where `values` has it.
   pub(super) fn begin(place: usize, control: &Control, at: Point, values: &[f32]) -> Self {
     let axis = |(parameter, drag): (usize, Drag)| Axis {
       parameter,
