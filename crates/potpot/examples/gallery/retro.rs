@@ -6,37 +6,7 @@ use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Button, Edge, Grip, Knob, Meter, Top};
 use potpot::{Light, Look, Material, Object, Scene};
 
-use crate::{SEAT, SIZE, framed, lettering};
-
-/// A panel being put together.
-///
-/// It holds what stands where and what is lit.
-#[derive(Default)]
-struct Build {
-  objects: Vec<Object>,
-  lamps: Vec<potpot::Lamp>,
-}
-
-impl Build {
-  /// Adds a mesh that is placed as often as wanted.
-  fn place(&mut self, mesh: &Arc<potpot::Mesh>, transform: Mat4, material: Material) {
-    self.objects.push(Object {
-      mesh: Arc::clone(mesh),
-      transform,
-      material,
-    });
-  }
-
-  /// Adds a mesh that goes in one place only.
-  fn put(&mut self, mesh: potpot::Mesh, transform: Mat4, material: Material) {
-    self.place(&Arc::new(mesh), transform, material);
-  }
-
-  /// Adds lettering centered on a point at a height off the panel.
-  fn letters(&mut self, text: &str, at: Vec3, tall: f32, material: Material) {
-    self.put(lettering(text, tall), Mat4::from_translation(at), material);
-  }
-}
+use crate::{Build, SEAT, SIZE, framed};
 
 /// Returns a soft synth's front in the manner of the mid 2000s.
 ///

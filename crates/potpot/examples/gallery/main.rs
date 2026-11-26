@@ -12,9 +12,8 @@
 //! - `retro`: a whole soft synth's front in an old manner
 //! - `industrial`: dark metal hardware lit from within, and a glow on its own
 //!
-//! After the panel's name, a whole number is the scale the picture is drawn at, as for the other
-//! examples. After it, one number is the pixel size and a second the color steps, for the crude
-//! looks.
+//! After the panel's name, a whole number is the scale the picture is drawn at. After it, one
+//! number is the pixel size and a second the color steps, for the crude looks.
 
 mod faders;
 mod industrial;
@@ -31,7 +30,7 @@ use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts;
-use potpot::{Light, Look, Material, Object, Place, Renderer, Scene, wgpu};
+use potpot::{Lamp, Light, Look, Material, Mesh, Object, Place, Renderer, Scene, wgpu};
 
 use crate::faders::faders;
 use crate::industrial::industrial;
@@ -77,6 +76,36 @@ fn framed(look: Look, objects: Vec<Object>) -> Scene {
     look,
     objects,
     lamps: Vec::new(),
+  }
+}
+
+/// A panel being put together.
+///
+/// It holds what stands where and what is lit.
+#[derive(Default)]
+struct Build {
+  objects: Vec<Object>,
+  lamps: Vec<Lamp>,
+}
+
+impl Build {
+  /// Adds a mesh that is placed as often as wanted.
+  fn place(&mut self, mesh: &Arc<Mesh>, transform: Mat4, material: Material) {
+    self.objects.push(Object {
+      mesh: Arc::clone(mesh),
+      transform,
+      material,
+    });
+  }
+
+  /// Adds a mesh that goes in one place only.
+  fn put(&mut self, mesh: Mesh, transform: Mat4, material: Material) {
+    self.place(&Arc::new(mesh), transform, material);
+  }
+
+  /// Adds lettering centered on a point at a height off the panel.
+  fn letters(&mut self, text: &str, at: Vec3, tall: f32, material: Material) {
+    self.put(lettering(text, tall), Mat4::from_translation(at), material);
   }
 }
 

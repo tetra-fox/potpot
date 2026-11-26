@@ -4,52 +4,35 @@ use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Handle, Knob, LedArc, LedRing, PushSwitch, Vent};
-use potpot::{Lamp, Light, Look, Material, Mesh, Object, Scene};
+use potpot::{Light, Look, Material, Scene};
 use potpot_controls::interaction::Push;
 
-use crate::{BLACK, SEAT, SIZE, framed};
+use crate::{BLACK, Build, SEAT, SIZE, framed};
 
 /// The color of the light built into the hardware.
 const CYAN: Vec3 = Vec3::new(0.2, 0.85, 1.0);
 /// The color of the panel's dark metal.
 const GUNMETAL: Vec3 = Vec3::new(0.12, 0.13, 0.14);
 
-/// A panel being put together.
-#[derive(Default)]
-struct Build {
-  objects: Vec<Object>,
-  lamps: Vec<Lamp>,
+/// Returns the place (`x`, `y`) on the panel.
+fn on_panel(x: f32, y: f32) -> Mat4 {
+  Mat4::from_translation(Vec3::new(x, y, 0.0))
 }
 
 impl Build {
-  /// Adds a mesh that is placed as often as wanted.
-  fn place(&mut self, mesh: &Arc<Mesh>, transform: Mat4, material: Material) {
-    self.objects.push(Object {
-      mesh: Arc::clone(mesh),
-      transform,
-      material,
-    });
-  }
-
-  /// Adds a mesh that goes in one place only, at (`x`, `y`) on the panel.
-  fn put(&mut self, mesh: Mesh, x: f32, y: f32, material: Material) {
-    let at = Mat4::from_translation(Vec3::new(x, y, 0.0));
-    self.place(&Arc::new(mesh), at, material);
-  }
-
   /// Adds thin lit lettering centered on `at`.
-  fn letters(&mut self, text: &str, at: Vec3, tall: f32) {
+  fn lit_letters(&mut self, text: &str, at: Vec3, tall: f32) {
     let lettering = parts::legend(text, tall, (tall * 0.1).max(0.8));
     let at = Mat4::from_translation(at);
-    self.place(&Arc::new(lettering), at, Material::lamp(CYAN * 0.8));
+    self.put(lettering, at, Material::lamp(CYAN * 0.8));
   }
 
   /// Adds a line of light in its groove, through the points of `path`.
   fn light_line(&mut self, path: &[Vec2], level: f32) {
     let seat = Material::matte(SEAT);
-    self.put(parts::light_line_seat(path, 1.4, 0.7), 0.0, 0.0, seat);
+    self.put(parts::light_line_seat(path, 1.4, 0.7), Mat4::IDENTITY, seat);
     let light = Material::lamp(CYAN * level);
-    self.put(parts::light_line(path, 1.4), 0.0, 0.0, light);
+    self.put(parts::light_line(path, 1.4), Mat4::IDENTITY, light);
   }
 
   /// Adds a glossy black knob on a chrome skirt at (`x`, `y`), turned to `turn`.
@@ -57,10 +40,10 @@ impl Build {
   /// Its line is lit.
   fn knob(&mut self, knob: Knob, x: f32, y: f32, turn: f32) {
     let skirt = parts::bezel(knob.radius * 0.8, knob.radius * 1.22, knob.height * 0.18);
-    self.put(skirt, x, y, Material::chrome(Vec3::splat(0.75)));
+    self.put(skirt, on_panel(x, y), Material::chrome(Vec3::splat(0.75)));
     let turned = parts::knob_transform(x, y, turn, parts::KNOB_SWEEP);
-    self.place(&Arc::new(knob.body()), turned, Material::glossy(BLACK));
-    self.place(&Arc::new(knob.line()), turned, Material::lamp(CYAN));
+    self.put(knob.body(), turned, Material::glossy(BLACK));
+    self.put(knob.line(), turned, Material::lamp(CYAN));
   }
 }
 
@@ -84,7 +67,7 @@ pub(super) fn industrial(look: Look) -> Scene {
     grain: 0.3,
     ..Material::brushed(GUNMETAL)
   };
-  build.put(parts::plate(width, height, 6.0), 0.0, 0.0, metal);
+  build.put(parts::plate(width, height, 6.0), Mat4::IDENTITY, metal);
 
   // a rack ear at each side, with a handle between two screws
   let handle = Handle::new(250.0, 26.0, 7.0);
@@ -115,9 +98,13 @@ pub(super) fn industrial(look: Look) -> Scene {
     (660.0, 220.0, 200.0, 300.0, "MODE"),
   ];
   for (x, y, wide, tall, name) in fields {
-    build.put(parts::inset(wide, tall, 10.0, 3.0, 8.0), x, y, metal);
+    build.put(
+      parts::inset(wide, tall, 10.0, 3.0, 8.0),
+      on_panel(x, y),
+      metal,
+    );
     let top = y - tall / 2.0 + 30.0;
-    build.letters(name, Vec3::new(x, top, 0.0), 10.0);
+    build.lit_letters(name, Vec3::new(x, top, 0.0), 10.0);
     let line = [
       Vec2::new(x - wide / 2.0 + 24.0, top + 14.0),
       Vec2::new(x + wide / 2.0 - 24.0, top + 14.0),
@@ -183,7 +170,7 @@ pub(super) fn industrial(look: Look) -> Scene {
     if on {
       build.lamps.push(switch.plunger.lamp(x, y, CYAN, 0.7));
     }
-    build.letters(name, Vec3::new(x, y + 28.0, 0.0), 7.0);
+    build.lit_letters(name, Vec3::new(x, y + 28.0, 0.0), 7.0);
   }
 
   // the bottom strip: a vent either side of a chamfered plate with lit lettering, under a
@@ -202,25 +189,31 @@ pub(super) fn industrial(look: Look) -> Scene {
   for x in [240.0, 620.0] {
     build.put(
       vent.slots(),
-      x,
-      strip + 30.0,
+      on_panel(x, strip + 30.0),
       Material::matte(Vec3::splat(0.02)),
     );
-    build.put(vent.holes(), x, strip + 30.0, Material::lamp(CYAN * 0.5));
+    build.put(
+      vent.holes(),
+      on_panel(x, strip + 30.0),
+      Material::lamp(CYAN * 0.5),
+    );
   }
   let plate = parts::chamfered_slab(160.0, 44.0, 3.0, 1.5, 3.0);
   build.put(
     plate,
-    430.0,
-    strip + 30.0,
+    on_panel(430.0, strip + 30.0),
     Material::brushed(Vec3::splat(0.3)),
   );
   // on the plate's top
-  build.letters("POTPOT", Vec3::new(430.0, strip + 30.0, 3.0), 12.0);
+  build.lit_letters("POTPOT", Vec3::new(430.0, strip + 30.0, 3.0), 12.0);
 
   // lit shapes alone on the bare panel, where nothing else catches their glow
   let alone = 790.0;
-  build.put(parts::led(10.0), alone, strip + 30.0, Material::lamp(CYAN));
+  build.put(
+    parts::led(10.0),
+    on_panel(alone, strip + 30.0),
+    Material::lamp(CYAN),
+  );
   build.light_line(
     &[
       Vec2::new(alone + 30.0, strip + 30.0),
@@ -228,7 +221,7 @@ pub(super) fn industrial(look: Look) -> Scene {
     ],
     1.0,
   );
-  build.letters("GLOW", Vec3::new(alone + 70.0, strip + 52.0, 0.0), 7.0);
+  build.lit_letters("GLOW", Vec3::new(alone + 70.0, strip + 52.0, 0.0), 7.0);
 
   Scene {
     light: Light {
