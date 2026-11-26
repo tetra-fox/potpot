@@ -32,7 +32,10 @@ pub use led::{led, led_lamp, led_material, led_seat};
 pub use legend::legend;
 pub use meter::Meter;
 pub use pad::Pad;
-pub use panel::{bezel, frame, plate, screw, screw_cross, screw_head, screw_seat, slab, slot};
+pub use panel::{
+  bezel, chamfered_slab, frame, inset, plate, screw, screw_cross, screw_head, screw_seat, slab,
+  slot,
+};
 pub use ring::{LedArc, LedRing};
 pub use scale::{dashes, fader_ticks, ticks};
 pub use screen::{Screen, picture};

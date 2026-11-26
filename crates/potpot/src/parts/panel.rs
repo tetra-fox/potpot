@@ -50,6 +50,45 @@ pub fn frame(width: f32, length: f32, border: f32, height: f32, corner: f32) -> 
   )
 }
 
+/// Returns a low plate with its edge cut off at an angle.
+///
+/// The plate is centered on the origin, `width` by `length` and `height` tall, with corners of
+/// radius `corner` seen from above. Its top edge is cut `chamfer` wide and as deep, kept to what
+/// the height and the shorter side have room for, in one flat face that catches the light.
+pub fn chamfered_slab(width: f32, length: f32, height: f32, chamfer: f32, corner: f32) -> Mesh {
+  let chamfer = chamfer.min(height).min(width.min(length) / 2.0);
+  let outline = Outline::new(width, length, corner);
+  let top = outline.grown(-chamfer);
+  let rings = [(outline, 0.0), (outline, height - chamfer), (top, height)];
+  // the top closes to its middle, along the same angles as the outline's steps
+  let point = |ring: usize, around: f32| {
+    let angle = outline.spread(around);
+    let Some(&(shape, height)) = rings.get(ring) else {
+      return Vec3::Z * height;
+    };
+    (Vec2::from_angle(angle) * shape.at(angle)).extend(height)
+  };
+  Mesh::rings(rings.len() + 1, 144, CREASE, point)
+}
+
+/// Returns a raised rim around a field of the panel, cut down toward the field.
+///
+/// The rim is centered on the origin, `width` by `length` on the outside with corners of radius
+/// `corner`, and `height` tall. Its border is `border` wide, kept to what the shorter side has
+/// room for. Its inner edge slopes down to the panel as wide as the rim is tall, so the field
+/// inside reads as set into the panel. Its outer edge has a small cut.
+pub fn inset(width: f32, length: f32, border: f32, height: f32, corner: f32) -> Mesh {
+  let border = border.min(width.min(length) / 2.0);
+  // the slope takes at most most of the border, which leaves a flat on top
+  let slope = height.min(border * 0.7);
+  band(
+    Outline::new(width, length, corner),
+    Outline::new(width - border * 2.0, length - border * 2.0, corner - border),
+    height,
+    [(height * 0.25).min(border - slope), slope],
+  )
+}
+
 /// Returns a polished ring for a knob to stand in.
 ///
 /// The ring lies on the panel around the origin, from `inner` to `outer` away from the middle. It
@@ -160,5 +199,77 @@ mod tests {
       );
       assert!((0.0..=3.001).contains(&position.z));
     }
+  }
+
+  #[test]
+  fn a_chamfered_slab_has_a_flat_top_and_one_cut_face_all_around() {
+    let (width, length, chamfer) = (120.0, 60.0, 3.0);
+    let slab = chamfered_slab(width, length, 5.0, chamfer, 8.0);
+    let half = Vec2::new(width, length) / 2.0;
+    for vertex in &slab.vertices {
+      let (position, normal) = (Vec3::from(vertex.position), Vec3::from(vertex.normal));
+      assert!(normal.is_normalized(), "{position} faces {normal}");
+      let out = position.truncate().abs();
+      assert!(
+        out.x <= half.x + 1e-3 && out.y <= half.y + 1e-3,
+        "{position}"
+      );
+      assert!((0.0..=5.0 + 1e-4).contains(&position.z));
+      // the top is the outline drawn in by the chamfer, and the side stands upright below it
+      if position.z > 5.0 - 1e-4 && normal.z > 0.99 {
+        assert!(out.x <= half.x - chamfer + 1e-3 && out.y <= half.y - chamfer + 1e-3);
+      }
+    }
+    // the cut faces up and out at half a right angle in the middle of each long side
+    let middle = Vec3::new(0.0, half.y - chamfer / 2.0, 5.0 - chamfer / 2.0);
+    let cut = (slab.vertices.iter()).filter(|vertex| {
+      let normal = Vec3::from(vertex.normal);
+      normal.y > 0.5 && normal.z > 0.5
+    });
+    let distance = |vertex: &&crate::Vertex| Vec3::from(vertex.position).distance(middle);
+    let nearest = cut.min_by(|a, b| distance(a).total_cmp(&distance(b)));
+    let nearest = nearest.expect("the long side has a cut face");
+    let (position, normal) = (Vec3::from(nearest.position), Vec3::from(nearest.normal));
+    assert!(
+      (position.y - middle.y).abs() <= chamfer / 2.0 + 1e-3,
+      "{position}"
+    );
+    let slanted = Vec3::new(0.0, 1.0, 1.0).normalize();
+    assert!((normal - slanted).length() < 0.05, "{normal}");
+  }
+
+  #[test]
+  fn an_inset_slopes_down_into_an_open_field() {
+    let (width, length, border, height) = (300.0, 160.0, 12.0, 4.0);
+    let rim = inset(width, length, border, height, 10.0);
+    let field = Vec2::new(width, length) / 2.0 - Vec2::splat(border);
+    let mut sloped = 0;
+    for vertex in &rim.vertices {
+      let (position, normal) = (Vec3::from(vertex.position), Vec3::from(vertex.normal));
+      let out = position.truncate().abs();
+      assert!(
+        out.x > field.x - 1e-3 || out.y > field.y - 1e-3,
+        "the field is open at {position}"
+      );
+      assert!(out.x <= width / 2.0 + 1e-3 && out.y <= length / 2.0 + 1e-3);
+      // along a long side, a slanted face on the inner half of the border is the slope down
+      // to the field, which faces in toward the field
+      let slanted = normal.z > 0.6 && normal.y.abs() > 0.6;
+      if slanted && out.x < field.x && out.y < field.y + border / 2.0 {
+        sloped += 1;
+        assert!(normal.y * position.y < 0.0, "{position} faces {normal}");
+        assert!(out.y <= field.y + height + 1e-3, "{position}");
+      }
+      // and every cut, in or out, is as wide as it is deep along the side, short of where
+      // the shading rounds into a corner
+      if slanted && out.x < field.x - border * 2.0 {
+        let across = Vec3::new(0.0, normal.y.signum(), 1.0).normalize();
+        assert!(
+          (normal - across).length() < 0.02,
+          "{position} faces {normal}"
+        );
+      }
+    }
+    assert!(sloped > 0, "no vertex lies on the slope");
   }
 }
