@@ -15,8 +15,8 @@ use crate::axis::Axis;
 ///
 /// A band that holds one bin or more has the amplitude of the loudest, so a peak stands as tall
 /// however many bins a band holds. A band that holds none lies between two bins and has the
-/// amplitude on the straight line between them at the band's middle. A band past half the
-/// sample rate has none.
+/// amplitude on the straight line between them at the band's middle. A band that lies under no
+/// frequency, or past half the sample rate, has none.
 ///
 /// # Panics
 ///
@@ -35,14 +35,13 @@ pub fn bands(bins: &[f32], rate: f32, across: Axis, levels: &mut [f32]) {
     let held = (low.ceil() as usize).min(bins.len())..(high.ceil() as usize).min(bins.len());
     *level = if held.is_empty() {
       let middle = across.plain((band as f32 + 0.5) / count) / spacing;
-      let below = middle.floor() as usize;
-      match (bins.get(below), bins.get(below + 1)) {
-        (Some(below_level), Some(above_level)) => {
-          below_level + (above_level - below_level) * middle.fract()
-        }
-        // on the last bin itself, at half the rate
-        (Some(below_level), None) if middle.fract() == 0.0 => *below_level,
-        _ => 0.0,
+      if (0.0..=last as f32).contains(&middle) {
+        // the two bins around the middle, the last two for a middle on the last bin
+        let below = (middle as usize).min(last - 1);
+        let part = middle - below as f32;
+        bins[below] + (bins[below + 1] - bins[below]) * part
+      } else {
+        0.0
       }
     } else {
       bins[held].iter().copied().fold(0.0, f32::max)
@@ -96,7 +95,7 @@ mod tests {
   }
 
   #[test]
-  fn bands_past_half_the_rate_are_silent() {
+  fn bands_past_either_end_of_the_spectrum_are_silent() {
     let bins = [1.0; 33];
     let mut levels = [9.0; 4];
     // the second band reaches past 3200 hertz and the others start past it
@@ -105,5 +104,8 @@ mod tests {
     // a band that runs over half the rate holds the last bin
     bands(&bins, RATE, Axis::linear([0.0, 4000.0]), &mut levels);
     assert_eq!(levels, [1.0, 1.0, 1.0, 1.0]);
+    // and bands under no frequency are as silent, whatever the bins over it hold
+    bands(&bins, RATE, Axis::linear([-3200.0, 3200.0]), &mut levels);
+    assert_eq!(levels, [0.0, 0.0, 1.0, 1.0]);
   }
 }
