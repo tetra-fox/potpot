@@ -6,6 +6,7 @@
 mod button;
 mod fader;
 mod grip;
+mod keybed;
 mod knob;
 mod led;
 mod legend;
@@ -20,6 +21,7 @@ mod switch;
 pub use button::Button;
 pub use fader::{Cap, Fader, fader_slot, fader_transform};
 pub use grip::Grip;
+pub use keybed::Keybed;
 pub use knob::{Edge, KNOB_SWEEP, Knob, Top, knob_transform};
 pub use led::{led, led_lamp, led_material, led_seat};
 pub use legend::legend;

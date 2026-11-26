@@ -516,6 +516,19 @@ pub enum Target {
   Item(Item),
   /// The grip the window is pulled larger and smaller by.
   Grip,
+  /// A key of a keybed.
+  ///
+  /// A press on it plays its note, and a slide to another key while the button is down plays
+  /// that one in its place. The note is over when the button comes up, and also when the keys
+  /// go to another window or the pointer leaves this one. A double click and a click with the
+  /// reset key are presses like any other, and the wheel and the right button do nothing on a
+  /// key.
+  Key {
+    /// The note the key plays, a MIDI note number from 0 to 127.
+    note: u8,
+    /// The velocity of a press at this point, from 1 to 127.
+    velocity: u8,
+  },
 }
 
 /// A row of the menu.
@@ -630,6 +643,8 @@ pub enum Event {
     /// changes size.
     window: Point,
     /// The target that is drawn there.
+    ///
+    /// It is read only while [`Interaction::watches_pointer`] holds.
     over: Option<Target>,
     /// Whether the key that slows a control down is held.
     fine: bool,
@@ -670,6 +685,8 @@ pub enum Event {
   Clipboard(Option<String>),
   /// The keys went to another window.
   Unfocused,
+  /// The pointer left the window.
+  Left,
   /// Time passed.
   Tick,
   /// The window is going away.
@@ -701,6 +718,18 @@ pub enum Action {
   WantClipboard,
   /// The window is to be this many times its own size.
   Scale(f32),
+  /// A note begins to sound.
+  NoteOn {
+    /// The note, as a MIDI note number from 0 to 127.
+    note: u8,
+    /// The velocity it is struck with, from 1 to 127.
+    velocity: u8,
+  },
+  /// A note that began with [`Action::NoteOn`] is over.
+  NoteOff {
+    /// The note, as a MIDI note number.
+    note: u8,
+  },
 }
 
 /// A value being typed.
@@ -851,6 +880,12 @@ enum State {
     push: Push,
     on: bool,
   },
+  /// The left button went down on a key of a keybed.
+  ///
+  /// `note` is the one that sounds, and `None` while the pointer is off the keys.
+  Playing {
+    note: Option<u8>,
+  },
   Edit(Edit),
   Menu(Menu),
 }
@@ -871,7 +906,7 @@ struct Wheel {
 
 /// The state of a panel's controls.
 ///
-/// It holds what is being dragged, typed or picked from the menu.
+/// It holds what is being dragged, played, typed or picked from the menu.
 ///
 /// # Examples
 ///
@@ -994,6 +1029,22 @@ impl Interaction {
     }
   }
 
+  /// Returns the note the left button holds down on a keybed.
+  pub fn note(&self) -> Option<u8> {
+    match self.state {
+      State::Playing { note } => note,
+      _ => None,
+    }
+  }
+
+  /// Returns whether a move's `over` is read.
+  ///
+  /// It is while the menu is up or the left button is down on a keybed. At any other time
+  /// the `over` of an [`Event::Move`] can be `None`, which spares finding it.
+  pub fn watches_pointer(&self) -> bool {
+    matches!(self.state, State::Menu(_) | State::Playing { .. })
+  }
+
   /// Returns whether keys mean something to the panel.
   pub fn takes_keys(&self) -> bool {
     matches!(self.state, State::Edit(_) | State::Menu(_))
@@ -1043,7 +1094,9 @@ impl Interaction {
       Event::Unfocused => {
         self.commit(&mut actions);
         self.dismiss(&mut actions);
+        self.stop_playing(&mut actions);
       }
+      Event::Left => self.stop_playing(&mut actions),
       Event::Tick => {
         if let Some(Wheel { last, .. }) = self.wheel
           && moment.now.duration_since(last) >= WHEEL_REST
@@ -1062,8 +1115,8 @@ impl Interaction {
 
   /// Ends what the left button has open, with no release of it.
   ///
-  /// A drag or a pull at the grip ends and a momentary button goes off. A latching one was
-  /// not let go, so it stays as it was.
+  /// A drag or a pull at the grip ends, a momentary button goes off and a note is over. A
+  /// latching button was not let go, so it stays as it was.
   fn cut_short(&mut self, actions: &mut Vec<Action>) {
     if let State::Held {
       push: Push::Latching,
@@ -1077,7 +1130,24 @@ impl Interaction {
     self.let_go(actions);
   }
 
-  /// Ends a drag, a press or a pull at the grip.
+  /// Ends the playing of a keybed with the button still down.
+  ///
+  /// The release may never come. baseview 0.4.2 on Windows tells a window nothing when the
+  /// system takes the pointer from it with a button down (`WM_CAPTURECHANGED` in its
+  /// `platform/win/window.rs`), and its moves do not say which buttons are down. A note that
+  /// went on sounding would be worse than one cut short, so it is over as soon as the keys go
+  /// to another window or the pointer leaves this one. Where neither happens, as when the
+  /// window never had the keys and the pointer stays over it, the note sounds and moves play
+  /// keys until the next press. A drag is left to go on, since it is dragged past the window's
+  /// edges.
+  // TODO: end on the lost capture alone once baseview reports it
+  fn stop_playing(&mut self, actions: &mut Vec<Action>) {
+    if let State::Playing { .. } = self.state {
+      self.let_go(actions);
+    }
+  }
+
+  /// Ends a drag, a press, a note or a pull at the grip.
   ///
   /// The left button is up, or as good as.
   fn let_go(&mut self, actions: &mut Vec<Action>) {
@@ -1098,6 +1168,10 @@ impl Interaction {
         }
         // it comes back out, which shows whatever its value
         actions.push(Action::Redraw);
+        self.state = State::Idle;
+      }
+      State::Playing { note } => {
+        actions.extend(note.map(|note| Action::NoteOff { note }));
         self.state = State::Idle;
       }
       State::Resize { .. } => self.state = State::Idle,
@@ -1203,6 +1277,17 @@ impl Interaction {
           actions.push(Action::Redraw);
         }
       }
+      State::Playing { note } => {
+        let (now, velocity) = match over {
+          Some(Target::Key { note, velocity }) => (Some(note), velocity),
+          _ => (None, 0),
+        };
+        if now != *note {
+          actions.extend(note.map(|note| Action::NoteOff { note }));
+          actions.extend(now.map(|note| Action::NoteOn { note, velocity }));
+          *note = now;
+        }
+      }
       State::Idle | State::Held { .. } | State::Edit(_) => {}
     }
   }
@@ -1265,7 +1350,9 @@ impl Interaction {
       }
       // the release of the press before never came, which baseview leaves out when Windows
       // takes the pointer away
-      State::Drag { .. } | State::Held { .. } | State::Resize { .. } => self.cut_short(actions),
+      State::Drag { .. } | State::Held { .. } | State::Resize { .. } | State::Playing { .. } => {
+        self.cut_short(actions);
+      }
       State::Idle => {}
     }
 
@@ -1317,6 +1404,10 @@ impl Interaction {
             actions.extend(gesture(parameter, next));
           }
         }
+      }
+      Some(Target::Key { note, velocity }) => {
+        self.state = State::Playing { note: Some(note) };
+        actions.push(Action::NoteOn { note, velocity });
       }
       Some(Target::Readout(control)) if double => self.begin_edit(control, values, actions),
       Some(Target::Grip) if double => actions.push(Action::Scale(1.0)),
@@ -1430,7 +1521,11 @@ impl Interaction {
         }
         return;
       }
-      State::Idle | State::Drag { .. } | State::Held { .. } | State::Resize { .. } => return,
+      State::Idle
+      | State::Drag { .. }
+      | State::Held { .. }
+      | State::Resize { .. }
+      | State::Playing { .. } => return,
     };
     let (letters, selected) = (edit.letters(), edit.selected());
     let Readout { room, shows } = self.controls[edit.control].readout;

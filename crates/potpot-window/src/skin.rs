@@ -4,6 +4,8 @@ use potpot_controls::Point;
 use potpot_controls::flat::Flat;
 use potpot_controls::interaction::{Edit, Menu, Reading, Target};
 
+use crate::notes::Pressed;
+
 /// The graphics device the window draws with.
 ///
 /// A [`Skin`] makes what it draws from it. Every window of the plugin draws with the same device
@@ -55,6 +57,11 @@ pub struct View<'a> {
   /// The control is a button being pressed or one being dragged, given by its place among the
   /// panel's controls.
   pub held: Option<usize>,
+  /// The notes whose keys are down.
+  ///
+  /// They are the one a key of the panel plays and those the audio thread shows through the
+  /// [`Notes`](crate::Notes).
+  pub notes: Pressed,
   /// The scale the panel is drawn at, as a multiple of its own size.
   pub scale: f32,
   /// The size of a pixel in the panel's points.

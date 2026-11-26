@@ -17,6 +17,7 @@ use wgpu::rwh::HasWindowHandle;
 
 use crate::feed::Feed;
 use crate::graphics::Graphics;
+use crate::notes::Notes;
 use crate::skin::{Gpu, Skin};
 use crate::window::{Guarded, Window};
 
@@ -24,7 +25,7 @@ use crate::window::{Guarded, Window};
 ///
 /// They are what there is to say of the window before anything is drawn in it.
 /// [`Settings::new`] takes the title and the size. The scales, the looks of the menu and the
-/// grip, and the feed are changed a field at a time.
+/// grip, the feed and the notes are changed a field at a time.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct Settings {
@@ -42,13 +43,15 @@ pub struct Settings {
   pub grip: GripLook,
   /// The [`Feed`] whose numbers the skin is handed.
   pub feed: Feed,
+  /// The [`Notes`] the panel's keys play and the skin shows.
+  pub notes: Notes,
 }
 
 impl Settings {
   /// Creates the settings of a window called `title` for a panel of `size`.
   ///
   /// The window is pulled from half the panel's own size to three times it, the menu and the
-  /// grip look as they do by default, and the feed has no slots.
+  /// grip look as they do by default, the feed has no slots, and nothing else has the notes.
   pub fn new(title: impl Into<String>, size: Point) -> Self {
     Self {
       title: title.into(),
@@ -57,6 +60,7 @@ impl Settings {
       menu: MenuLook::default(),
       grip: GripLook::default(),
       feed: Feed::default(),
+      notes: Notes::new(),
     }
   }
 

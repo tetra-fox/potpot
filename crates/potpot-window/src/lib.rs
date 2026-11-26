@@ -5,7 +5,8 @@
 //! The window draws the skin with wgpu and sees to everything between the pointer, the keys
 //! and the panel's parameters. The menu, the grip and a value being typed work the same
 //! under any skin. A [`Feed`] carries numbers no parameter holds, such as a meter's level, from
-//! an audio thread to the skin.
+//! an audio thread to the skin. A [`Notes`] carries the notes played on a keybed of the panel
+//! to an audio thread, and the notes a host plays to the skin.
 //!
 //! # Examples
 //!
@@ -60,12 +61,14 @@ mod flat;
 mod graphics;
 #[cfg(feature = "nice-plug")]
 pub mod nice_plug;
+mod notes;
 mod open;
 mod screen;
 mod skin;
 mod window;
 
 pub use feed::Feed;
+pub use notes::{Heard, Notes, Played, Pressed};
 pub use open::{Opened, Opening, Param, Remembered, Settings, Shared, Tell, open};
 pub use skin::{Gpu, Skin, View};
 // what the types above are made of, so that a skin is built on the same versions

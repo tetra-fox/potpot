@@ -26,6 +26,7 @@ use tracing::error;
 use crate::feed::same;
 use crate::flat::FlatRenderer;
 use crate::graphics::Graphics;
+use crate::notes::Pressed;
 use crate::open::{Param, Remembered, Settings, Shared, ToWindow};
 use crate::screen::Screen;
 use crate::skin::{Gpu, Skin, View};
@@ -109,6 +110,11 @@ pub(crate) struct Window<S> {
   ///
   /// On X11 what was copied is there for other programs only for as long as this is kept.
   clipboard: RefCell<Option<arboard::Clipboard>>,
+  /// The note a key of the panel holds down.
+  ///
+  /// It is down in the [`Notes`](crate::Notes). It is kept apart from the state, so that it is let
+  /// up when the window goes away whatever has become of the state.
+  playing: Cell<Option<u8>>,
   /// The state, which is only ever taken with [`Window::state`].
   ///
   /// baseview calls a handler through a shared reference, always on the window's one
@@ -159,7 +165,7 @@ struct State<S> {
   ///
   /// The vector is kept for its room.
   parts: Vec<[u32; 4]>,
-  /// The time of the last frame that drew the feed changed.
+  /// The time of the last frame with a new feed or new notes.
   fed: Option<Instant>,
   /// The multiple of the panel's size the window is to become.
   ///
@@ -193,6 +199,8 @@ struct Frame {
   menu: Option<Menu>,
   /// The control that is held down.
   held: Option<usize>,
+  /// The notes whose keys are down.
+  notes: Pressed,
 }
 
 /// The target a frame is drawn on and read back from, for one size of window.
@@ -353,6 +361,7 @@ fn due(shown: Option<&Frame>, now: &Frame) -> bool {
     (&shown.values, shown.window, shown.scale) != (&now.values, now.window, now.scale)
       || !same(&shown.feed, &now.feed)
       || (&shown.edit, &shown.menu, shown.held) != (&now.edit, &now.menu, now.held)
+      || shown.notes != now.notes
   })
 }
 
@@ -395,10 +404,10 @@ fn patches(
 
 /// Returns whether the next frame after `now` is asked for.
 ///
-/// It is for one [`TICK`] after `fed`, the time of the last frame that drew the feed changed.
-/// Nothing reports a write to the feed, and an audio thread's writes can be further apart than
-/// frames, so a frame that finds nothing written does not end the looking. After a tick the
-/// ticks look.
+/// It is for one [`TICK`] after `fed`, the time of the last frame that drew the feed or the
+/// notes changed. Nothing reports a write to either, and an audio thread's writes can be
+/// further apart than frames, so a frame that finds nothing written does not end the looking.
+/// After a tick the ticks look.
 fn follows(fed: Option<Instant>, now: Instant) -> bool {
   fed.is_some_and(|fed| now.duration_since(fed) < TICK)
 }
@@ -433,7 +442,7 @@ impl<S: Skin> State<S> {
 
   /// Returns what the panel is like now.
   ///
-  /// The parameters and the feed are looked at afresh.
+  /// The parameters, the feed and the notes are looked at afresh.
   fn now(&mut self, hosts: &[Host], settings: &Settings) -> Frame {
     Frame {
       values: self.values(hosts),
@@ -443,6 +452,7 @@ impl<S: Skin> State<S> {
       edit: self.interaction.edit().cloned(),
       menu: self.interaction.menu().copied(),
       held: self.interaction.held(),
+      notes: settings.notes.shown().with(self.interaction.note()),
     }
   }
 
@@ -520,6 +530,7 @@ impl<S: Skin> Window<S> {
         edit: None,
         menu: None,
         held: None,
+        notes: settings.notes.shown(),
         scale,
         pixel: settings.size[0] / width as f32,
         pixels: [width, height],
@@ -544,6 +555,7 @@ impl<S: Skin> Window<S> {
       exposed: Cell::new(false),
       sized: Cell::new(None),
       clipboard: RefCell::new(None),
+      playing: Cell::new(None),
       state: RefCell::new(State {
         graphics,
         canvas: None,
@@ -630,8 +642,8 @@ impl<S: Skin> Window<S> {
   /// Asks for a frame if the one in the window is stale.
   ///
   /// The window is told when to draw by what happens to it, and this makes up for anything
-  /// it was not told: a parameter moved with no report of it, a number of the feed written, or
-  /// a frame put off while a handler further up had the state.
+  /// it was not told: a parameter moved with no report of it, a number of the feed written, a
+  /// note shown, or a frame put off while a handler further up had the state.
   fn refresh(&self) {
     let Some(mut state) = self.state() else {
       return;
@@ -695,6 +707,16 @@ impl<S: Skin> Window<S> {
         Action::Redraw => self.redraw(),
         Action::Copy(text) => self.copy(text),
         Action::WantClipboard => self.read_clipboard(),
+        Action::NoteOn { note, velocity } => {
+          self.lift();
+          self.settings.notes.press(note, velocity);
+          self.playing.set(Some(note));
+          self.redraw();
+        }
+        Action::NoteOff { .. } => {
+          self.lift();
+          self.redraw();
+        }
       }
     }
   }
@@ -759,8 +781,10 @@ impl<S: Skin> Window<S> {
     let exposed = self.exposed.take();
     if state.stopped || !due(state.shown.as_ref(), &now) {
       // nothing to draw. the last picture goes back if the window lost some of it, or if no feed
-      // moved a moment ago, when it is the system that wants the window painted
-      let follows = !state.stopped && follows(state.fed, at);
+      // moved a moment ago and no shown note is down, when it is the system that wants the
+      // window painted. while a shown note is down every frame looks at the notes afresh
+      let shown = self.settings.notes.shown().any();
+      let follows = !state.stopped && (shown || follows(state.fed, at));
       if (!follows || exposed)
         && let Err(error) = state.screen.again()
       {
@@ -819,6 +843,7 @@ impl<S: Skin> Window<S> {
       edit: now.edit.as_ref(),
       menu: now.menu.as_ref(),
       held: now.held,
+      notes: now.notes,
       scale,
       pixel,
       pixels: [width, height],
@@ -901,10 +926,11 @@ impl<S: Skin> Window<S> {
         return Ok(());
       }
     }
-    if (shown.as_ref()).is_some_and(|shown| !same(&shown.feed, &now.feed)) {
+    let fed_now = |shown: &Frame| !same(&shown.feed, &now.feed) || shown.notes != now.notes;
+    if shown.as_ref().is_some_and(fed_now) {
       *fed = Some(at);
     }
-    let follows = follows(*fed, at);
+    let follows = self.settings.notes.shown().any() || follows(*fed, at);
     *shown = Some(now);
     drop(state);
     if follows {
@@ -1000,8 +1026,10 @@ impl<S: Skin> Window<S> {
         Event::Move {
           at,
           window: state.on_window,
-          // only the menu shows what the pointer is over
-          over: (state.interaction.menu()).and_then(|_| state.target_at(&self.settings, at)),
+          // found only while the panel reads it
+          over: (state.interaction.watches_pointer())
+            .then(|| state.target_at(&self.settings, at))
+            .flatten(),
           fine: fine(modifiers),
         }
       }),
@@ -1022,6 +1050,7 @@ impl<S: Skin> Window<S> {
           self.handle(|_| Event::Release(button));
         }
       }
+      MouseEvent::CursorLeft => self.handle(|_| Event::Left),
       MouseEvent::WheelScrolled { delta, modifiers } => {
         let lines = match delta {
           ScrollDelta::Lines { y, .. } => y,
@@ -1035,6 +1064,26 @@ impl<S: Skin> Window<S> {
       }
       _ => {}
     }
+  }
+}
+
+impl<S> Window<S> {
+  /// Lets up the note a key of the panel holds down, if any.
+  fn lift(&self) {
+    if let Some(note) = self.playing.take() {
+      self.settings.notes.release(note);
+    }
+  }
+}
+
+impl<S> Drop for Window<S> {
+  fn drop(&mut self) {
+    // baseview 0.4.2 tells a window it is closing only when it is closed from its own side:
+    // for `WM_CLOSE` in its `platform/win/window.rs` and from `window_should_close` in its
+    // `platform/macos/view.rs`. a host that takes its editor away destroys the window with
+    // no word to it, so the note is let up here
+    // TODO: leave this to the closing event once baseview sends one however a window goes
+    self.lift();
   }
 }
 
@@ -1153,6 +1202,8 @@ impl<S: Skin> Guarded<S> {
     // nothing of the window's is looked at again after a panic
     catch_unwind(AssertUnwindSafe(|| work(&self.window))).unwrap_or_else(|panic| {
       self.broken.set(true);
+      // no release of the key will be taken after this
+      self.window.lift();
       error!("the editor has stopped at a panic: {}", said(&*panic));
       otherwise
     })
@@ -1218,6 +1269,7 @@ mod tests {
       edit: None,
       menu: None,
       held: None,
+      notes: Pressed::default(),
     }
   }
 
@@ -1274,6 +1326,13 @@ mod tests {
     };
     assert!(due(Some(&shown), &held));
     assert!(due(Some(&held), &shown));
+    // a key down, whether the panel's own or one the audio thread shows
+    let played = Frame {
+      notes: Pressed::default().with(Some(60)),
+      ..shown.clone()
+    };
+    assert!(due(Some(&shown), &played));
+    assert!(!due(Some(&played), &played));
     // a number of the feed written, and one that is no number holding still
     let fed = |level| Frame {
       feed: vec![0.25, level],

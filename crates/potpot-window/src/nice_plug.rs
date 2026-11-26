@@ -566,6 +566,7 @@ mod tests {
 
   use super::{Arc, Bound, Fault, Gpu, Held, Misbound, Readout, Remembered, Settings, Skin, Touch};
   use crate::feed::Feed;
+  use crate::notes::Notes;
   use crate::skin::View;
 
   #[derive(Params)]
@@ -605,6 +606,7 @@ mod tests {
       menu: MenuLook::default(),
       grip: GripLook::default(),
       feed: Feed::default(),
+      notes: Notes::new(),
     };
     let remembered = Remembered {
       get: Box::new(|| 1.0),
