@@ -39,7 +39,7 @@ pub use panel::{
   bezel, cap_screw, chamfered_slab, frame, hex_socket, inset, plate, screw, screw_cross,
   screw_head, screw_seat, slab, slot,
 };
-pub use ring::{LedArc, LedRing};
+pub use ring::{LedArc, LedRing, LedStops};
 pub use scale::{dashes, fader_ticks, ticks};
 pub use screen::{Screen, picture};
 pub use switch::PushSwitch;

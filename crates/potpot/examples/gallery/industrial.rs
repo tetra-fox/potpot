@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
-use potpot::parts::{self, Handle, Knob, LedArc, LedRing, PushSwitch, Vent};
+use potpot::parts::{self, Handle, Knob, LedArc, LedRing, LedStops, PushSwitch, Vent};
 use potpot::{Light, Look, Material, Scene};
 use potpot_controls::interaction::Push;
 
@@ -140,17 +140,13 @@ pub(super) fn industrial(look: Look) -> Scene {
   build.knob(small, x, y, 0.62);
 
   let (x, y) = (660.0, 240.0);
-  let stops = 5;
-  let pip = (Arc::new(parts::led(7.0)), Arc::new(parts::led_seat(7.0)));
-  for stop in 0..stops {
-    let turn = stop as f32 / (stops - 1) as f32;
-    let at = parts::knob_transform(x, y, turn, parts::KNOB_SWEEP)
-      * Mat4::from_translation(Vec3::new(0.0, -54.0, 0.0));
-    let level = if stop == 1 { 1.0 } else { 0.08 };
-    build.place(&pip.1, at, Material::matte(SEAT));
-    build.place(&pip.0, at, parts::led_material(CYAN, level, 7.0));
-  }
-  build.knob(small, x, y, 0.25);
+  let stops = LedStops::new(5, 54.0, 7.0);
+  let (light, seat) = (Arc::new(stops.light()), Arc::new(stops.seat()));
+  build.objects.extend(stops.seats(&seat, x, y));
+  build
+    .objects
+    .extend(stops.lights(&light, x, y, stops.turn(1), CYAN));
+  build.knob(small, x, y, stops.turn(1));
 
   // backlit switches out and dark, latched in and lit, and held all the way in
   let switch = PushSwitch::backlit(56.0, 26.0, 8.0);

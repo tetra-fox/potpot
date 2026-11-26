@@ -6,8 +6,9 @@ use std::sync::Arc;
 use glam::{Mat4, Vec3};
 
 use super::button::Button;
+use super::led::{led, led_material, led_seat, led_seat_radius};
 use super::outline::STRIP;
-use super::{KNOB_SWEEP, PAINT, pipe_end, pipe_seat};
+use super::{KNOB_SWEEP, PAINT, knob_transform, pipe_end, pipe_seat};
 use crate::mesh::Mesh;
 use crate::scene::Object;
 
@@ -95,13 +96,46 @@ impl LedRing {
     })
   }
 
-  /// Returns the ring's lights as objects.
+  /// Returns how much of each light a run covers, from zero to one, in the order of the lights.
   ///
-  /// Each [`Object`] has the mesh [`LedRing::segment`] makes, for a ring around (`x`, `y`). The
-  /// lights are lit in `color` over the run between the two places of `run`, in either order.
-  /// Each place is a part of the sweep, from zero at its start to one at its end, and one past
-  /// either end is at that end. A light the run covers in part is as bright as the part it
-  /// covers, and a run of no length lights nothing.
+  /// The run is between the two places of `run`, in either order. Each place is a part of the
+  /// sweep, from zero at its start to one at its end, and one past either end is at that end. A
+  /// run of no length covers nothing.
+  pub fn levels(&self, run: [f32; 2]) -> impl Iterator<Item = f32> {
+    let count = self.segments as f32;
+    let [from, to] = run.map(|place| place.clamp(0.0, 1.0) * count);
+    let (low, high) = (from.min(to), from.max(to));
+    (0..self.segments).map(move |index| {
+      let start = index as f32;
+      (high.min(start + 1.0) - low.max(start)).max(0.0)
+    })
+  }
+
+  /// Returns the ring's lights as objects, each lit in `color` at its level of `levels`.
+  ///
+  /// Each [`Object`] has the mesh [`LedRing::segment`] makes, for a ring around (`x`, `y`).
+  /// `levels` runs from zero for dark to one for lit, one for each light in turn, and a light
+  /// past the end of it is dark.
+  pub fn lit(
+    &self,
+    segment: &Arc<Mesh>,
+    x: f32,
+    y: f32,
+    levels: impl IntoIterator<Item = f32>,
+    color: Vec3,
+  ) -> impl Iterator<Item = Object> {
+    let mut levels = levels.into_iter();
+    (0..self.segments).map(move |index| Object {
+      mesh: Arc::clone(segment),
+      transform: self.place(x, y, index),
+      material: pipe_end(color, levels.next().unwrap_or(0.0), self.width * 0.6),
+    })
+  }
+
+  /// Returns the ring's lights as objects, lit over a run.
+  ///
+  /// The lights are lit in `color` as much as [`LedRing::levels`] says `run` covers them, for a
+  /// ring around (`x`, `y`) as [`LedRing::lit`] lays it out.
   pub fn lights(
     &self,
     segment: &Arc<Mesh>,
@@ -110,16 +144,108 @@ impl LedRing {
     run: [f32; 2],
     color: Vec3,
   ) -> impl Iterator<Item = Object> {
-    let count = self.segments as f32;
-    let [from, to] = run.map(|place| place.clamp(0.0, 1.0) * count);
-    let (low, high) = (from.min(to), from.max(to));
-    (0..self.segments).map(move |index| {
-      let start = index as f32;
-      let lit = (high.min(start + 1.0) - low.max(start)).max(0.0);
+    self.lit(segment, x, y, self.levels(run), color)
+  }
+}
+
+/// A small round light at each stop of a knob that clicks from stop to stop.
+///
+/// The stops spread evenly over the sweep that [`knob_transform`] turns a knob through, from one
+/// end to the other, and a lone stop is at the middle. [`LedStops::lights`] lights the stop the
+/// knob is at and leaves the others dim.
+#[derive(Clone, Copy, Debug)]
+pub struct LedStops {
+  /// The count of stops.
+  pub stops: u32,
+  /// The angle the stops spread over, in radians.
+  pub sweep: f32,
+  /// The distance from the origin to the middle of each light, in points.
+  pub radius: f32,
+  /// The width of each light, in points.
+  pub diameter: f32,
+  /// How bright a light is at a stop the knob is not at, from zero for dark to one.
+  pub dim: f32,
+}
+
+impl LedStops {
+  /// Creates a light `diameter` wide at each of `stops` stops over [`KNOB_SWEEP`], with their
+  /// middles `radius` from the origin.
+  pub fn new(stops: u32, radius: f32, diameter: f32) -> Self {
+    Self {
+      stops,
+      sweep: KNOB_SWEEP,
+      radius,
+      diameter,
+      dim: 0.1,
+    }
+  }
+
+  /// Returns the place of the sweep `stop` is at, from zero at its start to one at its end.
+  pub fn turn(&self, stop: u32) -> f32 {
+    match self.stops {
+      0 | 1 => 0.5,
+      stops => stop as f32 / (stops - 1) as f32,
+    }
+  }
+
+  /// Returns how far the lights and their seats reach up from the origin, toward negative y,
+  /// and how far down.
+  pub fn reach(&self) -> [f32; 2] {
+    let seat = led_seat_radius(self.diameter);
+    let ys = (0..self.stops).map(|stop| self.place(0.0, 0.0, stop).w_axis.y);
+    let (up, down) = ys.fold((f32::MIN, f32::MIN), |(up, down), y| {
+      (up.max(-y), down.max(y))
+    });
+    [up + seat, down + seat]
+  }
+
+  /// Returns one light, lying on the origin.
+  pub fn light(&self) -> Mesh {
+    led(self.diameter)
+  }
+
+  /// Returns the dark ring one light sits in, lying on the origin.
+  pub fn seat(&self) -> Mesh {
+    led_seat(self.diameter)
+  }
+
+  /// Returns the transform of the light at `stop` of a knob at (`x`, `y`).
+  fn place(&self, x: f32, y: f32, stop: u32) -> Mat4 {
+    knob_transform(x, y, self.turn(stop), self.sweep)
+      * Mat4::from_translation(Vec3::new(0.0, -self.radius, 0.0))
+  }
+
+  /// Returns the ring each light sits in, as objects.
+  ///
+  /// Each [`Object`] has the mesh [`LedStops::seat`] makes, for a knob at (`x`, `y`).
+  pub fn seats(&self, seat: &Arc<Mesh>, x: f32, y: f32) -> impl Iterator<Item = Object> {
+    (0..self.stops).map(move |stop| Object {
+      mesh: Arc::clone(seat),
+      transform: self.place(x, y, stop),
+      material: pipe_seat(),
+    })
+  }
+
+  /// Returns the lights as objects.
+  ///
+  /// Each [`Object`] has the mesh [`LedStops::light`] makes, for a knob at (`x`, `y`). The stop
+  /// nearest `place` of the sweep is lit in `color` and the others are lit at [`LedStops::dim`].
+  pub fn lights(
+    &self,
+    light: &Arc<Mesh>,
+    x: f32,
+    y: f32,
+    place: f32,
+    color: Vec3,
+  ) -> impl Iterator<Item = Object> {
+    let last = self.stops.saturating_sub(1);
+    let at = (place.clamp(0.0, 1.0) * last as f32).round() as u32;
+    (0..self.stops).map(move |stop| {
+      let level = if stop == at { 1.0 } else { self.dim };
       Object {
-        mesh: Arc::clone(segment),
-        transform: self.place(x, y, index),
-        material: pipe_end(color, lit, self.width * 0.6),
+        mesh: Arc::clone(light),
+        transform: self.place(x, y, stop),
+        material: led_material(color, level, self.diameter),
       }
     })
   }
@@ -325,6 +451,63 @@ mod tests {
     // at the start, the middle or the end a run of no length lights nothing
     for place in [0.0, 0.5, 1.0] {
       assert!(lit([place, place]).is_none(), "{place}");
+    }
+  }
+
+  #[test]
+  fn the_stops_of_a_knob_spread_from_end_to_end() {
+    let lit = |stops: &LedStops, place: f32| -> Vec<f32> {
+      let light = Arc::new(stops.light());
+      (stops.lights(&light, 0.0, 0.0, place, Vec3::ONE))
+        .map(|light| light.material.glow)
+        .collect()
+    };
+    let middle = |stops: &LedStops, stop: u32| -> Vec3 {
+      stops.place(0.0, 0.0, stop).transform_point3(Vec3::ZERO)
+    };
+    // a lone stop is straight up, and lit wherever the knob is
+    let one = LedStops::new(1, 20.0, 4.0);
+    assert!((middle(&one, 0) - Vec3::new(0.0, -20.0, 0.0)).length() < 1e-4);
+    assert_eq!(lit(&one, 0.9), [1.0]);
+    // two are at the ends of the sweep, either side of straight up and as far down
+    let two = LedStops::new(2, 20.0, 4.0);
+    let [left, right] = [0, 1].map(|stop| middle(&two, stop));
+    let half = two.sweep / 2.0;
+    assert!((left - Vec3::new(-20.0 * half.sin(), -20.0 * half.cos(), 0.0)).length() < 1e-4);
+    assert!((right - Vec3::new(-left.x, left.y, 0.0)).length() < 1e-4);
+    assert_eq!(lit(&two, 0.4), [1.0, two.dim]);
+    assert_eq!(lit(&two, 0.6), [two.dim, 1.0]);
+    // many are evenly apart, and the one nearest the place is lit
+    let five = LedStops::new(5, 20.0, 4.0);
+    let middles: Vec<Vec3> = (0..5).map(|stop| middle(&five, stop)).collect();
+    let apart = middles[0].distance(middles[1]);
+    for pair in middles.windows(2) {
+      assert!((pair[0].distance(pair[1]) - apart).abs() < 1e-4);
+    }
+    assert!((middles[2] - Vec3::new(0.0, -20.0, 0.0)).length() < 1e-4);
+    assert_eq!(lit(&five, 0.3)[1], 1.0);
+    assert_eq!(lit(&five, 2.0)[4], 1.0);
+    // the seats reach as far up and down as the outermost seat does. the ends of the sweep
+    // are below the middle, so two stops reach less far up than down
+    let ends = -20.0 * half.cos();
+    for (stops, want) in [
+      (one, [20.0, -20.0]),
+      (two, [-ends, ends]),
+      (five, [20.0, ends]),
+    ] {
+      let seat = stops.seat();
+      let radius = (seat.vertices.iter())
+        .map(|vertex| Vec3::from(vertex.position).truncate().length())
+        .fold(0.0, f32::max);
+      let [up, down] = stops.reach();
+      assert!(
+        (up - want[0] - radius).abs() < 1e-3,
+        "{stops:?} reaches up {up}"
+      );
+      assert!(
+        (down - want[1] - radius).abs() < 1e-3,
+        "{stops:?} reaches down {down}"
+      );
     }
   }
 }

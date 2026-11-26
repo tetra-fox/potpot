@@ -22,13 +22,21 @@ pub fn led(diameter: f32) -> Mesh {
   .body()
 }
 
+/// How far the ring a small light sits in reaches past the light, for each point of its width.
+const SEAT_MARGIN: f32 = 0.12;
+
 /// Returns the dark ring a small round light sits in.
 ///
 /// The ring lies on the panel.
 pub fn led_seat(diameter: f32) -> Mesh {
   Outline::new(diameter, diameter, diameter / 2.0)
-    .grown(diameter * 0.12)
+    .grown(diameter * SEAT_MARGIN)
     .strip()
+}
+
+/// Returns the radius of the ring [`led_seat`] makes.
+pub(super) fn led_seat_radius(diameter: f32) -> f32 {
+  diameter / 2.0 + diameter * SEAT_MARGIN
 }
 
 /// Returns the material of a small light of a color at a level.
