@@ -146,4 +146,28 @@ mod tests {
     assert!(path.iter().all(|point| point.y <= 20.0 + 1e-4));
     assert!(path.windows(2).all(|pair| pair[1].x >= pair[0].x - 1e-4));
   }
+
+  #[test]
+  fn a_handle_with_no_room_to_bend_has_square_corners() {
+    // a bend of nothing, and a reach no higher than the blocks, both leave no room
+    let square = Handle {
+      bend: 0.0,
+      ..Handle::new(120.0, 24.0, 6.0)
+    };
+    let low = Handle::new(120.0, 4.0, 6.0);
+    for handle in [square, low] {
+      let bar = handle.bar();
+      assert!(!bar.vertices.is_empty());
+      for vertex in &bar.vertices {
+        let normal = Vec3::from(vertex.normal);
+        assert!((normal.length() - 1.0).abs() < 1e-4, "{normal}");
+      }
+      // the top runs out to the middles of the legs
+      let top = (bar.vertices.iter())
+        .filter(|vertex| vertex.position[2] > handle.reach)
+        .map(|vertex| vertex.position[1].abs())
+        .fold(0.0, f32::max);
+      assert!(top >= 60.0 - 1e-3, "{top}");
+    }
+  }
 }

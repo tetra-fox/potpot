@@ -241,9 +241,13 @@ impl Mesh {
   ///
   /// The tube is `radius` thick around each stretch of `path`, with `sides` sides, and its two
   /// ends are left open. It shades as one smooth surface, and each ring of points is square to
-  /// the path where it turns, which keeps it round through a bend of many short stretches.
+  /// the path where it turns, which keeps it round through a bend of many short stretches. A
+  /// point that repeats the one before it is passed over.
   pub fn tube(path: &[Vec3], radius: f32, sides: u32) -> Self {
     let mut mesh = Self::default();
+    // a stretch of no length has no way along it to set a ring square to
+    let mut path = path.to_vec();
+    path.dedup();
     if path.len() < 2 {
       return mesh;
     }
