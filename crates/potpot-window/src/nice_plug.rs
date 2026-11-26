@@ -51,12 +51,16 @@ impl Bound {
   ///
   /// `param` has to be one of the parameters the editor is made with. The control is dragged
   /// and feels as [`Feel::default`] does, and the wheel turns `param` too. A parameter with
-  /// steps, as an `IntParam`, an `EnumParam` and a `BoolParam` have, moves by one of them, and
-  /// any other turns smoothly.
+  /// steps, as an [`IntParam`], an [`EnumParam`] and a [`BoolParam`] have, moves by one of them,
+  /// and any other turns smoothly.
+  ///
+  /// [`IntParam`]: nice_plug::params::IntParam
+  /// [`EnumParam`]: nice_plug::params::EnumParam
+  /// [`BoolParam`]: nice_plug::params::BoolParam
   pub fn new(param: &impl nice_plug::params::Param, readout: Readout) -> Self {
     Self {
       param: param.as_ptr(),
-      // the plain values of those three are whole numbers, a step apart
+      // a parameter with steps has whole numbers for its plain values, one step apart
       step: param.step_count().map(|_| 1.0),
       feel: Feel::default(),
       readout,
