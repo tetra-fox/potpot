@@ -49,6 +49,7 @@
 //! - [`axis`] lays plain values along a line, evenly or by ratio, for a parameter and for a
 //!   drawing of it alike.
 //! - [`response`] gives the gain of an equalizer's bands over frequency.
+//! - [`spectrum`] gathers the bins of a spectrum into the bands a display draws.
 
 /// A place or a size, across and down.
 pub type Point = [f32; 2];
@@ -60,4 +61,5 @@ pub mod furniture;
 pub mod interaction;
 pub mod response;
 pub mod sent;
+pub mod spectrum;
 pub mod stroke;
