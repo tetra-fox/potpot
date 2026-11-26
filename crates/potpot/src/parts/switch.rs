@@ -92,7 +92,7 @@ impl PushSwitch {
       // a hair of room around the plunger
       plunger.grown(self.collar * 0.08),
       self.collar_height,
-      cut,
+      [cut; 2],
     )
   }
 

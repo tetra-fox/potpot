@@ -143,22 +143,24 @@ impl Outline {
 
 /// Returns a raised band between two outlines.
 ///
-/// The band has a hole in its middle and stands `tall` above the panel. Both corners of its top
-/// are cut `cut` wide.
-pub(super) fn band(outer: Outline, inner: Outline, tall: f32, cut: f32) -> Mesh {
+/// The band has a hole in its middle and stands `tall` above the panel. The outer and the inner
+/// corner of its top are cut as wide as they are tall, by the two of `cuts` in that order.
+pub(super) fn band(outer: Outline, inner: Outline, tall: f32, [outward, inward]: [f32; 2]) -> Mesh {
+  // each cut's edge on the top is its outline drawn in or out by the cut, which keeps the cut
+  // as wide all along a side
   let rings = [
-    (outer, 0.0, 0.0),
-    (outer, 0.0, tall - cut),
-    (outer, cut, tall),
-    (inner, -cut, tall),
-    (inner, 0.0, tall - cut),
-    (inner, 0.0, 0.0),
+    (outer, 0.0),
+    (outer, tall - outward),
+    (outer.grown(-outward), tall),
+    (inner.grown(inward), tall),
+    (inner, tall - inward),
+    (inner, 0.0),
   ];
   Mesh::rings(rings.len(), 144, CREASE, |ring, around| {
-    let (outline, inset, height) = rings[ring];
-    // both outlines by the outer one's steps, so that the band runs straight across
+    let (outline, height) = rings[ring];
+    // every outline by the outer one's steps, so that the band runs straight across
     let angle = outer.spread(around);
-    (Vec2::from_angle(angle) * (outline.at(angle) - inset)).extend(height)
+    (Vec2::from_angle(angle) * outline.at(angle)).extend(height)
   })
 }
 

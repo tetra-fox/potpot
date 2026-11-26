@@ -58,7 +58,7 @@ impl Pad {
   pub fn rim(&self) -> Mesh {
     let surface = self.outline();
     let cut = self.rim_height.min(self.rim) * 0.3;
-    band(surface.grown(self.rim), surface, self.rim_height, cut)
+    band(surface.grown(self.rim), surface, self.rim_height, [cut; 2])
   }
 
   /// Returns the mesh of the puck.

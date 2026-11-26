@@ -46,7 +46,7 @@ pub fn frame(width: f32, length: f32, border: f32, height: f32, corner: f32) -> 
     Outline::new(width, length, corner),
     Outline::new(width - border * 2.0, length - border * 2.0, corner - border),
     height,
-    height.min(border) * 0.3,
+    [height.min(border) * 0.3; 2],
   )
 }
 

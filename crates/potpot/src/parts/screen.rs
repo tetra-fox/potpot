@@ -64,7 +64,7 @@ impl Screen {
   pub fn bezel(&self) -> Mesh {
     let face = self.outline();
     let cut = self.height.min(self.border) * 0.3;
-    band(face.grown(self.border), face, self.height, cut)
+    band(face.grown(self.border), face, self.height, [cut; 2])
   }
 
   /// Returns the light a lit screen throws on what is around it.
