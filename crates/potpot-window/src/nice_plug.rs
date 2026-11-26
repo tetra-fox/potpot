@@ -360,7 +360,7 @@ fn per_point(display_scale: f64) -> f64 {
 
 /// Returns the size the host is told the editor has, in the host's units.
 fn reported(settings: &Settings, remembered: &Remembered, shared: &Shared) -> NativeSize<u32> {
-  let size = settings.sized((remembered.get)());
+  let size = settings.sized(settings.remembered_scale(remembered));
   NativeSize::from_size(size.into(), shared.display_scale())
 }
 

@@ -1092,7 +1092,7 @@ impl<S: Skin> Window<S> {
         }
         ToWindow::State => {
           // the state that was loaded may have the window at another size
-          let scale = (self.remembered.get)();
+          let scale = self.settings.remembered_scale(&self.remembered);
           let differs = self.state().is_some_and(|mut state| {
             let differs = (scale - state.scale(self.settings.size)).abs() > 0.001;
             if differs {

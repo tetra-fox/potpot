@@ -64,6 +64,12 @@ impl Settings {
     }
   }
 
+  /// Returns the scale `remembered` holds, within the panel's scales.
+  pub(crate) fn remembered_scale(&self, remembered: &Remembered) -> f32 {
+    let [least, most] = self.scales;
+    (remembered.get)().clamp(least, most)
+  }
+
   /// Returns the window's size in the screen's points at `scale`.
   ///
   /// `scale` is a multiple of the panel's own size.
@@ -138,7 +144,8 @@ impl fmt::Debug for Param {
 
 /// The store of the size the user chose for the window.
 ///
-/// The size is kept as a multiple of the panel's own. The window sets it when the user pulls
+/// The size is kept as a multiple of the panel's own. A multiple outside the panel's
+/// [`Settings::scales`] is taken as the nearest of them. The window sets it when the user pulls
 /// the grip, and to the panel's own size on a double click of the grip. The `nice-plug` editor
 /// also sets it when the host gives the window a size other than the one the editor last
 /// reported, within the panel's scales.
@@ -489,7 +496,7 @@ pub fn open<S: Skin, W: HasWindowHandle>(
   let top_level = parent.is_none() && !wait_for_parent;
   let made = WindowSettings::new()
     .with_title(settings.title.clone())
-    .with_size(settings.sized((remembered.get)()))
+    .with_size(settings.sized(settings.remembered_scale(&remembered)))
     .with_min_size::<LogicalSize<f32>>(top_level.then(|| settings.sized(settings.scales[0])))
     .with_max_size::<LogicalSize<f32>>(top_level.then(|| settings.sized(settings.scales[1])))
     .with_parent(parent)
