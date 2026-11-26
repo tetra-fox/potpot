@@ -47,11 +47,15 @@ const PAN: usize = 4;
 const DEPTH: usize = 5;
 const PAD_CONTROL: usize = 4;
 const PAN_CONTROL: usize = 5;
+/// The room each of the pad's readouts has across the panel.
+const READOUT_SLOT: f32 = 80.0;
 /// The pad's two readouts.
 ///
 /// Each is its control, its name and how far across the panel its middle is.
-const UNDER_PAD: [(usize, &str, f32); 2] =
-  [(PAN_CONTROL, "PAN", 460.0), (PAD_CONTROL, "DEPTH", 540.0)];
+const UNDER_PAD: [(usize, &str, f32); 2] = [
+  (PAN_CONTROL, "PAN", PAD[0] - READOUT_SLOT / 2.0),
+  (PAD_CONTROL, "DEPTH", PAD[0] + READOUT_SLOT / 2.0),
+];
 
 /// The top left and bottom right of the wave's well.
 const WAVE: [[f32; 2]; 2] = [[22.0, 250.0], [578.0, 370.0]];
