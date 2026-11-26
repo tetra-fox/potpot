@@ -401,6 +401,7 @@ fn differing(one: &[u8], other: &[u8]) -> [i32; 4] {
 #[ignore = "needs a graphics device"]
 fn the_haze_shows_as_far_from_what_lights_itself_as_its_reach_and_no_further() {
   use super::damage::{HAZE_CELL, Spread};
+  use super::picture::cells;
 
   let target = Target::new();
   let block = Arc::new(Mesh::cuboid(
@@ -426,14 +427,13 @@ fn the_haze_shows_as_far_from_what_lights_itself_as_its_reach_and_no_further() {
   let mut renderer = Renderer::new(&target.device, FORMAT);
   // the panel is as many points as the target is pixels, so a radius in points is one in pixels
   assert_eq!(PANEL, Vec2::new(SIZE[0] as f32, SIZE[1] as f32));
-  let cells = SIZE.map(|side| side.div_ceil(HAZE_CELL) + 2);
   // the radius of the look by default, one past a band, and one in no whole count of cells
   for radius in [Look::default().bloom_radius, 40.0, 9.0] {
     let mut drawn = |level, bloom| target.drawn(&mut renderer, &scene(level, bloom, radius));
     let lit = differing(&drawn(0.0, 0.0), &drawn(1.0, 0.0));
     let hazed = differing(&drawn(0.0, 1e4), &drawn(1.0, 1e4));
     // a cell holds the pixels of what lights itself together, wherever in the cell they are
-    let reach = Spread::new(Vec2::splat(radius), cells).reach();
+    let reach = Spread::new(Vec2::splat(radius), cells(SIZE)).reach();
     let (reach, cell) = (reach.x as i32, HAZE_CELL as i32);
     let further = [
       lit[0] - hazed[0],

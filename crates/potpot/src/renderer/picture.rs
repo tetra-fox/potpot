@@ -193,6 +193,6 @@ impl Picture {
 ///
 /// The cells at the right and the foot reach past a picture that is no whole count of them, and
 /// there is one more all around.
-fn cells(size: [u32; 2]) -> [u32; 2] {
+pub(super) fn cells(size: [u32; 2]) -> [u32; 2] {
   size.map(|side| side.div_ceil(HAZE_CELL) + 2)
 }
