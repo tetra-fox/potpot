@@ -1,4 +1,4 @@
-//! A compressor, opened by `just compressor`.
+//! A compressor, opened by `just example compressor`.
 //!
 //! Five knobs turn the threshold, the ratio, the attack, the release and the makeup gain. The
 //! screen on the left draws what they make of a level: the level in across and the level out up,

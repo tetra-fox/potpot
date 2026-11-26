@@ -1,4 +1,4 @@
-//! A parametric equalizer of four bands, opened by `just equalizer`.
+//! A parametric equalizer of four bands, opened by `just example equalizer`.
 //!
 //! Each band has four parameters: its frequency, its gain, its Q and whether it is on. Five
 //! controls turn them, and each shows where the others have put them:

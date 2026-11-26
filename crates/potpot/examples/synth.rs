@@ -1,4 +1,4 @@
-//! The front of a small synthesizer, opened by `just synth`.
+//! The front of a small synthesizer, opened by `just example synth`.
 //!
 //! Three sections, each with a screen that draws what its parameters make:
 //!

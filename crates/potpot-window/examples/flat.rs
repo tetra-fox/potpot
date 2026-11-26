@@ -1,7 +1,7 @@
 //! Knobs, an XY pad and a wave, drawn with flat shapes alone.
 //!
 //! It opens in a window of its own with no host, and is the least there is to write to have
-//! working controls. `just flat` runs it.
+//! working controls. `just example flat` runs it.
 //!
 //! Everything the pointer and the keys do comes with the window:
 //!

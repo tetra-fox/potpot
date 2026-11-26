@@ -1,4 +1,4 @@
-//! A window with every kind of control on it, opened by `just demo`.
+//! A window with every kind of control on it, opened by `just example demo`.
 //!
 //! Lamps follow the controls, and the two meters beside the fader follow a [`Feed`] that a
 //! thread standing in for a plugin's audio thread writes. Each control answers the pointer the

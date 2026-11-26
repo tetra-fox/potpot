@@ -1,29 +1,13 @@
 default:
     @just --list
 
-# open the example panel that is drawn with flat shapes alone
-flat:
-    cargo run -p potpot-window --example flat
+# open an example window: demo, equalizer, compressor, synth or flat
+example name:
+    cargo run --example {{ name }}
 
-# draw one of potpot's example panels to a png: `just picture out.png synth`
-picture *args:
-    cargo run -p potpot --example picture -- {{ args }}
-
-# open a window with every kind of part on it, lamps following the controls and meters a feed
-demo:
-    cargo run -p potpot --example demo
-
-# open a four-band equalizer whose dots, knobs and faders turn the same parameters
-equalizer:
-    cargo run -p potpot --example equalizer
-
-# open a compressor with its curve on a screen and meters from a feed
-compressor:
-    cargo run -p potpot --example compressor
-
-# open a synthesizer's front with a wave, a filter and an envelope on screens
-synth:
-    cargo run -p potpot --example synth
+# draw one of potpot's example panels to a png: `just render synth out.png`
+render name file *args:
+    cargo run --example picture -- {{ file }} {{ name }} {{ args }}
 
 test:
     cargo test --workspace
