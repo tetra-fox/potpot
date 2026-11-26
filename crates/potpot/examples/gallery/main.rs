@@ -1,26 +1,26 @@
-//! A panel rendered to a PNG file without a window.
+//! Panels of potpot's parts, drawn to a PNG file without a window.
 //!
-//! `cargo run --example picture -- out.png` draws every knob style. A name after the file's
-//! name picks the panel:
+//! `just render gallery out.png knobs` draws every knob style. The name after the file's name
+//! picks the panel:
 //!
 //! - `knobs`: every knob style
 //! - `faders`: every fader
 //! - `lights`: lit buttons, meters and an XY pad
 //! - `lamp`: lamps beside what shows their light
 //! - `screens`: screens that show an equalizer, a scope and an envelope
-//! - `synth`: a whole soft synth's front in an old manner
+//! - `retro`: a whole soft synth's front in an old manner
 //!
-//! After those, one number is the pixel size and a second the color steps, for the crude
-//! looks.
+//! After the panel's name, one number is the pixel size and a second the color steps, for the
+//! crude looks.
 
 mod faders;
 mod knobs;
 mod lamp;
 mod lights;
+mod retro;
 mod screens;
 #[path = "../shared/mod.rs"]
 mod shared;
-mod synth;
 
 use std::sync::Arc;
 
@@ -32,11 +32,14 @@ use crate::faders::faders;
 use crate::knobs::knobs;
 use crate::lamp::lamp;
 use crate::lights::lights;
+use crate::retro::retro;
 use crate::screens::screens;
 use crate::shared::{ALUMINUM, BLACK, SEAT, lettering};
-use crate::synth::synth;
 
 const SIZE: [u32; 2] = [1024, 640];
+/// The names of the panels, as a message lists them.
+const PANELS: &str = "knobs, faders, lights, lamp, screens, retro";
+
 /// Returns a screw for each corner, each turned its own way.
 fn screws() -> [Object; 4] {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
@@ -71,21 +74,18 @@ fn framed(look: Look, objects: Vec<Object>) -> Scene {
 }
 
 fn main() {
-  let mut arguments = std::env::args().skip(1).peekable();
-  let path = arguments.next().unwrap_or_else(|| "picture.png".to_owned());
-  let scene: fn(Look) -> Scene = match arguments.next_if(|panel| panel.parse::<f32>().is_err()) {
-    None => knobs,
-    Some(panel) if panel == "knobs" => knobs,
-    Some(panel) if panel == "faders" => faders,
-    Some(panel) if panel == "lights" => lights,
-    Some(panel) if panel == "lamp" => lamp,
-    Some(panel) if panel == "screens" => screens,
-    Some(panel) if panel == "synth" => synth,
-    Some(panel) => {
-      panic!(
-        "picture: unknown panel {panel}: expected knobs, faders, lights, lamp, screens or synth"
-      )
-    }
+  let mut arguments = std::env::args().skip(1);
+  let (Some(path), Some(panel)) = (arguments.next(), arguments.next()) else {
+    panic!("gallery: expected a png file and then one of {PANELS}")
+  };
+  let scene: fn(Look) -> Scene = match panel.as_str() {
+    "knobs" => knobs,
+    "faders" => faders,
+    "lights" => lights,
+    "lamp" => lamp,
+    "screens" => screens,
+    "retro" => retro,
+    _ => panic!("gallery: unknown panel {panel}: expected one of {PANELS}"),
   };
   let look = Look {
     pixel_size: arguments.next().map_or(1.0, |size| {
@@ -165,12 +165,7 @@ fn main() {
     .poll(wgpu::PollType::wait_indefinitely())
     .expect("the device finishes");
 
-  let file = std::fs::File::create(&path).expect("the png file opens");
-  let mut png = png::Encoder::new(std::io::BufWriter::new(file), SIZE[0], SIZE[1]);
-  png.set_color(png::ColorType::Rgba);
-  let mut writer = png.write_header().expect("the png header is written");
-  writer
-    .write_image_data(&read.slice(..).get_mapped_range())
-    .expect("the png pixels are written");
+  let pixels = read.slice(..).get_mapped_range();
+  shared::window::write_png(path.as_ref(), SIZE, &pixels).expect("the png file is written");
   eprintln!("wrote {path}");
 }

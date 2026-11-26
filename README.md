@@ -17,12 +17,13 @@ under one light, so shadows, shine and the spill of a lamp come from the scene.
 ## Usage
 
 ```sh
-just example demo         # a window with every kind of part on it
-just example equalizer    # dots, knobs and faders on the same four bands
-just example compressor   # a curve to drag, and meters from an audio thread
-just example synth        # a wave, a filter and an envelope on screens, and keys
-just example flat         # a panel drawn with flat shapes alone
-just render synth out.png # one of potpot's example panels, drawn to a file
+just example demo                 # a window with every kind of part on it
+just example equalizer            # dots, knobs and faders on the same four bands
+just example compressor           # a curve to drag, and meters from an audio thread
+just example synth                # a wave, a filter and an envelope on screens, and keys
+just example flat                 # a panel drawn with flat shapes alone
+just render demo out.png          # any of those, drawn to a file with no window
+just render gallery out.png knobs # a panel of parts, or faders, lights, lamp, screens, retro
 ```
 
 `just example flat` runs on `potpot-controls` and `potpot-window` alone. A panel's look is a `Skin`:
@@ -54,8 +55,9 @@ fn main() -> Result<(), potpot_window::baseview::Error> {
 }
 ```
 
-`crates/potpot-window/examples/flat.rs` is a whole panel written this way, and
-`potpot_window::nice_plug` makes one the editor of a plugin.
+`crates/potpot-window/examples/flat.rs` is a whole panel written this way.
+`potpot_window::nice_plug` makes one the editor of a plugin, and `potpot_window::picture` draws
+one to pixels with no window.
 
 ## Platform support
 

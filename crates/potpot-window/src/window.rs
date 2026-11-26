@@ -203,6 +203,26 @@ struct Frame {
   notes: Pressed,
 }
 
+impl Frame {
+  /// Returns the first frame of a panel.
+  ///
+  /// Nothing is typed, chosen or held in it. `values` is where each parameter stands. The feed
+  /// and the notes are looked at afresh. The window is `window` pixels, on a display with
+  /// `display_scale` of them to a point.
+  fn first(values: Vec<f32>, settings: &Settings, window: [u32; 2], display_scale: f64) -> Self {
+    Self {
+      values,
+      feed: settings.feed.read(),
+      window,
+      scale: scale_in(window, display_scale, settings.size),
+      edit: None,
+      menu: None,
+      held: None,
+      notes: settings.notes.shown(),
+    }
+  }
+}
+
 /// The target a frame is drawn on and read back from, for one size of window.
 ///
 /// There is no swapchain on the window: under Wine, making one again for each size the
@@ -232,11 +252,10 @@ impl Canvas {
       usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
       view_formats: &[],
     });
-    // wgpu copies rows to a buffer at a multiple of so many bytes each
-    let row = (size[0] * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+    let row = Self::row(size[0]);
     let read = device.create_buffer(&wgpu::BufferDescriptor {
       label: Some("controls canvas read back"),
-      size: u64::from(row) * u64::from(size[1]),
+      size: Self::read_size(size),
       usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
       mapped_at_creation: false,
     });
@@ -247,6 +266,17 @@ impl Canvas {
       read,
       row,
     }
+  }
+
+  /// Returns the count of bytes a row of `width` pixels is read back in.
+  fn row(width: u32) -> u32 {
+    // wgpu copies rows to a buffer at a multiple of so many bytes each
+    (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+  }
+
+  /// Returns the count of bytes a canvas of `size` is read back in.
+  fn read_size(size: [u32; 2]) -> u64 {
+    u64::from(Self::row(size[0])) * u64::from(size[1])
   }
 
   /// Has parts of the canvas read back after a frame is drawn.
@@ -420,6 +450,179 @@ fn scale_in(window: [u32; 2], display_scale: f64, size: Point) -> f32 {
   (f64::from(width) / display_scale) as f32 / size[0]
 }
 
+/// Creates the skin and the renderer of what goes over it.
+///
+/// `skin` makes the skin, which lays the panel out once, as `first` has it.
+///
+/// # Errors
+///
+/// Returns an error if the device reports one while the two are made and the panel laid out.
+fn made<S: Skin>(
+  graphics: &Graphics,
+  settings: &Settings,
+  interaction: &Interaction,
+  first: &Frame,
+  skin: impl FnOnce(&Gpu) -> S,
+) -> Result<(S, FlatRenderer), wgpu::Error> {
+  graphics.built(|| {
+    let gpu = Gpu {
+      device: &graphics.device,
+      queue: &graphics.queue,
+      format: FORMAT,
+    };
+    let mut skin = skin(&gpu);
+    laid_out(graphics, &mut skin, interaction, settings, first);
+    (skin, FlatRenderer::new(&graphics.device, FORMAT))
+  })
+}
+
+/// Lays a frame out and returns the flat shapes over it.
+///
+/// The skin lays out its own picture. The shapes are the skin's own, and over them the grip and
+/// the menu.
+fn laid_out<S: Skin>(
+  graphics: &Graphics,
+  skin: &mut S,
+  interaction: &Interaction,
+  settings: &Settings,
+  now: &Frame,
+) -> Flat {
+  let size = settings.size;
+  // the panel goes on as much of the window as has its shape
+  let [_, _, width, height] = fitted(now.window, size);
+  let pixel = size[0] / width as f32;
+  let gpu = Gpu {
+    device: &graphics.device,
+    queue: &graphics.queue,
+    format: FORMAT,
+  };
+  let seen = View {
+    controls: &interaction.readings(&now.values),
+    values: &now.values,
+    feed: &now.feed,
+    edit: now.edit.as_ref(),
+    menu: now.menu.as_ref(),
+    held: now.held,
+    notes: now.notes,
+    scale: now.scale,
+    pixel,
+    pixels: [width, height],
+  };
+  let mut over = Flat::default();
+  skin.prepare(&gpu, &seen, &mut over);
+  settings.grip.shapes(&mut over, size, now.scale);
+  if let Some(menu) = &now.menu {
+    settings.menu.shapes(&mut over, menu, size, pixel);
+  }
+  over
+}
+
+/// Returns the commands that draw a frame onto a canvas.
+///
+/// The frame is the one the skin last laid out and `flat` last prepared. `place` is the panel's
+/// place on the canvas, which both were given.
+fn drawing<S: Skin>(
+  device: &wgpu::Device,
+  canvas: &Canvas,
+  skin: &S,
+  flat: &FlatRenderer,
+  place: [u32; 4],
+) -> wgpu::CommandEncoder {
+  let view = &canvas.view;
+  let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+    label: Some("controls editor"),
+  });
+  if place[2..] != canvas.size {
+    // the rest of the window, which the panel's own pass leaves as it finds it
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+      label: Some("controls around"),
+      color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+        view,
+        depth_slice: None,
+        resolve_target: None,
+        ops: wgpu::Operations {
+          load: wgpu::LoadOp::Clear(AROUND),
+          store: wgpu::StoreOp::Store,
+        },
+      })],
+      depth_stencil_attachment: None,
+      timestamp_writes: None,
+      occlusion_query_set: None,
+    });
+  }
+  skin.draw(&mut encoder, view, place);
+  flat.render(&mut encoder, view);
+  encoder
+}
+
+/// Draws the first frame of a panel that no window shows.
+///
+/// The frame is of `window` pixels, on a display with one of them to a point. It is drawn as a
+/// window draws its first: the skin lays the panel out as it is made and again for the frame,
+/// with `values` where each parameter stands.
+///
+/// Returns the frame's pixels in rows from the top with no gaps, each pixel its red, green and
+/// blue and a byte of 255.
+///
+/// # Errors
+///
+/// Returns an error if a side of the frame is no pixels or more than the device draws on, or
+/// the frame is more bytes than the device reads back at once.
+///
+/// Returns an error if the device reports one or is lost, or if the frame is not read back.
+pub(crate) fn pictured<S: Skin>(
+  graphics: &Graphics,
+  settings: &Settings,
+  interaction: &Interaction,
+  values: Vec<f32>,
+  window: [u32; 2],
+  skin: impl FnOnce(&Gpu) -> S,
+) -> Result<Vec<u8>, HandlerError> {
+  let [width, height] = window;
+  let limits = graphics.device.limits();
+  let most = limits.max_texture_dimension_2d;
+  if window.iter().any(|side| !(1..=most).contains(side)) {
+    return Err(HandlerError::from_boxed(
+      format!("a picture of {width} by {height} pixels has a side not from 1 to {most}").into(),
+    ));
+  }
+  let (bytes, most) = (Canvas::read_size(window), limits.max_buffer_size);
+  if bytes > most {
+    return Err(HandlerError::from_boxed(
+      format!(
+        "a picture of {width} by {height} pixels is {bytes} bytes to read back, over the \
+         {most} the device reads at once"
+      )
+      .into(),
+    ));
+  }
+  let first = Frame::first(values, settings, window, 1.0);
+  let (mut skin, mut flat) = made(graphics, settings, interaction, &first, skin)?;
+  let Graphics { device, queue, .. } = graphics;
+  let place = fitted(window, settings.size);
+  let over = laid_out(graphics, &mut skin, interaction, settings, &first);
+  flat.prepare(device, queue, &over, settings.size, place);
+  let canvas = Canvas::new(device, window);
+  let encoder = drawing(device, &canvas, &skin, &flat, place);
+  // wgpu panics over a device that is lost while it is waited on
+  let whole = [[0, 0, width, height]];
+  let read = catch_unwind(AssertUnwindSafe(|| canvas.read(graphics, encoder, &whole)))
+    .unwrap_or_else(|panic| Err(said(&*panic)));
+  if let Some(fault) = graphics.fault.get() {
+    return Err(HandlerError::from_boxed(fault.as_str().into()));
+  }
+  let rows = read.map_err(|why| HandlerError::from_boxed(why.into()))?;
+  let read = canvas.read.slice(rows.bytes).get_mapped_range();
+  // a row is read back with bytes after its pixels, blue first, and its fourth byte no alpha
+  let wide = width as usize * 4;
+  Ok(
+    (read.chunks_exact(canvas.row as usize))
+      .flat_map(|row| row[..wide].as_chunks::<4>().0)
+      .flat_map(|&[blue, green, red, _]| [red, green, blue, u8::MAX])
+      .collect(),
+  )
+}
+
 impl<S: Skin> State<S> {
   /// Returns the multiple of its own size a panel of `size` is drawn at.
   fn scale(&self, size: Point) -> f32 {
@@ -512,32 +715,10 @@ impl<S: Skin> Window<S> {
       .unzip();
     let interaction = Interaction::new(dials, controls, settings.size, settings.scales);
     let values: Vec<f32> = hosts.iter().map(|host| (host.value)()).collect();
-    let [_, _, width, height] = fitted(window, settings.size);
-    let scale = scale_in(window, size.scale_factor, settings.size);
+    let first = Frame::first(values, &settings, window, size.scale_factor);
     // the editor opens only if the device can build all it is drawn with and lay out the panel
     // as it is. what goes wrong after that is kept for the next frame to find, and drawing stops
-    let (skin, flat) = graphics.built(|| {
-      let gpu = Gpu {
-        device: &graphics.device,
-        queue: &graphics.queue,
-        format: FORMAT,
-      };
-      let mut skin = skin(&gpu);
-      let view = View {
-        controls: &interaction.readings(&values),
-        values: &values,
-        feed: &settings.feed.read(),
-        edit: None,
-        menu: None,
-        held: None,
-        notes: settings.notes.shown(),
-        scale,
-        pixel: settings.size[0] / width as f32,
-        pixels: [width, height],
-      };
-      skin.prepare(&gpu, &view, &mut Flat::default());
-      (skin, FlatRenderer::new(&graphics.device, FORMAT))
-    })?;
+    let (skin, flat) = made(&graphics, &settings, &interaction, &first, skin)?;
     shared.keep(Arc::clone(&graphics));
     let screen = Screen::new(&context)?;
     let tick = context.create_timer(TICK)?;
@@ -564,7 +745,7 @@ impl<S: Skin> Window<S> {
         skin,
         flat,
         interaction,
-        sent: Sent::new(&values),
+        sent: Sent::new(&first.values),
         pointer: [0.0; 2],
         on_window: [0.0; 2],
         display_scale: size.scale_factor,
@@ -803,7 +984,7 @@ impl<S: Skin> Window<S> {
       return Ok(());
     }
     let (settings, size) = (&self.settings, self.settings.size);
-    let (window, scale) = (now.window, now.scale);
+    let window = now.window;
     let State {
       graphics,
       canvas,
@@ -828,33 +1009,8 @@ impl<S: Skin> Window<S> {
       _ => canvas.insert(Canvas::new(device, window)),
     };
 
-    // the panel goes on as much of the window as has its shape
-    let place @ [_, _, width, height] = fitted(window, size);
-    let pixel = size[0] / width as f32;
-    let gpu = Gpu {
-      device,
-      queue,
-      format: FORMAT,
-    };
-    let seen = View {
-      controls: &interaction.readings(&now.values),
-      values: &now.values,
-      feed: &now.feed,
-      edit: now.edit.as_ref(),
-      menu: now.menu.as_ref(),
-      held: now.held,
-      notes: now.notes,
-      scale,
-      pixel,
-      pixels: [width, height],
-    };
-    // the skin's own flat shapes, and over them the grip and the menu
-    let mut over = Flat::default();
-    skin.prepare(&gpu, &seen, &mut over);
-    settings.grip.shapes(&mut over, size, scale);
-    if let Some(menu) = &now.menu {
-      settings.menu.shapes(&mut over, menu, size, pixel);
-    }
+    let place = fitted(window, size);
+    let over = laid_out(graphics, skin, interaction, settings, &now);
     // the window holds the frame drawn before this one, unless it has had none since it was
     // sized or shown. a skin that names where its own picture differs is read back there alone
     let named = skin.changed().filter(|_| shown.is_some());
@@ -870,30 +1026,7 @@ impl<S: Skin> Window<S> {
         return Ok(());
       }
     } else {
-      let view = &drawn_on.view;
-      let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("controls editor"),
-      });
-      if [width, height] != window {
-        // the rest of the window, which the panel's own pass leaves as it finds it
-        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-          label: Some("controls around"),
-          color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view,
-            depth_slice: None,
-            resolve_target: None,
-            ops: wgpu::Operations {
-              load: wgpu::LoadOp::Clear(AROUND),
-              store: wgpu::StoreOp::Store,
-            },
-          })],
-          depth_stencil_attachment: None,
-          timestamp_writes: None,
-          occlusion_query_set: None,
-        });
-      }
-      skin.draw(&mut encoder, view, place);
-      flat.render(&mut encoder, view);
+      let encoder = drawing(device, drawn_on, skin, flat, place);
       let whole = [[0, 0, window[0], window[1]]];
       let parts: &[[u32; 4]] = if patched { parts } else { &whole };
       let read = drawn_on.read(graphics, encoder, parts);

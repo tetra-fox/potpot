@@ -1,5 +1,7 @@
 //! A window with every kind of control on it, opened by `just example demo`.
 //!
+//! `just render demo out.png` draws it to a file in place of the window.
+//!
 //! Lamps follow the controls, and the two meters beside the fader follow a [`Feed`] that a
 //! thread standing in for a plugin's audio thread writes. Each control answers the pointer the
 //! way its kind does: knobs and faders are dragged, buttons are pressed, and the row of keys is
@@ -20,7 +22,6 @@ mod shared;
 use std::f32::consts::FRAC_PI_2;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
-use std::thread;
 use std::time::Duration;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
@@ -28,7 +29,7 @@ use potpot::parts::{self, Button, Fader, Knob, Meter, Pad, PushSwitch};
 use potpot::{Light, Look, Material, Mesh, Renderer, Scene};
 use potpot_window::controls::flat::Flat;
 use potpot_window::controls::interaction::{Control, Dial, Drag, Push, Readout, Target, Touch};
-use potpot_window::{Feed, Gpu, Opening, Settings, Skin, View, wgpu};
+use potpot_window::{Feed, Gpu, Settings, Skin, View, wgpu};
 
 use crate::shared::{ALUMINUM, BLACK, Drawn, SEAT};
 
@@ -67,6 +68,8 @@ const LEFT: usize = 0;
 const RIGHT: usize = 1;
 /// The time between two blocks of the sound the meters show.
 const BLOCK: Duration = Duration::from_millis(10);
+/// The count of blocks of the sound that a picture is drawn after.
+const PICTURED_AFTER: u32 = 60;
 /// The light that bounces with its knob all the way up.
 const MOST_BOUNCE: f32 = 6.0;
 /// The light's reach to a side, for each unit of its height.
@@ -645,21 +648,19 @@ impl Skin for Demo {
   }
 }
 
-/// Writes how loud a made-up sound is on each side into `feed`, a block at a time.
+/// Returns the function that writes one block of the sound.
 ///
-/// The sound swells and dies away, a little later on the right, and is as loud at most as
-/// the level among `values` has it. This is what a plugin's audio thread does at the end of each
-/// block.
-fn sound(feed: &Feed, values: &[AtomicU32]) {
+/// It writes how loud a made-up sound is on each side into `feed`. The sound swells and dies
+/// away, a little later on the right, and is as loud at most as the level among `values` has it.
+/// This is what a plugin's audio thread does at the end of each block.
+fn sound(feed: Feed, values: Arc<[AtomicU32]>) -> impl FnMut() + Send {
   let mut blocks = 0.0_f32;
-  loop {
-    let level = shared::value(values, LEVEL);
+  move || {
+    let level = shared::value(&values, LEVEL);
     let swell = |behind: f32| ((blocks - behind) * 0.02).sin().max(0.0);
     feed.set(LEFT, level * swell(0.0));
     feed.set(RIGHT, level * swell(20.0));
     blocks += 1.0;
-    // an audio thread is called back for each block, which this stands in for
-    thread::sleep(BLOCK);
   }
 }
 
@@ -669,9 +670,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   settings.feed = feed.clone();
   let (dials, controls) = wiring();
   let (params, values) = shared::params(dials);
-  // the thread is left running, and ends with the process when the window closes
-  thread::spawn(move || sound(&feed, &values));
-  let opened = potpot_window::open(settings, params, controls, Opening::alone(), Demo::new)?;
-  opened.window.run_until_closed()?;
-  Ok(())
+  if shared::window::file().is_some() {
+    // a picture has the second pill in and lit, as a press leaves it
+    shared::set(&values, BUTTONS + 1, 1.0);
+  }
+  let sound = shared::window::Sound {
+    block: Box::new(sound(feed, values)),
+    every: BLOCK,
+    pictured_after: PICTURED_AFTER,
+  };
+  shared::window::run(settings, params, controls, Some(sound), Demo::new)
 }

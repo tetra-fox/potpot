@@ -46,7 +46,7 @@ impl Build {
 /// - a lit screen
 /// - lettering everywhere
 /// - a wide soft light on it all
-pub(super) fn synth(look: Look) -> Scene {
+pub(super) fn retro(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let blue = Vec3::new(0.13, 0.4, 0.74);
   let mut build = Build::default();

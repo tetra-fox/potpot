@@ -52,3 +52,5 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphic
 [dev-dependencies]
 # writes the flat shapes' shader as each graphics api is given it. the version wgpu is on
 naga = { version = "27", features = ["hlsl-out", "msl-out", "spv-out", "wgsl-in"] }
+# writes the picture an example draws of itself
+png = "0.18"

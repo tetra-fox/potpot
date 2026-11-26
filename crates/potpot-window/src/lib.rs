@@ -6,7 +6,8 @@
 //! and the panel's parameters. The menu, the grip and a value being typed work the same
 //! under any skin. A [`Feed`] carries numbers no parameter holds, such as a meter's level, from
 //! an audio thread to the skin. A [`Notes`] carries the notes played on a keybed of the panel
-//! to an audio thread, and the notes a host plays to the skin.
+//! to an audio thread, and the notes a host plays to the skin. [`picture()`] draws one frame of a
+//! panel to a [`Picture`] of plain pixels, with no window.
 //!
 //! # Examples
 //!
@@ -63,6 +64,7 @@ mod graphics;
 pub mod nice_plug;
 mod notes;
 mod open;
+mod picture;
 mod screen;
 mod skin;
 mod window;
@@ -70,6 +72,7 @@ mod window;
 pub use feed::Feed;
 pub use notes::{Heard, Notes, Played, Pressed};
 pub use open::{Opened, Opening, Param, Remembered, Settings, Shared, Tell, open};
+pub use picture::{Picture, picture};
 pub use skin::{Gpu, Skin, View};
 // what the types above are made of, so that a skin is built on the same versions
 pub use potpot_controls as controls;

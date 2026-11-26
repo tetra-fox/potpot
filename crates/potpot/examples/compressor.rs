@@ -1,5 +1,7 @@
 //! A compressor, opened by `just example compressor`.
 //!
+//! `just render compressor out.png` draws it to a file in place of the window.
+//!
 //! Five knobs turn the threshold, the ratio, the attack, the release and the makeup gain. The
 //! screen on the left draws what they make of a level: the level in across and the level out up,
 //! bent at the threshold. The dot on the bend is a sixth control on the same parameters as the
@@ -19,7 +21,6 @@ mod shared;
 use std::f32::consts::{PI, TAU};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
-use std::thread;
 use std::time::Duration;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
@@ -28,7 +29,7 @@ use potpot::{Light, Look, Material, Mesh, Object, Renderer, Scene};
 use potpot_window::controls::axis::Axis;
 use potpot_window::controls::flat::{Color, Flat};
 use potpot_window::controls::interaction::{Control, Dial, Drag, Readout, Target};
-use potpot_window::{Feed, Gpu, Opening, Settings, Skin, View, wgpu};
+use potpot_window::{Feed, Gpu, Settings, Skin, View, wgpu};
 
 use crate::shared::{BLACK, Drawn, INK, LABELS, Noise, Picture, Plot};
 
@@ -79,6 +80,8 @@ const BLOCKS: usize = 110;
 const RATE: f32 = 48000.0;
 /// The time between two blocks of it.
 const BLOCK: Duration = Duration::from_millis(30);
+/// The count of blocks of the sound that a picture is drawn after.
+const PICTURED_AFTER: u32 = 150;
 
 // the middles of the two screens and the widths and lengths of their faces
 const CURVE: Vec2 = Vec2::new(146.0, 160.0);
@@ -590,13 +593,14 @@ fn decibels(size: f32) -> f32 {
   20.0 * size.abs().max(1e-3).log10()
 }
 
-/// Compresses a made-up sound and writes what is seen of it.
+/// Returns the function that compresses one block of the sound.
 ///
-/// The parameters are as `values` has them, and what is seen goes into `feed`.
+/// The sound is made up. The parameters are as `values` has them, and what is seen of the sound
+/// goes into `feed`.
 ///
-/// It works a block at a time and a sample at a time within it, the way a plugin's audio thread
-/// does, and writes the feed at the end of each block.
-fn sound(feed: &Feed, values: &[AtomicU32]) {
+/// It works a sample at a time within the block, the way a plugin's audio thread does, and writes
+/// the feed at the end of the block.
+fn sound(feed: Feed, values: Arc<[AtomicU32]>) -> impl FnMut() + Send {
   let samples = (RATE * BLOCK.as_secs_f32()) as usize;
   let mut drums = Drums {
     noise: Noise::new(),
@@ -607,8 +611,8 @@ fn sound(feed: &Feed, values: &[AtomicU32]) {
   let mut reduced = 0.0_f32;
   let mut shown = [LEVELS.plain(0.0); 2];
   let mut past = [[LEVELS.plain(0.0); BLOCKS], [0.0; BLOCKS]];
-  loop {
-    let plain = |parameter: usize, axis: Axis| axis.plain(shared::value(values, parameter));
+  move || {
+    let plain = |parameter: usize, axis: Axis| axis.plain(shared::value(&values, parameter));
     let (threshold, ratio) = (plain(THRESHOLD, LEVELS), plain(RATIO, RATIOS));
     let makeup = plain(MAKEUP, MAKEUPS);
     // the part of its way to a new reduction that is left after one sample
@@ -643,8 +647,6 @@ fn sound(feed: &Feed, values: &[AtomicU32]) {
     for (slot, number) in (PAST..).zip(levels.iter().chain(reductions.iter())) {
       feed.set(slot, *number);
     }
-    // an audio thread is called back for each block, which this stands in for
-    thread::sleep(BLOCK);
   }
 }
 
@@ -654,15 +656,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   settings.feed = feed.clone();
   let (dials, controls) = wiring();
   let (params, values) = shared::params(dials);
-  // the thread is left running, and ends with the process when the window closes
-  thread::spawn(move || sound(&feed, &values));
-  let opened = potpot_window::open(
-    settings,
-    params,
-    controls,
-    Opening::alone(),
-    Compressor::new,
-  )?;
-  opened.window.run_until_closed()?;
-  Ok(())
+  let sound = shared::window::Sound {
+    block: Box::new(sound(feed, values)),
+    every: BLOCK,
+    pictured_after: PICTURED_AFTER,
+  };
+  shared::window::run(settings, params, controls, Some(sound), Compressor::new)
 }

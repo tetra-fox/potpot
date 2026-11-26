@@ -1,7 +1,8 @@
 //! Knobs, an XY pad and a wave, drawn with flat shapes alone.
 //!
 //! It opens in a window of its own with no host, and is the least there is to write to have
-//! working controls. `just example flat` runs it.
+//! working controls. `just example flat` runs it, and `just render flat out.png` draws it to a
+//! file in place of the window.
 //!
 //! Everything the pointer and the keys do comes with the window:
 //!
@@ -14,11 +15,13 @@
 //!
 //! The example holds the table of controls and how they are drawn.
 
+mod shared;
+
 use std::f32::consts::{PI, TAU};
 
 use potpot_window::controls::flat::{Color, Flat};
 use potpot_window::controls::interaction::{Control, Dial, Feel, Readout, Target};
-use potpot_window::{Gpu, Opening, Param, Settings, Skin, View, wgpu};
+use potpot_window::{Gpu, Param, Settings, Skin, View, wgpu};
 
 /// The panel's width and height in its own points.
 const SIZE: [f32; 2] = [600.0, 390.0];
@@ -287,10 +290,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   // dragged over the room the puck's middle has
   controls.push(Control::pad(PAN, DEPTH, [ROOM; 2], Readout::new(3)));
   controls.push(Control::new(PAN, Readout::new(3)));
-  let opened = potpot_window::open(settings, params, controls, Opening::alone(), |_| Look {
+  shared::run(settings, params, controls, None, |_| Look {
     knobs: knobs(),
     puck: PAD,
-  })?;
-  opened.window.run_until_closed()?;
-  Ok(())
+  })
 }

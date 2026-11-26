@@ -1,5 +1,8 @@
 //! A parametric equalizer of four bands, opened by `just example equalizer`.
 //!
+//! `just render equalizer out.png` draws it to a file in place of the window, with a gain set on
+//! each band.
+//!
 //! Each band has four parameters: its frequency, its gain, its Q and whether it is on. Five
 //! controls turn them, and each shows where the others have put them:
 //!
@@ -25,7 +28,6 @@ mod shared;
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
-use std::thread;
 use std::time::Duration;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
@@ -36,7 +38,7 @@ use potpot_window::controls::flat::{Color, Flat};
 use potpot_window::controls::interaction::{Control, Dial, Drag, Push, Readout, Target, Touch};
 use potpot_window::controls::response::{self, Band, Kind};
 use potpot_window::controls::stroke;
-use potpot_window::{Feed, Gpu, Opening, Settings, Skin, View, wgpu};
+use potpot_window::{Feed, Gpu, Settings, Skin, View, wgpu};
 
 use crate::shared::{ALUMINUM, BLACK, CYAN, Drawn, LABELS, Noise, Picture, Plot, SEAT};
 
@@ -130,6 +132,10 @@ const DRIFT: f32 = 7.0;
 const JITTER: f32 = 8.0;
 /// The time between two blocks of the made-up sound.
 const BLOCK: Duration = Duration::from_millis(30);
+/// The count of blocks of the sound that a picture is drawn after.
+const PICTURED_AFTER: u32 = 40;
+/// Each band's gain in a picture, in decibels.
+const PICTURED_GAINS: [f32; BANDS.len()] = [5.0, -7.0, 4.0, -3.0];
 
 // a band's strip under the screen: how wide it is, how far down its row of controls and what
 // is printed under them are, and how far to each side of its fader its knobs stand
@@ -607,18 +613,19 @@ impl Skin for Equalizer {
   }
 }
 
-/// Writes a made-up sound into `feed`, as the bands shape it.
+/// Returns the function that writes one block of the sound.
 ///
-/// A block at a time it writes how loud the sound is at each frequency and then on each side.
-/// The sound is louder in the bass, with peaks that drift, and each band that is on adds its
-/// gain as `values` has it. This is what a plugin's audio thread does at the end of each block.
-fn sound(feed: &Feed, values: &[AtomicU32]) {
+/// It writes how loud a made-up sound is at each frequency and then on each side into `feed`, as
+/// the bands shape it. The sound is louder in the bass, with peaks that drift, and each band that
+/// is on adds its gain as `values` has it. This is what a plugin's audio thread does at the end
+/// of each block.
+fn sound(feed: Feed, values: Arc<[AtomicU32]>) -> impl FnMut() + Send {
   let mut blocks = 0.0_f32;
   let mut noise = Noise::new();
   let mut levels = [LOUDNESS.plain(0.0); BINS];
-  loop {
+  move || {
     let stands: [f32; PARAMETERS] =
-      std::array::from_fn(|parameter| shared::value(values, parameter));
+      std::array::from_fn(|parameter| shared::value(&values, parameter));
     let bands = bands(&stands);
     let mut power = 0.0;
     for (bin, level) in levels.iter_mut().enumerate() {
@@ -642,8 +649,6 @@ fn sound(feed: &Feed, values: &[AtomicU32]) {
       feed.set(BINS + side, loud + 2.0 * noise.sample());
     }
     blocks += 1.0;
-    // an audio thread is called back for each block, which this stands in for
-    thread::sleep(BLOCK);
   }
 }
 
@@ -653,9 +658,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   settings.feed = feed.clone();
   let (dials, controls) = wiring();
   let (params, values) = shared::params(dials);
-  // the thread is left running, and ends with the process when the window closes
-  thread::spawn(move || sound(&feed, &values));
-  let opened = potpot_window::open(settings, params, controls, Opening::alone(), Equalizer::new)?;
-  opened.window.run_until_closed()?;
-  Ok(())
+  if shared::window::file().is_some() {
+    for (band, gain) in PICTURED_GAINS.into_iter().enumerate() {
+      shared::set(&values, band * PARAMETERS_EACH + GAIN, DECIBELS.turn(gain));
+    }
+  }
+  let sound = shared::window::Sound {
+    block: Box::new(sound(feed, values)),
+    every: BLOCK,
+    pictured_after: PICTURED_AFTER,
+  };
+  shared::window::run(settings, params, controls, Some(sound), Equalizer::new)
 }

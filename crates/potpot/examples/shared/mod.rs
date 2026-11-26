@@ -15,6 +15,10 @@ use potpot_window::controls::flat::{Color, Flat};
 use potpot_window::controls::interaction::{Dial, Target};
 use potpot_window::{Param, View, wgpu};
 
+// the way an example is run, which the one of potpot-window shares
+#[path = "../../../potpot-window/examples/shared/mod.rs"]
+pub mod window;
+
 /// The black of knob bodies, caps and the frames of readouts.
 pub const BLACK: Vec3 = Vec3::new(0.035, 0.035, 0.04);
 /// The color of aluminum turned on a lathe.
@@ -321,7 +325,7 @@ pub fn params(dials: Vec<Dial>) -> (Vec<Param>, Arc<[AtomicU32]>) {
         dial,
         move || value(&read, parameter),
         || {},
-        move |to| write[parameter].store(to.to_bits(), Ordering::Relaxed),
+        move |to| set(&write, parameter, to),
         || {},
       )
     })
@@ -332,6 +336,11 @@ pub fn params(dials: Vec<Dial>) -> (Vec<Param>, Arc<[AtomicU32]>) {
 /// Returns where a parameter stands, as a part of its turn.
 pub fn value(values: &[AtomicU32], parameter: usize) -> f32 {
   f32::from_bits(values[parameter].load(Ordering::Relaxed))
+}
+
+/// Puts a parameter somewhere, as a part of its turn.
+pub fn set(values: &[AtomicU32], parameter: usize, to: f32) {
+  values[parameter].store(to.to_bits(), Ordering::Relaxed);
 }
 
 /// Draws what a renderer last prepared onto a target.

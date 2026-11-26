@@ -1242,6 +1242,7 @@ dependencies = [
  "keyboard-types",
  "naga",
  "nice-plug",
+ "png",
  "pollster",
  "potpot-controls",
  "softbuffer",

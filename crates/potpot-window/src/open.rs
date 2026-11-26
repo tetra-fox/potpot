@@ -390,6 +390,24 @@ impl fmt::Debug for Opened {
   }
 }
 
+/// Checks that a panel of `size` can be fitted to a window.
+///
+/// # Errors
+///
+/// Returns an error if a side is not a finite number of points, one at least.
+pub(crate) fn check_size(size: Point) -> Result<(), HandlerError> {
+  // a panel is fitted to a window by its sides in whole points, which are counted as u64
+  // and multiplied: none of them is to be zero or past counting
+  let fits = |side: &f32| side.is_finite() && *side >= 1.0;
+  if size.iter().all(fits) {
+    Ok(())
+  } else {
+    Err(HandlerError::from_boxed(
+      "a side of the panel is not a finite number of points, one at least".into(),
+    ))
+  }
+}
+
 /// Opens a window on a panel.
 ///
 /// The panel's `controls` turn `params`, and `skin` makes the [`Skin`] that draws the panel
@@ -446,17 +464,7 @@ pub fn open<S: Skin, W: HasWindowHandle>(
     remembered,
     shared,
   } = opening;
-  // a panel is fitted to a window by its sides in whole points, which are counted as u64
-  // and multiplied: none of them is to be zero or past counting
-  let fits = |side: &f32| side.is_finite() && *side >= 1.0;
-  if !settings.size.iter().all(fits) {
-    return Err(
-      HandlerError::from_boxed(
-        "a side of the panel is not a finite number of points, one at least".into(),
-      )
-      .into(),
-    );
-  }
+  check_size(settings.size)?;
   // baseview 0.4.2 makes a child window at the scale of the window it goes in, but in a
   // host that is aware of each monitor's scale the older way it reports the scale the host
   // gave, 1 if it gave none, and takes the first one the host gives later as a change:

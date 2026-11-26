@@ -1,5 +1,8 @@
 //! The front of a small synthesizer, opened by `just example synth`.
 //!
+//! `just render synth out.png` draws it to a file in place of the window, with the made-up run
+//! of notes playing.
+//!
 //! Three sections, each with a screen that draws what its parameters make:
 //!
 //! - `OSCILLATOR`: a switch of four places picks the wave and a knob tunes it. The scope draws
@@ -35,7 +38,6 @@ mod shared;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
-use std::thread;
 use std::time::Duration;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
@@ -45,9 +47,7 @@ use potpot_window::controls::axis::Axis;
 use potpot_window::controls::flat::{Color, Flat};
 use potpot_window::controls::interaction::{Control, Dial, Drag, Push, Readout, Target, Touch};
 use potpot_window::controls::response::{Band, Kind};
-use potpot_window::{
-  Feed, Gpu, Heard, Notes, Opening, Played, Pressed, Settings, Skin, View, wgpu,
-};
+use potpot_window::{Feed, Gpu, Heard, Notes, Played, Pressed, Settings, Skin, View, wgpu};
 
 use crate::shared::{CYAN, Drawn, Picture, Plot, SEAT};
 
@@ -131,6 +131,10 @@ const RUN: [u8; 8] = [48, 55, 60, 63, 67, 63, 60, 55];
 const STEP: u32 = 24;
 /// The blocks of a step that its note is down for.
 const DOWN_FOR: u32 = 20;
+/// The count of blocks that a picture is drawn after.
+///
+/// The third note of the run is down by then, and in its decay.
+const PICTURED_AFTER: u32 = STEP * 2 + 12;
 
 // the three screens: how far down their middles are, how long their faces are, and each one's
 // middle across the panel with the width of its face
@@ -913,13 +917,14 @@ impl Voice {
   }
 }
 
-/// Plays the panel's notes and a made-up run of a host's.
+/// Returns the function that plays one block of the notes.
 ///
-/// What is seen of them is written to `feed`. The parameters are as `values` has them. It works
-/// a block at a time, the way a plugin's audio thread does: it takes the notes the keys have
-/// played since the last block, plays the run while its button is in, and takes the envelope on.
-fn sound(feed: &Feed, notes: &Notes, values: &[AtomicU32]) {
-  let mut heard = Heard::new(notes);
+/// The notes are the panel's own and a made-up run of a host's. What is seen of them is written
+/// to `feed`. The parameters are as `values` has them. A block
+/// goes the way one of a plugin's audio thread does: it takes the notes the keys have played
+/// since the last block, plays the run while its button is in, and takes the envelope on.
+fn sound(feed: Feed, notes: Notes, values: Arc<[AtomicU32]>) -> impl FnMut() + Send {
+  let mut heard = Heard::new(&notes);
   let mut voice = Voice {
     note: None,
     stage: None,
@@ -929,15 +934,15 @@ fn sound(feed: &Feed, notes: &Notes, values: &[AtomicU32]) {
   };
   // the block of the run that comes next, and the note of it that is down
   let (mut block, mut run_note) = (0, None);
-  loop {
+  move || {
     notes.hear(&mut heard, |played| match played {
-      Played::On { note, velocity } => voice.strike(note, velocity, feed),
+      Played::On { note, velocity } => voice.strike(note, velocity, &feed),
       Played::Off { note } => voice.lift(note),
     });
 
     // the run begins a note at the start of each step and ends it a little before the next.
     // the window draws the keys' own notes down itself, and is shown a host's here
-    let playing = shared::value(values, HOST) > 0.5;
+    let playing = shared::value(&values, HOST) > 0.5;
     let (step, within) = (block / STEP, block % STEP);
     if (!playing || within == DOWN_FOR)
       && let Some(note) = run_note.take()
@@ -948,12 +953,12 @@ fn sound(feed: &Feed, notes: &Notes, values: &[AtomicU32]) {
     if playing && within == 0 {
       let note = RUN[step as usize % RUN.len()];
       notes.show(note, true);
-      voice.strike(note, 100, feed);
+      voice.strike(note, 100, &feed);
       run_note = Some(note);
     }
     block = if playing { block + 1 } else { 0 };
 
-    let plain = |parameter: usize, axis: Axis| axis.plain(shared::value(values, parameter));
+    let plain = |parameter: usize, axis: Axis| axis.plain(shared::value(&values, parameter));
     voice.advance([
       plain(ATTACK, ATTACKS),
       plain(DECAY, DECAYS),
@@ -962,8 +967,6 @@ fn sound(feed: &Feed, notes: &Notes, values: &[AtomicU32]) {
     ]);
     feed.set(LEVEL, voice.level);
     feed.set(ALONG, voice.along());
-    // an audio thread is called back for each block, which this stands in for
-    thread::sleep(BLOCK);
   }
 }
 
@@ -976,9 +979,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   (settings.feed, settings.notes) = (feed.clone(), notes.clone());
   let (dials, controls) = wiring();
   let (params, values) = shared::params(dials);
-  // the thread is left running, and ends with the process when the window closes
-  thread::spawn(move || sound(&feed, &notes, &values));
-  let opened = potpot_window::open(settings, params, controls, Opening::alone(), Synth::new)?;
-  opened.window.run_until_closed()?;
-  Ok(())
+  if shared::window::file().is_some() {
+    // a picture has the run playing, as a press on its button leaves it
+    shared::set(&values, HOST, 1.0);
+  }
+  let sound = shared::window::Sound {
+    block: Box::new(sound(feed, notes, values)),
+    every: BLOCK,
+    pictured_after: PICTURED_AFTER,
+  };
+  shared::window::run(settings, params, controls, Some(sound), Synth::new)
 }

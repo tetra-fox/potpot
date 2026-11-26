@@ -1,7 +1,7 @@
 //! The graphics device the windows of one plugin draw with.
 
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError, TryLockError, Weak};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError, TryLockError, Weak};
 
 use baseview::HandlerError;
 use tracing::warn;
@@ -60,14 +60,7 @@ impl Graphics {
   ///
   /// Returns an error if no graphics adapter is found or the adapter opens no device.
   pub(crate) fn new() -> Result<Self, HandlerError> {
-    // direct3d 12 is tried last. wine runs it on vulkan anyway, and its shader compiler builds
-    // no shader with a sampler as naga writes it for direct3d, so there the editor needs vulkan
-    let adapter = match adapter_of(wgpu::Backends::VULKAN | wgpu::Backends::METAL) {
-      Ok(adapter) => adapter,
-      Err(first) => adapter_of(wgpu::Backends::DX12).map_err(|second| {
-        HandlerError::from_boxed(format!("{first}, and with direct3d 12: {second}").into())
-      })?,
-    };
+    let adapter = adapter()?;
     let info = adapter.get_info();
     if info.device_type == wgpu::DeviceType::Cpu {
       warn!(
@@ -184,12 +177,39 @@ impl Graphics {
   }
 }
 
-/// Returns a graphics adapter of one of `backends`.
-fn adapter_of(backends: wgpu::Backends) -> Result<wgpu::Adapter, wgpu::RequestAdapterError> {
-  let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+/// The instance whose adapters are tried first, made at the first asking.
+///
+/// It is kept for as long as the process lives, and every device is opened from it or from
+/// [`LAST`].
+// the nvidia driver on linux, seen with its release 595, no longer hands a process its
+// graphics card once the process has let go of 17 vulkan instances. an adapter asked of a
+// later one is the cpu's
+// TODO: make an instance for each device again if a driver stops doing this
+static FIRST: LazyLock<wgpu::Instance> =
+  LazyLock::new(|| instance_of(wgpu::Backends::VULKAN | wgpu::Backends::METAL));
+/// The instance whose adapters are tried when [`FIRST`] has none.
+static LAST: LazyLock<wgpu::Instance> = LazyLock::new(|| instance_of(wgpu::Backends::DX12));
+
+fn instance_of(backends: wgpu::Backends) -> wgpu::Instance {
+  wgpu::Instance::new(&wgpu::InstanceDescriptor {
     backends,
     ..Default::default()
-  });
+  })
+}
+
+/// Returns the graphics adapter a device is opened on.
+fn adapter() -> Result<wgpu::Adapter, HandlerError> {
+  // direct3d 12 is tried last. wine runs it on vulkan anyway, and its shader compiler builds
+  // no shader with a sampler as naga writes it for direct3d, so there the editor needs vulkan
+  adapter_of(&FIRST).or_else(|first| {
+    adapter_of(&LAST).map_err(|second| {
+      HandlerError::from_boxed(format!("{first}, and with direct3d 12: {second}").into())
+    })
+  })
+}
+
+/// Returns a graphics adapter of `instance`.
+fn adapter_of(instance: &wgpu::Instance) -> Result<wgpu::Adapter, wgpu::RequestAdapterError> {
   pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
 }
 
@@ -239,6 +259,17 @@ mod tests {
     assert!(!Arc::ptr_eq(&same, &after));
     assert_eq!(after.built(|| 7).ok(), Some(7));
     assert_eq!(after.fault.get(), None);
+  }
+
+  #[test]
+  #[ignore = "needs a graphics device"]
+  fn every_asking_for_an_adapter_gets_the_same_one() {
+    // more askings than the nvidia driver on linux lets go of instances with a graphics card
+    let name = || adapter().expect("an adapter is found").get_info().name;
+    let first = name();
+    for asking in 1..24 {
+      assert_eq!(name(), first, "asking {asking}");
+    }
   }
 
   #[test]
