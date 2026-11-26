@@ -11,8 +11,9 @@ use crate::scene::{Lamp, Object};
 
 /// A level meter made of a ladder of lights.
 ///
-/// The lights are green at the bottom, then yellow, then red, each the end of its own light pipe
-/// set nearly flush in the panel. The meter runs up the panel from its foot at the origin.
+/// The lights are in three colors from the bottom, green, yellow and red unless set otherwise, each
+/// the end of its own light pipe set nearly flush in the panel. The meter runs up the panel from
+/// its foot at the origin.
 #[derive(Clone, Copy, Debug)]
 pub struct Meter {
   /// The count of lights.
@@ -29,10 +30,12 @@ pub struct Meter {
   ///
   /// Zero is square corners and one is round.
   pub corner: f32,
-  /// The share of the lights, from the bottom, where they turn yellow.
+  /// The share of the lights, from the bottom, where they turn the second color.
   pub yellow_from: f32,
-  /// The share of the lights, from the bottom, where they turn red.
+  /// The share of the lights, from the bottom, where they turn the third color.
   pub red_from: f32,
+  /// The colors of the lights, from the bottom.
+  pub colors: [Vec3; 3],
 }
 
 impl Meter {
@@ -50,6 +53,11 @@ impl Meter {
       corner: 0.16,
       yellow_from: 0.6,
       red_from: 0.85,
+      colors: [
+        Vec3::new(0.08, 0.95, 0.2),
+        Vec3::new(1.0, 0.80, 0.05),
+        Vec3::new(1.0, 0.10, 0.06),
+      ],
     }
   }
 
@@ -112,12 +120,13 @@ impl Meter {
   /// `index` counts from the bottom.
   pub fn color(&self, index: u32) -> Vec3 {
     let up = index as f32 / self.segments.max(1) as f32;
+    let [low, middle, high] = self.colors;
     if up >= self.red_from {
-      Vec3::new(1.0, 0.10, 0.06)
+      high
     } else if up >= self.yellow_from {
-      Vec3::new(1.0, 0.80, 0.05)
+      middle
     } else {
-      Vec3::new(0.08, 0.95, 0.2)
+      low
     }
   }
 
