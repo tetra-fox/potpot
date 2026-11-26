@@ -4,6 +4,8 @@ use glam::{Mat4, Vec3};
 
 use super::button::Button;
 use super::outline::band;
+use super::pipe_end;
+use crate::material::Material;
 use crate::mesh::Mesh;
 
 /// A push switch, a plunger standing in a collar on the panel.
@@ -49,6 +51,31 @@ impl PushSwitch {
     }
   }
 
+  /// Creates a wide flat key of clear plastic in a low collar.
+  ///
+  /// The key is lit from under it, which [`PushSwitch::backlight`] shows.
+  pub fn backlit(width: f32, length: f32, height: f32) -> Self {
+    Self {
+      plunger: Button {
+        corner: 0.2,
+        roll: 0.18,
+        crown: 0.0,
+        ..Button::key(width, length, height)
+      },
+      travel: height * 0.35,
+      collar: width.min(length) * 0.1,
+      collar_height: height * 0.45,
+    }
+  }
+
+  /// Returns the material of a clear plunger lit from under it.
+  ///
+  /// The plunger is smoky and barely tinted when `level` is zero, and glows in `color` toward
+  /// one.
+  pub fn backlight(&self, color: Vec3, level: f32) -> Material {
+    pipe_end(color, level, self.plunger.glow_radius())
+  }
+
   /// Returns the mesh of the plunger when it is out.
   pub fn plunger(&self) -> Mesh {
     self.plunger.body()
@@ -84,16 +111,20 @@ mod tests {
 
   #[test]
   fn a_plunger_all_the_way_in_still_stands_over_its_collar() {
-    let switch = PushSwitch::square(24.0, 14.0);
-    let top = switch
-      .transform(0.0, 0.0, 1.0)
-      .transform_point3(Vec3::Z * switch.plunger.height);
-    assert!(
-      top.z > switch.collar_height,
-      "{} under {}",
-      top.z,
-      switch.collar_height
-    );
+    for switch in [
+      PushSwitch::square(24.0, 14.0),
+      PushSwitch::backlit(40.0, 20.0, 8.0),
+    ] {
+      let top = switch
+        .transform(0.0, 0.0, 1.0)
+        .transform_point3(Vec3::Z * switch.plunger.height);
+      assert!(
+        top.z > switch.collar_height,
+        "{} under {}",
+        top.z,
+        switch.collar_height
+      );
+    }
   }
 
   #[test]
