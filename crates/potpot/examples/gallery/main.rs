@@ -7,6 +7,7 @@
 //! - `faders`: every fader
 //! - `lights`: lit buttons, meters and an XY pad
 //! - `lamp`: lamps beside what shows their light
+//! - `rings`: rings of lights around knobs
 //! - `screens`: screens that show an equalizer, a scope and an envelope
 //! - `retro`: a whole soft synth's front in an old manner
 //!
@@ -18,6 +19,7 @@ mod knobs;
 mod lamp;
 mod lights;
 mod retro;
+mod rings;
 mod screens;
 #[path = "../shared/mod.rs"]
 mod shared;
@@ -33,12 +35,13 @@ use crate::knobs::knobs;
 use crate::lamp::lamp;
 use crate::lights::lights;
 use crate::retro::retro;
+use crate::rings::rings;
 use crate::screens::screens;
 use crate::shared::{ALUMINUM, BLACK, SEAT, lettering};
 
 const SIZE: [u32; 2] = [1024, 640];
 /// The names of the panels, as a message lists them.
-const PANELS: &str = "knobs, faders, lights, lamp, screens, retro";
+const PANELS: &str = "knobs, faders, lights, lamp, rings, screens, retro";
 
 /// Returns a screw for each corner, each turned its own way.
 fn screws() -> [Object; 4] {
@@ -83,6 +86,7 @@ fn main() {
     "faders" => faders,
     "lights" => lights,
     "lamp" => lamp,
+    "rings" => rings,
     "screens" => screens,
     "retro" => retro,
     _ => panic!("gallery: unknown panel {panel}: expected one of {PANELS}"),
