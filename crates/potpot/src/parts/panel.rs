@@ -4,9 +4,10 @@ use std::f32::consts::FRAC_PI_2;
 
 use glam::{Vec2, Vec3};
 
-use super::CREASE;
 use super::button::Button;
+use super::grip::Grip;
 use super::outline::{Outline, band};
+use super::{CREASE, ROLL};
 use crate::mesh::Mesh;
 
 /// Returns a flat plate with its top at height zero.
@@ -155,6 +156,63 @@ pub fn screw_cross(radius: f32) -> Mesh {
   bar(0.58, 0.1).merged(&bar(0.1, 0.58))
 }
 
+/// The height of a socket cap screw's head, as a share of its radius.
+const CAP_HEIGHT: f32 = 0.7;
+/// The distance from the middle of a cap screw's socket to its corners, as a share of the radius.
+const SOCKET: f32 = 0.5;
+/// The depth of a cap screw's socket, as a share of the radius.
+const SOCKET_DEPTH: f32 = 0.35;
+/// The count of sides around a cap screw, a multiple of six so that the socket's corners are sharp.
+const CAP_SIDES: u32 = 36;
+
+/// Returns a point of a ring around a cap screw's head.
+///
+/// The ring is `out` from the middle and `height` high, round if `hex` is false and otherwise the
+/// socket's hexagon, which `out` reaches at its corners.
+fn cap_ring(out: f32, height: f32, hex: bool, angle: f32) -> Vec3 {
+  let shape = if hex {
+    Grip::Faceted(6).at(angle, 0.0)
+  } else {
+    1.0
+  };
+  (Vec2::from_angle(angle) * out * shape).extend(height)
+}
+
+/// Returns the head of a socket cap screw, of radius `radius`.
+///
+/// The head is a short cylinder with a rolled top edge, and a hexagonal socket opens in its
+/// top. The socket's walls and floor are [`hex_socket`], to be drawn darker.
+pub fn cap_screw(radius: f32) -> Mesh {
+  let height = radius * CAP_HEIGHT;
+  let roll = radius * 0.15;
+  let mut rings = vec![(radius, 0.0, false), (radius, height - roll, false)];
+  rings.extend((1..=ROLL).map(|step| {
+    let (up, out) = (step as f32 / ROLL as f32 * FRAC_PI_2).sin_cos();
+    (radius - roll + roll * out, height - roll + roll * up, false)
+  }));
+  rings.push((radius * SOCKET, height, true));
+  Mesh::rings(rings.len(), CAP_SIDES, CREASE, |ring, angle| {
+    let (out, height, hex) = rings[ring];
+    cap_ring(out, height, hex, angle)
+  })
+}
+
+/// Returns the hexagonal socket in the head of a [`cap_screw`] of radius `radius`.
+///
+/// The socket is its six walls and its floor, which meet the head's top at its rim.
+pub fn hex_socket(radius: f32) -> Mesh {
+  let (top, floor) = (radius * CAP_HEIGHT, radius * (CAP_HEIGHT - SOCKET_DEPTH));
+  let rings = [
+    (radius * SOCKET, top),
+    (radius * SOCKET, floor),
+    (0.0, floor),
+  ];
+  Mesh::rings(rings.len(), CAP_SIDES, CREASE, |ring, angle| {
+    let (out, height) = rings[ring];
+    cap_ring(out, height, true, angle)
+  })
+}
+
 /// Returns a slot cut through the panel, as a dark strip.
 ///
 /// The strip lies on the panel, `width` by `length` with round ends. It is an air vent, or the long
@@ -271,5 +329,45 @@ mod tests {
       }
     }
     assert!(sloped > 0, "no vertex lies on the slope");
+  }
+
+  #[test]
+  fn a_cap_screw_is_a_round_head_around_a_hexagonal_socket() {
+    let (head, socket) = (cap_screw(10.0), hex_socket(10.0));
+    let top = 10.0 * CAP_HEIGHT;
+    for vertex in &head.vertices {
+      let position = Vec3::from(vertex.position);
+      assert!(position.truncate().length() <= 10.0 + 1e-4, "{position}");
+      assert!((0.0..=top + 1e-4).contains(&position.z), "{position}");
+    }
+    // the socket's walls reach its corners every sixth of a turn and its flats between them
+    let corners = 10.0 * SOCKET;
+    let flats = corners * (std::f32::consts::PI / 6.0).cos();
+    let reaches: Vec<f32> = (socket.vertices.iter())
+      .map(|vertex| Vec3::from(vertex.position))
+      .filter(|position| (position.z - top).abs() < 1e-4)
+      .map(|position| position.truncate().length())
+      .collect();
+    let most = reaches.iter().copied().fold(0.0, f32::max);
+    let least = reaches.iter().copied().fold(f32::MAX, f32::min);
+    assert!(
+      (most - corners).abs() < 1e-4 && (least - flats).abs() < 1e-4,
+      "{least} to {most}"
+    );
+    let corner = Vec2::from_angle(std::f32::consts::FRAC_PI_3) * corners;
+    let at_corner = |mesh: &Mesh| {
+      (mesh.vertices.iter())
+        .any(|vertex| Vec3::from(vertex.position).distance(corner.extend(top)) < 1e-4)
+    };
+    // and the head's top meets the socket at the same rim
+    assert!(at_corner(&head) && at_corner(&socket));
+    // the walls face in, toward the socket's middle, and the floor up
+    for vertex in &socket.vertices {
+      let (position, normal) = (Vec3::from(vertex.position), Vec3::from(vertex.normal));
+      assert!(
+        normal.z > 0.99 || normal.truncate().dot(position.truncate()) < 0.0,
+        "{position} faces {normal}"
+      );
+    }
   }
 }
