@@ -23,6 +23,7 @@ mod ring;
 mod scale;
 mod screen;
 mod switch;
+mod vent;
 
 pub use button::Button;
 pub use fader::{Cap, Fader, fader_slot, fader_transform};
@@ -42,6 +43,7 @@ pub use ring::{LedArc, LedRing};
 pub use scale::{dashes, fader_ticks, ticks};
 pub use screen::{Screen, picture};
 pub use switch::PushSwitch;
+pub use vent::Vent;
 
 /// Returns the material of the dark gap a light pipe's end is set in.
 fn pipe_seat() -> Material {
