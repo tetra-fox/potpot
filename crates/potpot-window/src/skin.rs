@@ -50,9 +50,10 @@ pub struct View<'a> {
   ///
   /// The window draws it over the skin's picture.
   pub menu: Option<&'a Menu>,
-  /// The control that is pressed and held down, if there is one.
+  /// The control held down by the left button, if any.
   ///
-  /// It is given by its place among the panel's controls.
+  /// The control is a button being pressed or one being dragged, given by its place among the
+  /// panel's controls.
   pub held: Option<usize>,
   /// The scale the panel is drawn at, as a multiple of its own size.
   pub scale: f32,

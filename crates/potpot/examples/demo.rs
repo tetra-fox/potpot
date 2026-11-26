@@ -15,18 +15,22 @@
 //! - `LEVEL`: where the fader stands, which is how loud the meters beside it show the sound
 //! - `DOTS`: how many of a column of dots are lit
 
+mod shared;
+
 use std::f32::consts::FRAC_PI_2;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::AtomicU32;
 use std::thread;
 use std::time::Duration;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Button, Fader, Knob, Meter, Pad, PushSwitch};
-use potpot::{Light, Look, Material, Mesh, Object, Place, Renderer, Scene};
-use potpot_window::controls::flat::{Color, Flat};
+use potpot::{Light, Look, Material, Mesh, Renderer, Scene};
+use potpot_window::controls::flat::Flat;
 use potpot_window::controls::interaction::{Control, Dial, Drag, Push, Readout, Target, Touch};
-use potpot_window::{Feed, Gpu, Opening, Param, Settings, Skin, View, wgpu};
+use potpot_window::{Feed, Gpu, Opening, Settings, Skin, View, wgpu};
+
+use crate::shared::{ALUMINUM, BLACK, Drawn, SEAT};
 
 const SIZE: [f32; 2] = [900.0, 520.0];
 // the knobs that drive something, in the order of `knobs`
@@ -76,10 +80,8 @@ const WIRED_Y: f32 = 100.0;
 const NAME_UNDER: f32 = 52.0;
 const READOUT_UNDER: f32 = 76.0;
 /// Half a readout's width and height.
-const READOUT: [f32; 2] = [32.0, 10.0];
+const READOUT: Vec2 = Vec2::new(32.0, 10.0);
 const LETTERS: f32 = 8.0;
-/// The width of the letters' strokes.
-const WEIGHT: f32 = 1.2;
 /// The place of the lamp between the first two knobs.
 const LAMP: Vec2 = Vec2::new(150.0, WIRED_Y);
 const LAMP_SIZE: f32 = 16.0;
@@ -110,15 +112,6 @@ const LIGHT_COLORS: [Vec3; 4] = [
   Vec3::new(1.0, 0.12, 0.06),
 ];
 const AMBER: Vec3 = Vec3::new(1.0, 0.55, 0.05);
-/// The black of knob bodies, knob marks and the readouts' frames.
-const BLACK: Vec3 = Vec3::new(0.035, 0.035, 0.04);
-/// The color of aluminum turned on a lathe.
-const ALUMINUM: Vec3 = Vec3::new(0.78, 0.79, 0.81);
-/// The color of the dark gap around what is set into the panel.
-const SEAT: Vec3 = Vec3::splat(0.012);
-
-const INK: Color = [1.0, 0.66, 0.14, 1.0];
-const SELECTED: Color = [0.45, 0.28, 0.05, 1.0];
 
 /// A knob of the panel.
 struct Shown {
@@ -358,42 +351,6 @@ fn hue(turn: f32) -> Vec3 {
   color.clamp(Vec3::splat(0.04), Vec3::ONE)
 }
 
-/// Objects on their way into a scene.
-#[derive(Clone, Default)]
-struct Drawn {
-  objects: Vec<Object>,
-  /// What a press on each of the objects is on.
-  targets: Vec<Option<Target>>,
-}
-
-impl Drawn {
-  fn place(
-    &mut self,
-    mesh: &Arc<Mesh>,
-    transform: Mat4,
-    material: Material,
-    target: Option<Target>,
-  ) {
-    self.objects.push(Object {
-      mesh: Arc::clone(mesh),
-      transform,
-      material,
-    });
-    self.targets.push(target);
-  }
-
-  fn put(&mut self, mesh: Mesh, at: Vec2, material: Material) {
-    let transform = Mat4::from_translation(at.extend(0.0));
-    self.place(&Arc::new(mesh), transform, material, None);
-  }
-
-  /// Adds objects a part made itself, which no press is on.
-  fn extend(&mut self, objects: impl Iterator<Item = Object>) {
-    self.objects.extend(objects);
-    self.targets.resize(self.objects.len(), None);
-  }
-}
-
 /// The panel as potpot draws it.
 ///
 /// It holds its meshes, each made once.
@@ -444,15 +401,7 @@ impl Demo {
       Vec2::new(size.x / 2.0, 24.0),
       ink,
     );
-    for corner in [(18.0, 18.0), (882.0, 18.0), (18.0, 502.0), (882.0, 502.0)] {
-      let at = Vec2::from(corner);
-      fixed.put(parts::screw_seat(7.0, 1.5), at, hole);
-      fixed.put(
-        parts::screw(7.0).transformed(Mat4::from_rotation_z(at.x * 0.3 + at.y)),
-        at,
-        chrome,
-      );
-    }
+    fixed.screws(size, 18.0, 7.0);
 
     for (index, shown) in knobs.iter().enumerate() {
       let radius = shown.knob.radius;
@@ -466,19 +415,7 @@ impl Demo {
         ink,
       );
       if wired {
-        // the window its value shows in: a frame around dark glass
-        let at = shown.at + Vec2::Y * READOUT_UNDER;
-        let (wide, tall) = (READOUT[0] * 2.0, READOUT[1] * 2.0);
-        let frame = parts::frame(wide + 6.0, tall + 6.0, 3.0, 2.0, 3.0);
-        let target = Some(Target::Readout(index));
-        let place = Mat4::from_translation(at.extend(0.0));
-        fixed.place(&Arc::new(frame), place, Material::glossy(BLACK), target);
-        let glass = Mesh::cuboid(
-          Vec3::new(-wide / 2.0, -tall / 2.0, 0.0),
-          Vec3::new(wide / 2.0, tall / 2.0, 0.4),
-        );
-        let pane = Material::pane(Vec3::splat(0.01), wide * 3.5);
-        fixed.place(&Arc::new(glass), place, pane, target);
+        fixed.readout(shown.at + Vec2::Y * READOUT_UNDER, READOUT, index);
       }
     }
 
@@ -568,12 +505,8 @@ impl Demo {
     let mut drawn = self.fixed.clone();
     let mut lamps = Vec::new();
     for (index, (shown, meshes)) in self.knobs.iter().zip(&self.turned).enumerate() {
-      let transform =
-        parts::knob_transform(shown.at.x, shown.at.y, values[index], parts::KNOB_SWEEP);
       let materials = [shown.material, Material::matte(shown.mark)];
-      for (mesh, material) in meshes.iter().zip(materials) {
-        drawn.place(mesh, transform, material, Some(Target::Control(index)));
-      }
+      drawn.knob(meshes, materials, shown.at, values[index], index);
     }
 
     // the lamp, as bright as its knob has it while it is on and all the way while the pad
@@ -628,14 +561,7 @@ impl Demo {
     }
 
     // the fader stands where the level is, and the meters beside it show the sound
-    let cap = parts::fader_transform(FADER.x, FADER.y, TRAVEL, values[LEVEL]);
-    let materials = [
-      Material::glossy(Vec3::splat(0.04)),
-      Material::matte(Vec3::splat(0.9)),
-    ];
-    for (mesh, material) in self.cap.iter().zip(materials) {
-      drawn.place(mesh, cap, material, Some(Target::Control(FADER_CONTROL)));
-    }
+    drawn.fader(&self.cap, FADER, TRAVEL, values[LEVEL], FADER_CONTROL);
     let [segment, dot] = &self.segments;
     for (x, level) in LADDERS.into_iter().zip([feed[LEFT], feed[RIGHT]]) {
       drawn.extend(self.ladder.lights(segment, x, METER_FOOT, level, None));
@@ -647,7 +573,7 @@ impl Demo {
     // the fader on its side, and over it a row of lights that it fills from the left
     let slid = values[SLIDE];
     let across = SLIDE_AT + Vec2::X * SLIDE_TRAVEL * (slid - 0.5);
-    for (mesh, material) in self.lying.iter().zip(materials) {
+    for (mesh, material) in self.lying.iter().zip(shared::cap_materials()) {
       let place = Mat4::from_translation(across.extend(0.0));
       drawn.place(mesh, place, material, Some(Target::Control(SLIDE_CONTROL)));
     }
@@ -699,28 +625,14 @@ impl Skin for Demo {
     self.targets = targets;
 
     // each wired knob's value, written flat over the glass of its window
-    let wired = self.knobs.iter().zip(view.controls).take(WIRED);
-    for (control, (shown, reading)) in wired.enumerate() {
-      let middle = [shown.at.x, shown.at.y + READOUT_UNDER];
-      match view.edit.filter(|edit| edit.control == control) {
-        Some(edit) => over.typed(edit, middle, LETTERS, WEIGHT, INK, SELECTED),
-        None => {
-          let written = format!("{}{}", reading.text, reading.unit);
-          over.centered(&written, middle, LETTERS, WEIGHT, INK);
-        }
-      }
+    for (control, shown) in self.knobs.iter().take(WIRED).enumerate() {
+      let middle = shown.at + Vec2::Y * READOUT_UNDER;
+      shared::written(over, view, control, middle, LETTERS);
     }
   }
 
   fn draw(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, place: [u32; 4]) {
-    let [x, y, width, height] = place.map(|side| side as f32);
-    let on = Place {
-      x,
-      y,
-      width,
-      height,
-    };
-    self.renderer.render(encoder, target, on, place);
+    shared::render(&self.renderer, encoder, target, place);
   }
 
   fn changed(&self) -> Option<&[[u32; 4]]> {
@@ -736,11 +648,12 @@ impl Skin for Demo {
 /// Writes how loud a made-up sound is on each side into `feed`, a block at a time.
 ///
 /// The sound swells and dies away, a little later on the right, and is as loud at most as
-/// `level` has it. This is what a plugin's audio thread does at the end of each block.
-fn sound(feed: &Feed, level: &AtomicU32) {
+/// the level among `values` has it. This is what a plugin's audio thread does at the end of each
+/// block.
+fn sound(feed: &Feed, values: &[AtomicU32]) {
   let mut blocks = 0.0_f32;
   loop {
-    let level = f32::from_bits(level.load(Ordering::Relaxed));
+    let level = shared::value(values, LEVEL);
     let swell = |behind: f32| ((blocks - behind) * 0.02).sin().max(0.0);
     feed.set(LEFT, level * swell(0.0));
     feed.set(RIGHT, level * swell(20.0));
@@ -755,26 +668,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   let feed = Feed::new(2);
   settings.feed = feed.clone();
   let (dials, controls) = wiring();
-  // no host has these parameters: each stands where the panel last set it. the level is kept
-  // where the thread that makes the sound reads it too
-  let level = Arc::new(AtomicU32::new(dials[LEVEL].default.to_bits()));
-  let params = (dials.into_iter().enumerate())
-    .map(|(parameter, dial)| {
-      if parameter != LEVEL {
-        return Param::free(dial);
-      }
-      let (value, set) = (Arc::clone(&level), Arc::clone(&level));
-      Param::new(
-        dial,
-        move || f32::from_bits(value.load(Ordering::Relaxed)),
-        || {},
-        move |to| set.store(to.to_bits(), Ordering::Relaxed),
-        || {},
-      )
-    })
-    .collect();
+  let (params, values) = shared::params(dials);
   // the thread is left running, and ends with the process when the window closes
-  thread::spawn(move || sound(&feed, &level));
+  thread::spawn(move || sound(&feed, &values));
   let opened = potpot_window::open(settings, params, controls, Opening::alone(), Demo::new)?;
   opened.window.run_until_closed()?;
   Ok(())

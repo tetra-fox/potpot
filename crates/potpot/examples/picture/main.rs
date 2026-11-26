@@ -18,36 +18,25 @@ mod knobs;
 mod lamp;
 mod lights;
 mod screens;
+#[path = "../shared/mod.rs"]
+mod shared;
 mod synth;
 
 use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts;
-use potpot::{Light, Look, Material, Mesh, Object, Place, Renderer, Scene, wgpu};
+use potpot::{Light, Look, Material, Object, Place, Renderer, Scene, wgpu};
 
 use crate::faders::faders;
 use crate::knobs::knobs;
 use crate::lamp::lamp;
 use crate::lights::lights;
 use crate::screens::screens;
+use crate::shared::{ALUMINUM, BLACK, SEAT, lettering};
 use crate::synth::synth;
 
 const SIZE: [u32; 2] = [1024, 640];
-/// The black of most knobs and caps.
-const BLACK: Vec3 = Vec3::new(0.035, 0.035, 0.04);
-/// The color of aluminum turned on a lathe.
-const ALUMINUM: Vec3 = Vec3::new(0.78, 0.79, 0.81);
-/// The color of the dark gap around what is set into a panel.
-const SEAT: Vec3 = Vec3::splat(0.012);
-
-/// Returns lettering `tall` high.
-///
-/// Its strokes are wide enough to show when it is small.
-fn lettering(text: &str, tall: f32) -> Mesh {
-  parts::legend(text, tall, (tall * 0.17).max(1.0))
-}
-
 /// Returns a screw for each corner, each turned its own way.
 fn screws() -> [Object; 4] {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);

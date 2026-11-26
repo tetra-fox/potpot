@@ -13,9 +13,17 @@ picture *args:
 demo:
     cargo run -p potpot --example demo
 
-# open a window with a three-band equalizer on a lit screen, over a spectrum from a feed
+# open a four-band equalizer whose dots, knobs and faders turn the same parameters
 equalizer:
     cargo run -p potpot --example equalizer
+
+# open a compressor with its curve on a screen and meters from a feed
+compressor:
+    cargo run -p potpot --example compressor
+
+# open a synthesizer's front with a wave, a filter and an envelope on screens
+synth:
+    cargo run -p potpot --example synth
 
 test:
     cargo test --workspace

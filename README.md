@@ -18,7 +18,9 @@ under one light, so shadows, shine and the spill of a lamp come from the scene.
 
 ```sh
 just demo                    # a window with every kind of part on it
-just equalizer               # an equalizer's curve on a lit screen
+just equalizer               # dots, knobs and faders on the same four bands
+just compressor              # a curve to drag, and meters from an audio thread
+just synth                   # a wave, a filter and an envelope on screens
 just flat                    # a panel drawn with flat shapes alone
 just picture out.png synth   # one of potpot's example panels, drawn to a file
 ```

@@ -7,61 +7,14 @@ use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Knob, Screen};
 use potpot::{Light, Look, Material, Object, Scene};
 use potpot_controls::axis::Axis;
-use potpot_controls::flat::{Color, Flat};
+use potpot_controls::flat::Flat;
 use potpot_controls::response::{self, Band, Kind};
 
+use crate::shared::{self, GRID, Plot};
 use crate::{BLACK, SIZE, framed, lettering, screws};
 
 /// The sample rate the curve is drawn for, in hertz.
 const RATE: f32 = 48000.0;
-/// The color of a screen's face.
-const FACE: Vec3 = Vec3::new(0.012, 0.016, 0.018);
-/// The color of the lines that divide a screen.
-const GRID: Color = [0.09, 0.13, 0.15, 1.0];
-
-/// The part of a screen its picture is drawn in.
-#[derive(Clone, Copy)]
-struct Plot {
-  /// The top left corner, in the panel's points.
-  min: Vec2,
-  /// The bottom right corner.
-  max: Vec2,
-}
-
-impl Plot {
-  /// Returns the plot of a screen at `middle`.
-  ///
-  /// It is `inset` from the edges of the screen's face.
-  fn of(screen: &Screen, middle: Vec2, inset: f32) -> Self {
-    let half = Vec2::new(screen.width, screen.length) / 2.0 - Vec2::splat(inset);
-    Self {
-      min: middle - half,
-      max: middle + half,
-    }
-  }
-
-  /// Returns the point of the panel at a place in the plot.
-  ///
-  /// The place is a part of the way across the plot and a part of the way up it.
-  fn at(&self, [across, up]: [f32; 2]) -> [f32; 2] {
-    let size = self.max - self.min;
-    [self.min.x + across * size.x, self.max.y - up * size.y]
-  }
-
-  /// Adds lines that divide the plot into columns and rows.
-  ///
-  /// There are `across` columns and `up` rows.
-  fn divide(&self, flat: &mut Flat, across: u8, up: u8) {
-    for column in 0..=across {
-      let x = f32::from(column) / f32::from(across);
-      flat.line(self.at([x, 0.0]), self.at([x, 1.0]), 1.0, GRID);
-    }
-    for row in 0..=up {
-      let y = f32::from(row) / f32::from(up);
-      flat.line(self.at([0.0, y]), self.at([1.0, y]), 1.0, GRID);
-    }
-  }
-}
 
 /// Adds an equalizer of three bands.
 ///
@@ -220,8 +173,7 @@ pub(super) fn screens(look: Look) -> Scene {
     ),
   ];
   for (name, screen, middle, color, picture) in shown {
-    // large for the face, so that the sheen of its glass lies over one corner alone
-    let glass = Material::screen(FACE, (screen.width + screen.length) * 3.0);
+    let glass = shared::glass(&screen);
     objects.push(put(screen.face(), middle, glass));
     objects.push(put(screen.bezel(), middle, Material::glossy(BLACK)));
     let over = Vec2::new(0.0, -screen.length / 2.0 - screen.border - 12.0);

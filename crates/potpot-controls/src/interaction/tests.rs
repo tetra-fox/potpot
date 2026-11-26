@@ -355,11 +355,14 @@ fn close(a: f32, b: f32) -> bool {
 fn a_drag_is_one_gesture_from_the_first_move_to_the_release() {
   let mut bench = Bench::new();
   assert_eq!(bench.press(Some(Target::Control(PITCH)), 100.0), []);
+  // held from the press on, before it has moved
+  assert_eq!(bench.interaction.held(), Some(PITCH));
   let first = bench.drag(80.0, false);
   assert_eq!(first[0], Begin(PITCH));
   assert!(close(set(&first[1..], PITCH), 0.6));
   assert!(close(set(&bench.drag(90.0, false), PITCH), 0.55));
   assert_eq!(bench.release(), [End(PITCH)]);
+  assert_eq!(bench.interaction.held(), None);
   // and with the button up the pointer turns nothing
   assert_eq!(bench.drag(50.0, false), []);
 }
@@ -704,7 +707,9 @@ fn a_double_click_on_a_knob_resets_it() {
     bench.press(knob, 101.0),
     [Begin(MIX), Set(MIX, 1.0), End(MIX)]
   );
-  // the reset is whole, so the release ends nothing and a drag does not follow
+  // the reset is whole, so the press holds nothing, the release ends nothing and a drag does
+  // not follow
+  assert_eq!(bench.interaction.held(), None);
   assert_eq!(bench.drag(50.0, false), []);
   assert_eq!(bench.release(), []);
   // a third press in time is a first one again

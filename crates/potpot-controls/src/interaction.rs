@@ -984,10 +984,12 @@ impl Interaction {
     }
   }
 
-  /// Returns the control that is pressed and held down, if one is.
+  /// Returns the control held down by the left button.
+  ///
+  /// The control is a button being pressed, or one being dragged. `None` is none.
   pub fn held(&self) -> Option<usize> {
     match self.state {
-      State::Held { control, .. } => Some(control),
+      State::Held { control, .. } | State::Drag { control, .. } => Some(control),
       _ => None,
     }
   }
