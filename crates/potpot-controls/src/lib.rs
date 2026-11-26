@@ -50,6 +50,10 @@
 //!   drawing of it alike.
 //! - [`response`] gives the gain of an equalizer's bands over frequency.
 //! - [`spectrum`] gathers the bins of a spectrum into the bands a display draws.
+//!
+//! # Layout
+//!
+//! - [`layout`] places parts along a panel's width or height.
 
 /// A place or a size, across and down.
 pub type Point = [f32; 2];
@@ -59,6 +63,7 @@ pub mod fit;
 pub mod flat;
 pub mod furniture;
 pub mod interaction;
+pub mod layout;
 pub mod response;
 pub mod sent;
 pub mod spectrum;
