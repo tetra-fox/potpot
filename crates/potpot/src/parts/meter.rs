@@ -5,7 +5,7 @@ use std::sync::Arc;
 use glam::{Mat4, Vec3};
 
 use super::button::Button;
-use crate::material::Material;
+use super::{pipe_end, pipe_seat};
 use crate::mesh::Mesh;
 use crate::scene::{Lamp, Object};
 
@@ -96,7 +96,7 @@ impl Meter {
     (0..self.segments).map(move |index| Object {
       mesh: Arc::clone(seat),
       transform: self.place(x, y, index),
-      material: Material::matte(Vec3::splat(0.008)),
+      material: pipe_seat(),
     })
   }
 
@@ -143,17 +143,10 @@ impl Meter {
       let color = self.color(index);
       let covered = (level.clamp(0.0, 1.0) * count - index as f32).clamp(0.0, 1.0);
       let lit = if held == Some(index) { 1.0 } else { covered };
-      // each is the end of a light pipe: smoky and barely tinted when dark, and when lit
-      // brightest over the light at the bottom of it and along its walls
-      let dark = Material::pipe();
-      let dark = Material {
-        color: dark.color + color * 0.03,
-        ..dark
-      };
       Object {
         mesh: Arc::clone(segment),
         transform: self.place(x, y, index),
-        material: dark.lit(color, lit, self.width.min(self.length) * 0.5),
+        material: pipe_end(color, lit, self.width.min(self.length) * 0.5),
       }
     })
   }

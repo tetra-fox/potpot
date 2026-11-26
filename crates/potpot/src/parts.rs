@@ -3,6 +3,10 @@
 //! Each shape is centered on the z axis unless its doc places it elsewhere. Every size is more than
 //! zero.
 
+use glam::Vec3;
+
+use crate::material::Material;
+
 mod button;
 mod fader;
 mod grip;
@@ -33,6 +37,24 @@ pub use ring::LedRing;
 pub use scale::{dashes, fader_ticks, ticks};
 pub use screen::{Screen, picture};
 pub use switch::PushSwitch;
+
+/// Returns the material of the dark gap a light pipe's end is set in.
+fn pipe_seat() -> Material {
+  Material::matte(Vec3::splat(0.008))
+}
+
+/// Returns the material of a light pipe's end that shows `color` at `level`.
+///
+/// The end is smoky and barely tinted when dark, and when lit brightest over the light at the
+/// bottom of the pipe and along its walls, fading toward `radius` away from its middle.
+fn pipe_end(color: Vec3, level: f32, radius: f32) -> Material {
+  let dark = Material::pipe();
+  Material {
+    color: dark.color + color * 0.03,
+    ..dark
+  }
+  .lit(color, level, radius)
+}
 
 /// The cosine of the turn under which faces shade as one curve.
 ///

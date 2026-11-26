@@ -6,7 +6,7 @@ use glam::{Mat4, Vec3};
 
 use super::KNOB_SWEEP;
 use super::button::Button;
-use crate::material::Material;
+use super::{pipe_end, pipe_seat};
 use crate::mesh::Mesh;
 use crate::scene::Object;
 
@@ -90,7 +90,7 @@ impl LedRing {
     (0..self.segments).map(move |index| Object {
       mesh: Arc::clone(seat),
       transform: self.place(x, y, index),
-      material: Material::matte(Vec3::splat(0.008)),
+      material: pipe_seat(),
     })
   }
 
@@ -115,16 +115,10 @@ impl LedRing {
     (0..self.segments).map(move |index| {
       let start = index as f32;
       let lit = (high.min(start + 1.0) - low.max(start)).max(0.0);
-      // smoky and barely tinted when dark, and when lit brightest over the light under it
-      let dark = Material::pipe();
-      let dark = Material {
-        color: dark.color + color * 0.03,
-        ..dark
-      };
       Object {
         mesh: Arc::clone(segment),
         transform: self.place(x, y, index),
-        material: dark.lit(color, lit, self.width * 0.6),
+        material: pipe_end(color, lit, self.width * 0.6),
       }
     })
   }
