@@ -5,8 +5,9 @@
 //!
 //! - `knobs`: every knob style
 //! - `faders`: every fader
-//! - `lights`: lit buttons and meters
+//! - `lights`: lit buttons, meters and an XY pad
 //! - `lamp`: lamps beside what shows their light
+//! - `screens`: screens that show an equalizer, a scope and an envelope
 //! - `synth`: a whole soft synth's front in an old manner
 //!
 //! After those, one number is the pixel size and a second the color steps, for the crude
@@ -16,6 +17,7 @@ mod faders;
 mod knobs;
 mod lamp;
 mod lights;
+mod screens;
 mod synth;
 
 use std::sync::Arc;
@@ -28,6 +30,7 @@ use crate::faders::faders;
 use crate::knobs::knobs;
 use crate::lamp::lamp;
 use crate::lights::lights;
+use crate::screens::screens;
 use crate::synth::synth;
 
 const SIZE: [u32; 2] = [1024, 640];
@@ -87,9 +90,12 @@ fn main() {
     Some(panel) if panel == "faders" => faders,
     Some(panel) if panel == "lights" => lights,
     Some(panel) if panel == "lamp" => lamp,
+    Some(panel) if panel == "screens" => screens,
     Some(panel) if panel == "synth" => synth,
     Some(panel) => {
-      panic!("picture: unknown panel {panel}: expected knobs, faders, lights, lamp or synth")
+      panic!(
+        "picture: unknown panel {panel}: expected knobs, faders, lights, lamp, screens or synth"
+      )
     }
   };
   let look = Look {

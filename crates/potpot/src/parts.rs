@@ -11,8 +11,10 @@ mod led;
 mod legend;
 mod meter;
 mod outline;
+mod pad;
 mod panel;
 mod scale;
+mod screen;
 mod switch;
 
 pub use button::Button;
@@ -22,8 +24,10 @@ pub use knob::{Edge, KNOB_SWEEP, Knob, Top, knob_transform};
 pub use led::{led, led_lamp, led_material, led_seat};
 pub use legend::legend;
 pub use meter::Meter;
+pub use pad::Pad;
 pub use panel::{bezel, frame, plate, screw, screw_cross, screw_head, screw_seat, slab, slot};
 pub use scale::{dashes, fader_ticks, ticks};
+pub use screen::{Screen, picture};
 pub use switch::PushSwitch;
 
 /// The cosine of the turn under which faces shade as one curve.

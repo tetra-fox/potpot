@@ -23,6 +23,7 @@ use potpot_controls::interaction::{
 use potpot_controls::sent::Sent;
 use tracing::error;
 
+use crate::feed::same;
 use crate::flat::FlatRenderer;
 use crate::open::{Param, Remembered, Settings, Shared, ToWindow};
 use crate::screen::Screen;
@@ -49,6 +50,12 @@ const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
 const DRAWN_WITHIN: Duration = Duration::from_secs(1);
 /// The number of pixels of a wheel that scrolls by them that count as one line.
 const PIXELS_PER_LINE: f32 = 20.0;
+
+/// The share of a window that is read back as all of it.
+///
+/// Parts of a frame that make up that much of it are read back as the whole frame. Each part is
+/// a copy of its own, and together they are as much to carry as the frame.
+const MOSTLY: f32 = 0.75;
 
 /// The number of ticks a window keeps a size of another shape than the panel's.
 ///
@@ -82,6 +89,10 @@ pub(crate) struct Window<S> {
   ///
   /// Before it has, it is not to be asked for one.
   started: Cell<bool>,
+  /// Whether the window may have lost some of its picture.
+  ///
+  /// The system says so, and the next picture put in the window is put there whole.
+  exposed: Cell<bool>,
   /// The size the window was last given, until the state has taken it in.
   sized: Cell<Option<WindowSize>>,
   /// The system's clipboard, from the first use of it on.
@@ -135,6 +146,12 @@ struct State<S> {
   ///
   /// It is `None` if the window has had no frame since it was sized or shown.
   shown: Option<Frame>,
+  /// The parts of the canvas where a frame is new.
+  ///
+  /// The vector is kept for its room.
+  parts: Vec<[u32; 4]>,
+  /// The time of the last frame that drew the feed changed.
+  fed: Option<Instant>,
   /// The multiple of the panel's size the window is to become.
   ///
   /// The window becomes it once for each frame at most.
@@ -178,10 +195,12 @@ fn built<T>(device: &wgpu::Device, build: impl FnOnce() -> T) -> Result<T, wgpu:
 }
 
 /// Everything a frame shows that can change between frames.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 struct Frame {
   /// The value of each parameter.
   values: Vec<f32>,
+  /// The number in each slot of the feed.
+  feed: Vec<f32>,
   /// The window's width and height in pixels.
   window: [u32; 2],
   /// The multiple of the panel's size it is drawn at.
@@ -237,27 +256,142 @@ impl Canvas {
       row,
     }
   }
+
+  /// Has parts of the canvas read back after a frame is drawn.
+  ///
+  /// `encoder` holds the frame's drawing.
+  ///
+  /// Each part is `[left, top, width, height]` in the canvas's pixels and lies on it, and there
+  /// is one at least. The frame is waited for here, on the window's thread, which the host runs
+  /// on too on Windows. The device takes a millisecond or so.
+  ///
+  /// Returns the rows of the read buffer that the parts lie in, which are mapped to be read.
+  /// The other pixels of those rows are as some frame before left them.
+  ///
+  /// # Errors
+  ///
+  /// Returns what went wrong if the frame is not drawn within [`DRAWN_WITHIN`] or the rows
+  /// cannot be mapped.
+  fn read(
+    &self,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    mut encoder: wgpu::CommandEncoder,
+    parts: &[[u32; 4]],
+  ) -> Result<Rows, String> {
+    let row = u64::from(self.row);
+    for &[left, top, width, height] in parts {
+      encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+          origin: wgpu::Origin3d {
+            x: left,
+            y: top,
+            z: 0,
+          },
+          ..self.texture.as_image_copy()
+        },
+        wgpu::TexelCopyBufferInfo {
+          buffer: &self.read,
+          layout: wgpu::TexelCopyBufferLayout {
+            offset: u64::from(top) * row + u64::from(left) * 4,
+            bytes_per_row: Some(self.row),
+            rows_per_image: None,
+          },
+        },
+        wgpu::Extent3d {
+          width,
+          height,
+          depth_or_array_layers: 1,
+        },
+      );
+    }
+    let submitted = queue.submit([encoder.finish()]);
+    let top = parts.iter().map(|part| part[1]).min().unwrap_or(0);
+    let foot = (parts.iter().map(|part| part[1] + part[3]).max()).unwrap_or(0);
+    let bytes = u64::from(top) * row..u64::from(foot) * row;
+    let (mapped, when_mapped) = mpsc::channel();
+    (self.read.slice(bytes.clone())).map_async(wgpu::MapMode::Read, move |result| {
+      // the receiver is only gone once the frame has been given up on
+      let _ = mapped.send(result);
+    });
+    let waited = device.poll(wgpu::PollType::Wait {
+      submission_index: Some(submitted),
+      timeout: Some(DRAWN_WITHIN),
+    });
+    match (waited, when_mapped.try_recv()) {
+      (Ok(_), Ok(Ok(()))) => Ok(Rows { top, bytes }),
+      (waited, mapped) => Err(format!(
+        "the frame could not be read back: {waited:?}, {mapped:?}"
+      )),
+    }
+  }
+}
+
+/// Rows of a canvas's read buffer.
+struct Rows {
+  /// The first of the rows, counted from the top of the canvas.
+  top: u32,
+  /// The bytes of the read buffer the rows are.
+  bytes: std::ops::Range<u64>,
 }
 
 /// Returns whether a frame has to be drawn.
 ///
 /// One has to be when none is in the window, or the one that is shows anything other than
-/// what the panel is like now.
-fn due(
-  shown: Option<&Frame>,
-  values: &[f32],
-  window: [u32; 2],
-  scale: f32,
-  edit: Option<&Edit>,
-  menu: Option<&Menu>,
-  held: Option<usize>,
-) -> bool {
+/// `now`, which is what the panel is like now.
+fn due(shown: Option<&Frame>, now: &Frame) -> bool {
   shown.is_none_or(|shown| {
-    (shown.values.as_slice(), shown.window, shown.scale) != (values, window, scale)
-      || shown.edit.as_ref() != edit
-      || shown.menu.as_ref() != menu
-      || shown.held != held
+    (&shown.values, shown.window, shown.scale) != (&now.values, now.window, now.scale)
+      || !same(&shown.feed, &now.feed)
+      || (&shown.edit, &shown.menu, shown.held) != (&now.edit, &now.menu, now.held)
   })
+}
+
+/// Gathers the parts of a window where a frame is new.
+///
+/// They are where the frame differs from the one before it. `skin` is the parts of its place
+/// that the skin names, and `flat` the rectangle of the window that the flat shapes over it
+/// differ in. `place` is the skin's place in the window, which is `window` pixels. The parts
+/// are put in `parts` as `[left, top, width, height]` in the window's pixels, in place of what
+/// it held.
+///
+/// Returns whether the parts are to be read back in place of the whole frame, which they are
+/// unless they make up most of the window.
+fn patches(
+  parts: &mut Vec<[u32; 4]>,
+  skin: &[[u32; 4]],
+  flat: Option<[u32; 4]>,
+  place: [u32; 4],
+  window: [u32; 2],
+) -> bool {
+  parts.clear();
+  let [x, y, wide, high] = place;
+  // a part is kept to the place, whatever the skin says of it
+  let placed = skin.iter().map(|&[left, top, width, height]| {
+    let (left, top) = (left.min(wide), top.min(high));
+    [
+      x + left,
+      y + top,
+      width.min(wide - left),
+      height.min(high - top),
+    ]
+  });
+  parts.extend(placed.chain(flat).filter(|part| part[2] > 0 && part[3] > 0));
+  let read: u64 = (parts.iter())
+    .map(|part| u64::from(part[2]) * u64::from(part[3]))
+    .sum();
+  let all = u64::from(window[0]) * u64::from(window[1]);
+  (read as f32) < all as f32 * MOSTLY
+}
+
+/// Returns whether the next frame after `now` is asked for.
+///
+/// It is for one [`TICK`] after `fed`, the time of the last frame that drew the feed changed.
+/// Nothing reports a write to the feed, and an audio thread's writes can be further apart than
+/// frames, so a frame that finds nothing written does not end the looking. After a tick the
+/// ticks look.
+fn follows(fed: Option<Instant>, now: Instant) -> bool {
+  fed.is_some_and(|fed| now.duration_since(fed) < TICK)
 }
 
 /// Returns the multiple of its own size a panel of `size` is drawn at.
@@ -288,20 +422,19 @@ impl<S: Skin> State<S> {
       .collect()
   }
 
-  /// Returns whether the window's picture differs from what the panel is like now.
-  fn stale(&mut self, hosts: &[Host], size: Point) -> bool {
-    let (values, window, scale) = (self.values(hosts), self.window, self.scale(size));
-    let (edit, menu) = (self.interaction.edit(), self.interaction.menu());
-    let held = self.interaction.held();
-    due(
-      self.shown.as_ref(),
-      &values,
-      window,
-      scale,
-      edit,
-      menu,
-      held,
-    )
+  /// Returns what the panel is like now.
+  ///
+  /// The parameters and the feed are looked at afresh.
+  fn now(&mut self, hosts: &[Host], settings: &Settings) -> Frame {
+    Frame {
+      values: self.values(hosts),
+      feed: settings.feed.read(),
+      window: self.window,
+      scale: self.scale(settings.size),
+      edit: self.interaction.edit().cloned(),
+      menu: self.interaction.menu().copied(),
+      held: self.interaction.held(),
+    }
   }
 
   /// Returns the [`Target`] at one of the panel's points.
@@ -387,6 +520,7 @@ impl<S: Skin> Window<S> {
       let view = View {
         controls: &interaction.readings(&values),
         values: &values,
+        feed: &settings.feed.read(),
         edit: None,
         menu: None,
         held: None,
@@ -427,6 +561,7 @@ impl<S: Skin> Window<S> {
       top_level,
       misshapen: Cell::new(None),
       started: Cell::new(false),
+      exposed: Cell::new(false),
       sized: Cell::new(None),
       clipboard: RefCell::new(None),
       state: RefCell::new(State {
@@ -443,6 +578,8 @@ impl<S: Skin> Window<S> {
         on_window: [0.0; 2],
         display_scale: size.scale_factor,
         shown: None,
+        parts: Vec::new(),
+        fed: None,
         wanted_scale: None,
         fault,
         stopped: false,
@@ -515,13 +652,14 @@ impl<S: Skin> Window<S> {
   /// Asks for a frame if the one in the window is stale.
   ///
   /// The window is told when to draw by what happens to it, and this makes up for anything
-  /// it was not told: a parameter moved with no report of it, or a frame put off while a
-  /// handler further up had the state.
+  /// it was not told: a parameter moved with no report of it, a number of the feed written, or
+  /// a frame put off while a handler further up had the state.
   fn refresh(&self) {
     let Some(mut state) = self.state() else {
       return;
     };
-    let stale = state.stale(&self.hosts, self.settings.size);
+    let now = state.now(&self.hosts, &self.settings);
+    let stale = due(state.shown.as_ref(), &now);
     // a window with no size has nothing to draw
     let asks = !state.stopped && stale && !state.window.contains(&0);
     drop(state);
@@ -636,22 +774,32 @@ impl<S: Skin> Window<S> {
     if let Some(fault) = fault.get() {
       stop(stopped, fault);
     }
-    // the system wants the window painted and the panel is as it was last drawn, or is no
-    // longer drawn at all: the last picture goes back
-    if state.stopped || !state.stale(&self.hosts, self.settings.size) {
-      if let Err(error) = state.screen.again() {
+    let now = state.now(&self.hosts, &self.settings);
+    let at = Instant::now();
+    let exposed = self.exposed.take();
+    if state.stopped || !due(state.shown.as_ref(), &now) {
+      // nothing to draw. the last picture goes back if the window lost some of it, or if no feed
+      // moved a moment ago, when it is the system that wants the window painted
+      let follows = !state.stopped && follows(state.fed, at);
+      if (!follows || exposed)
+        && let Err(error) = state.screen.again()
+      {
         stop(&mut state.stopped, error);
+      }
+      drop(state);
+      if follows {
+        self.redraw();
       }
       return Ok(());
     }
     // a window with no size, as a minimized one has, has nothing to draw, and one larger
     // than the device can draw on in one piece is left as it is
     let most = state.device.limits().max_texture_dimension_2d;
-    if state.window.iter().any(|&side| side == 0 || side > most) {
+    if now.window.iter().any(|&side| side == 0 || side > most) {
       return Ok(());
     }
     let (settings, size) = (&self.settings, self.settings.size);
-    let (values, window, scale) = (state.values(&self.hosts), state.window, state.scale(size));
+    let (window, scale) = (now.window, now.scale);
     let State {
       device,
       queue,
@@ -661,6 +809,8 @@ impl<S: Skin> Window<S> {
       flat,
       interaction,
       shown,
+      parts,
+      fed,
       fault,
       stopped,
       ..
@@ -679,11 +829,12 @@ impl<S: Skin> Window<S> {
       format: FORMAT,
     };
     let seen = View {
-      controls: &interaction.readings(&values),
-      values: &values,
-      edit: interaction.edit(),
-      menu: interaction.menu(),
-      held: interaction.held(),
+      controls: &interaction.readings(&now.values),
+      values: &now.values,
+      feed: &now.feed,
+      edit: now.edit.as_ref(),
+      menu: now.menu.as_ref(),
+      held: now.held,
       scale,
       pixel,
       pixels: [width, height],
@@ -692,88 +843,86 @@ impl<S: Skin> Window<S> {
     let mut over = Flat::default();
     skin.prepare(&gpu, &seen, &mut over);
     settings.grip.shapes(&mut over, size, scale);
-    if let Some(menu) = interaction.menu() {
+    if let Some(menu) = &now.menu {
       settings.menu.shapes(&mut over, menu, size, pixel);
     }
-    flat.prepare(device, queue, &over, size, [width, height]);
-    let view = &drawn_on.view;
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-      label: Some("controls editor"),
+    // the window holds the frame drawn before this one, unless it has had none since it was
+    // sized or shown. a skin that names where its own picture differs is read back there alone
+    let named = skin.changed().filter(|_| shown.is_some());
+    let patched = named.is_some_and(|named| {
+      let lettered = flat.differing(&over, size, place);
+      patches(parts, named, lettered, place, window)
     });
-    if [width, height] != window {
-      // the rest of the window, which the panel's own pass leaves as it finds it
-      encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("controls around"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-          view,
-          depth_slice: None,
-          resolve_target: None,
-          ops: wgpu::Operations {
-            load: wgpu::LoadOp::Clear(AROUND),
-            store: wgpu::StoreOp::Store,
-          },
-        })],
-        depth_stencil_attachment: None,
-        timestamp_writes: None,
-        occlusion_query_set: None,
-      });
-    }
-    skin.draw(&mut encoder, view, place);
-    flat.render(&mut encoder, view, place);
-    encoder.copy_texture_to_buffer(
-      drawn_on.texture.as_image_copy(),
-      wgpu::TexelCopyBufferInfo {
-        buffer: &drawn_on.read,
-        layout: wgpu::TexelCopyBufferLayout {
-          offset: 0,
-          bytes_per_row: Some(drawn_on.row),
-          rows_per_image: None,
-        },
-      },
-      drawn_on.texture.size(),
-    );
-    let submitted = queue.submit([encoder.finish()]);
-    // the frame is waited for here, on the window's thread, which the host runs on too on windows.
-    // the device takes a millisecond or so for it, and the pixels go in the window at once
-    let (mapped, when_mapped) = mpsc::channel();
-    (drawn_on.read.slice(..)).map_async(wgpu::MapMode::Read, move |result| {
-      // the receiver is only gone once the frame has been given up on
-      let _ = mapped.send(result);
-    });
-    let waited = device.poll(wgpu::PollType::Wait {
-      submission_index: Some(submitted),
-      timeout: Some(DRAWN_WITHIN),
-    });
-    if let Some(fault) = fault.get() {
-      stop(stopped, fault);
-      return Ok(());
-    }
-    let read = match (waited, when_mapped.try_recv()) {
-      (Ok(_), Ok(Ok(()))) => &drawn_on.read,
-      // the buffer may still be on its way to being read, and is not drawn on again
-      (waited, mapped) => {
-        *canvas = None;
-        stop(
-          stopped,
-          format_args!("the frame could not be read back: {waited:?}, {mapped:?}"),
-        );
+    flat.prepare(device, queue, &over, size, place);
+    if patched && parts.is_empty() {
+      // a frame that differs in nothing is in the window already, unless the window lost it
+      if let Err(error) = screen.patch(&[], 0, &[], exposed) {
+        stop(stopped, error);
         return Ok(());
       }
-    };
-    let put = screen.show(window, drawn_on.row, &read.slice(..).get_mapped_range());
-    read.unmap();
-    if let Err(error) = put {
-      stop(stopped, error);
-      return Ok(());
+    } else {
+      let view = &drawn_on.view;
+      let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("controls editor"),
+      });
+      if [width, height] != window {
+        // the rest of the window, which the panel's own pass leaves as it finds it
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+          label: Some("controls around"),
+          color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+              load: wgpu::LoadOp::Clear(AROUND),
+              store: wgpu::StoreOp::Store,
+            },
+          })],
+          depth_stencil_attachment: None,
+          timestamp_writes: None,
+          occlusion_query_set: None,
+        });
+      }
+      skin.draw(&mut encoder, view, place);
+      flat.render(&mut encoder, view);
+      let whole = [[0, 0, window[0], window[1]]];
+      let parts: &[[u32; 4]] = if patched { parts } else { &whole };
+      let read = drawn_on.read(device, queue, encoder, parts);
+      if let Some(fault) = fault.get() {
+        stop(stopped, fault);
+        return Ok(());
+      }
+      let rows = match read {
+        Ok(rows) => rows,
+        // the buffer may still be on its way to being read, and is not drawn on again
+        Err(why) => {
+          *canvas = None;
+          stop(stopped, why);
+          return Ok(());
+        }
+      };
+      let pixels = drawn_on.read.slice(rows.bytes).get_mapped_range();
+      let put = if patched {
+        screen.patch(parts, rows.top, &pixels, exposed)
+      } else {
+        screen.show(window, drawn_on.row, &pixels)
+      };
+      drop(pixels);
+      drawn_on.read.unmap();
+      if let Err(error) = put {
+        stop(stopped, error);
+        return Ok(());
+      }
     }
-    *shown = Some(Frame {
-      values,
-      window,
-      scale,
-      edit: interaction.edit().cloned(),
-      menu: interaction.menu().copied(),
-      held: interaction.held(),
-    });
+    if (shown.as_ref()).is_some_and(|shown| !same(&shown.feed, &now.feed)) {
+      *fed = Some(at);
+    }
+    let follows = follows(*fed, at);
+    *shown = Some(now);
+    drop(state);
+    if follows {
+      self.redraw();
+    }
     Ok(())
   }
 
@@ -1046,6 +1195,14 @@ impl<S: Skin> WindowHandler for Guarded<S> {
     self.run(Ok(()), Window::draw)
   }
 
+  fn damage(&self, _: baseview::DamageArea) {
+    // baseview 0.4.2 on windows draws every frame for a paint message and reports the message's
+    // rectangle here, for the frames it asked for itself too, so there this says nothing
+    if cfg!(not(target_os = "windows")) {
+      self.run((), |window| window.exposed.set(true));
+    }
+  }
+
   fn poll(&self) {
     self.run((), Window::poll);
   }
@@ -1077,6 +1234,7 @@ mod tests {
   fn frame(values: [f32; 3]) -> Frame {
     Frame {
       values: values.into(),
+      feed: Vec::new(),
       window: [750, 375],
       scale: 1.0,
       edit: None,
@@ -1085,42 +1243,26 @@ mod tests {
     }
   }
 
-  /// Returns whether a frame is due.
-  ///
-  /// The window shows `shown` and the panel is like `now`.
-  fn is_due(shown: Option<&Frame>, now: &Frame) -> bool {
-    let Frame {
-      values,
-      window,
-      scale,
-      edit,
-      menu,
-      held,
-    } = now;
-    let (edit, menu) = (edit.as_ref(), menu.as_ref());
-    due(shown, values, *window, *scale, edit, menu, *held)
-  }
-
   #[test]
   fn a_frame_is_due_when_none_is_shown_or_the_one_shown_is_not_the_panel_as_it_is() {
     let shown = frame([0.5, 0.5, 1.0]);
     // the same panel in a window that shows it: nothing to draw, however often it is asked
-    assert!(!is_due(Some(&shown), &shown));
+    assert!(!due(Some(&shown), &shown));
     // a window that has had no frame, as when it has just been sized or shown
-    assert!(is_due(None, &shown));
+    assert!(due(None, &shown));
     // a control somewhere else, whoever moved it and whether or not anything said so
-    assert!(is_due(Some(&shown), &frame([0.5, 0.25, 1.0])));
+    assert!(due(Some(&shown), &frame([0.5, 0.25, 1.0])));
     // the window another size, or the panel drawn larger in it
     let resized = Frame {
       window: [900, 375],
       ..shown.clone()
     };
-    assert!(is_due(Some(&shown), &resized));
+    assert!(due(Some(&shown), &resized));
     let scaled = Frame {
       scale: 1.5,
       ..shown.clone()
     };
-    assert!(is_due(Some(&shown), &scaled));
+    assert!(due(Some(&shown), &scaled));
     // the menu up, moved to another row, and away again
     let menu = |hovered| Frame {
       menu: Some(Menu {
@@ -1130,10 +1272,10 @@ mod tests {
       }),
       ..shown.clone()
     };
-    assert!(is_due(Some(&shown), &menu(None)));
-    assert!(is_due(Some(&menu(None)), &menu(Some(Item::Reset))));
-    assert!(is_due(Some(&menu(None)), &shown));
-    assert!(!is_due(Some(&menu(None)), &menu(None)));
+    assert!(due(Some(&shown), &menu(None)));
+    assert!(due(Some(&menu(None)), &menu(Some(Item::Reset))));
+    assert!(due(Some(&menu(None)), &shown));
+    assert!(!due(Some(&menu(None)), &menu(None)));
     // a value being typed, and one more letter of it
     let typed = |text: &str| Frame {
       edit: Some(Edit {
@@ -1144,16 +1286,162 @@ mod tests {
       }),
       ..shown.clone()
     };
-    assert!(is_due(Some(&shown), &typed("1")));
-    assert!(is_due(Some(&typed("1")), &typed("12")));
-    assert!(!is_due(Some(&typed("12")), &typed("12")));
+    assert!(due(Some(&shown), &typed("1")));
+    assert!(due(Some(&typed("1")), &typed("12")));
+    assert!(!due(Some(&typed("12")), &typed("12")));
     // a button held down, and let go
     let held = Frame {
       held: Some(0),
       ..shown.clone()
     };
-    assert!(is_due(Some(&shown), &held));
-    assert!(is_due(Some(&held), &shown));
+    assert!(due(Some(&shown), &held));
+    assert!(due(Some(&held), &shown));
+    // a number of the feed written, and one that is no number holding still
+    let fed = |level| Frame {
+      feed: vec![0.25, level],
+      ..shown.clone()
+    };
+    assert!(due(Some(&fed(0.5)), &fed(0.75)));
+    assert!(!due(Some(&fed(0.5)), &fed(0.5)));
+    assert!(!due(Some(&fed(f32::NAN)), &fed(f32::NAN)));
+  }
+
+  #[test]
+  fn the_parts_of_a_frame_are_those_of_the_skin_in_its_place_and_of_the_flat_shapes() {
+    let mut parts = Vec::new();
+    let (place, window) = ([50, 0, 800, 400], [900, 400]);
+    // a skin's parts are moved to its place and kept to it, and one of no size is left out
+    let skin = [[10, 20, 30, 40], [790, 390, 30, 30], [100, 100, 0, 9]];
+    assert!(patches(
+      &mut parts,
+      &skin,
+      Some([60, 10, 5, 5]),
+      place,
+      window
+    ));
+    assert_eq!(
+      parts,
+      [[60, 20, 30, 40], [840, 390, 10, 10], [60, 10, 5, 5]]
+    );
+    // a frame that differs in nothing has no parts, and is not read back at all
+    assert!(patches(&mut parts, &[], None, place, window));
+    assert!(parts.is_empty());
+    // parts that make up most of the window are no better than the whole
+    assert!(!patches(
+      &mut parts,
+      &[[0, 0, 800, 350]],
+      None,
+      place,
+      window
+    ));
+  }
+
+  /// Returns numbers from zero to one, the same ones every time.
+  fn numbers() -> impl FnMut() -> f32 {
+    let mut state = 0x2545_f491_u32;
+    move || {
+      state ^= state << 13;
+      state ^= state >> 17;
+      state ^= state << 5;
+      (state >> 8) as f32 / (1 << 24) as f32
+    }
+  }
+
+  #[test]
+  #[ignore = "needs a graphics device"]
+  fn a_picture_patched_with_the_parts_of_each_frame_is_the_frame_read_back_whole() {
+    use crate::screen::Kept;
+
+    let instance = wgpu::Instance::default();
+    let adapter =
+      pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+        .expect("a graphics adapter is found");
+    let (device, queue) =
+      pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+        .expect("the adapter opens a device");
+    // a panel one and a half times its size, in rows longer than their pixels
+    let (size, window) = ([200.0, 100.0], [300, 150]);
+    let place = fitted(window, size);
+    let canvas = Canvas::new(&device, window);
+    assert!(canvas.row > window[0] * 4);
+    let mut flat = FlatRenderer::new(&device, FORMAT);
+    let mut number = numbers();
+    let point = |number: &mut dyn FnMut() -> f32| [number() * 200.0, number() * 100.0];
+    let mut lines: Vec<[[f32; 2]; 2]> = (0..6)
+      .map(|_| [point(&mut number), point(&mut number)])
+      .collect();
+    let mut kept: Option<Kept> = None;
+    let (mut parts, mut patched_frames) = (Vec::new(), 0);
+    let whole = [[0, 0, window[0], window[1]]];
+    for frame in 0..40 {
+      // one line somewhere else each frame, a box that comes and goes, and a region that grows
+      let moved = frame % lines.len();
+      lines[moved][frame / 6 % 2] = point(&mut number);
+      let mut over = Flat::default();
+      over.rect([0.0, 0.0], size, [0.1, 0.1, 0.12, 1.0]);
+      for (index, [from, to]) in lines.iter().enumerate() {
+        over.line(*from, *to, 1.0 + index as f32, [0.9, 0.6, 0.2, 0.8]);
+      }
+      over.area(
+        &[[20.0, 80.0 - frame as f32], [60.0, 70.0], [90.0, 85.0]],
+        95.0,
+        [0.2, 0.7, 0.9, 1.0],
+      );
+      if frame % 5 < 2 {
+        over.rect([150.3, 10.2], [170.7, 30.9], [0.8, 0.8, 0.8, 1.0]);
+      }
+      // as the window draws a frame, for a skin that names a part of its own each time
+      let named = [[250, 120 - frame as u32, 40, 9]];
+      let patched = kept.is_some() && {
+        let lettered = flat.differing(&over, size, place);
+        patches(&mut parts, &named, lettered, place, window)
+      };
+      flat.prepare(&device, &queue, &over, size, place);
+      let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+      flat.render(&mut encoder, &canvas.view);
+      let read: &[[u32; 4]] = if patched { &parts } else { &whole };
+      let rows = (canvas.read(&device, &queue, encoder, read)).expect("the frame is read back");
+      let pixels = canvas.read.slice(rows.bytes).get_mapped_range();
+      match &mut kept {
+        Some(kept) if patched => kept.patch(&parts, rows.top, &pixels),
+        _ => {
+          kept = Some(Kept {
+            size: window,
+            row: canvas.row,
+            pixels: pixels.to_vec(),
+          });
+        }
+      }
+      drop(pixels);
+      canvas.read.unmap();
+      patched_frames += usize::from(patched);
+
+      // the same frame, all of it
+      let encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+      let rows = (canvas.read(&device, &queue, encoder, &whole)).expect("the frame is read back");
+      let pixels = canvas.read.slice(rows.bytes).get_mapped_range();
+      let kept = kept.as_ref().expect("a frame was kept");
+      let row = canvas.row as usize;
+      for (down, (kept, drawn)) in (kept.pixels.chunks(row).zip(pixels.chunks(row))).enumerate() {
+        let wide = window[0] as usize * 4;
+        assert!(
+          kept[..wide] == drawn[..wide],
+          "row {down} of frame {frame} is not as it was drawn"
+        );
+      }
+      drop(pixels);
+      canvas.read.unmap();
+    }
+    assert!(patched_frames > 20, "{patched_frames} frames were patched");
+  }
+
+  #[test]
+  fn frames_follow_one_another_for_a_tick_after_the_feed_last_moved() {
+    let fed = Instant::now();
+    assert!(!follows(None, fed));
+    assert!(follows(Some(fed), fed));
+    assert!(follows(Some(fed), fed + TICK - Duration::from_millis(1)));
+    assert!(!follows(Some(fed), fed + TICK));
   }
 
   #[test]
@@ -1170,11 +1458,11 @@ mod tests {
     let shown = now(&mut sent, 0.5);
     assert_eq!(shown.values[0], 0.6);
     // the parameter gets there: the same picture, whether or not the wrapper reports it
-    assert!(!is_due(Some(&shown), &now(&mut sent, 0.6)));
+    assert!(!due(Some(&shown), &now(&mut sent, 0.6)));
     // the host moves it on with no report at all: seen the next time it is looked at
-    assert!(is_due(Some(&shown), &now(&mut sent, 0.8)));
+    assert!(due(Some(&shown), &now(&mut sent, 0.8)));
     // and the host moving it to where the editor once had it is drawn too
     let shown = now(&mut sent, 0.8);
-    assert!(is_due(Some(&shown), &now(&mut sent, 0.6)));
+    assert!(due(Some(&shown), &now(&mut sent, 0.6)));
   }
 }

@@ -44,20 +44,18 @@ struct Lamp {
 @group(1) @binding(4) var bounce_sampler: sampler;
 
 const TAU: f32 = 6.2831853;
-// how many places to each side of a point are looked at for a soft shadow edge
-const SHADOW_SPREAD: i32 = 2;
-// how many rings of places around a point are looked at for what stands over it, and how
-// many places are in each ring
-const OPEN_RINGS: i32 = 3;
+// SHADOW_SPREAD, SHADOW_BIAS, OPEN_REACHES, OPEN_CLEAR and BOUNCE_REACHES are put ahead of this
+// source when it is loaded
+// how many places are in each ring around a point that is looked at for what stands over it.
+// OPEN_REACHES is how far off each ring is
 const OPEN_STEPS: i32 = 10;
 // a turn over OPEN_STEPS. worked out from TAU it rounds one bit higher than this, which
 // changes pixels
 const OPEN_TURN: f32 = 0.6283185;
 // how many places between a point and a lamp are looked at for what blocks the lamp
 const LAMP_STEPS: i32 = 12;
-// how many rings of places around a point are looked at for the light that comes off them,
-// and how many places are in each ring
-const BOUNCE_RINGS: i32 = 3;
+// how many places are in each ring around a point that is looked at for the light that comes
+// off it. BOUNCE_REACHES is how many texels off each ring is
 const BOUNCE_STEPS: i32 = 8;
 
 struct Corner {
@@ -108,6 +106,14 @@ fn height_vertex(corner: Corner, placed: Placed) -> @builtin(position) vec4<f32>
   return globals.overhead * model(placed) * vec4<f32>(corner.position, 1.0);
 }
 
+// one triangle over the whole of a map, as far off as anything gets, which puts what it is
+// drawn over back to what a map starts from
+@vertex
+fn far_vertex(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
+  let at = vec2<f32>(f32((index << 1u) & 2u), f32(index & 2u));
+  return vec4<f32>(at * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0), 1.0, 1.0);
+}
+
 fn seen_through(view: mat4x4<f32>, corner: Corner, placed: Placed) -> Lit {
   let world = model(placed) * vec4<f32>(corner.position, 1.0);
   var lit: Lit;
@@ -139,7 +145,7 @@ fn lit_share(world: vec3<f32>, facing: f32) -> f32 {
   let at = vec2<f32>(seen.x * 0.5 + 0.5, 0.5 - seen.y * 0.5);
   // a surface nearly edge-on to the light covers many depths in one texel, so it is
   // compared from further off
-  let depth = seen.z - mix(0.012, 0.003, facing);
+  let depth = seen.z - mix(SHADOW_BIAS, 0.003, facing);
   if globals.shadows.x == 0.0 {
     return textureSampleCompareLevel(shadow_map, shadow_sampler, at, depth);
   }
@@ -169,12 +175,12 @@ fn open_share(world: vec3<f32>) -> f32 {
   var closed = 0.0;
   var weight = 0.0;
   for (var ring = 0; ring < OPEN_RINGS; ring++) {
-    let reach = 3.0 + f32(ring * ring) * 5.5 + f32(ring) * 2.0;
+    let reach = OPEN_REACHES[ring];
     for (var step = 0; step < OPEN_STEPS; step++) {
       // each ring turned against the last, so that their points do not line up
       let turn = (f32(step) + f32(ring) * 0.37) * OPEN_TURN;
       let over = height_over(world.xy + vec2<f32>(cos(turn), sin(turn)) * reach);
-      let rise = over - world.z - 0.6;
+      let rise = over - world.z - OPEN_CLEAR;
       let near = 1.0 / (1.0 + reach * 0.12);
       closed += clamp(rise / reach, 0.0, 1.0) * near;
       weight += near;
@@ -236,6 +242,12 @@ fn bounce_fragment(lit: Lit) -> @location(0) vec4<f32> {
   return vec4<f32>(given, lit.world.z);
 }
 
+// what the bounce map starts from: no light, from as low as anything gets
+@fragment
+fn no_bounce_fragment() -> @location(0) vec4<f32> {
+  return vec4<f32>(0.0, 0.0, 0.0, globals.panel.z);
+}
+
 // the light that lands on a point off the surfaces around it, from rings of places in the
 // bounce map, each lighting the point by how squarely the point faces it
 fn bounced(world: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
@@ -244,7 +256,7 @@ fn bounced(world: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
   var caught = vec3<f32>(0.0);
   var weight = 0.0;
   for (var ring = 0; ring < BOUNCE_RINGS; ring++) {
-    let far = reach * (0.6 + 0.8 * f32(ring));
+    let far = reach * BOUNCE_REACHES[ring];
     // a further ring is as much less of what the point sees
     let share = reach / far;
     for (var step = 0; step < BOUNCE_STEPS; step++) {

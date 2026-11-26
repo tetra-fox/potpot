@@ -42,7 +42,7 @@ pub enum Grip {
   /// A round body with one long handle out to where the knob points.
   ///
   /// A foot turns it by the handle.
-  Lever {
+  BigWalker {
     /// The handle's width, as a share of the radius.
     width: f32,
     /// The body's reach, as a share of the radius.
@@ -140,7 +140,7 @@ impl Grip {
         let from = angle + FRAC_PI_2;
         handle_at(from, width).max(handle_at(from + PI, width))
       }
-      Grip::Lever { width, body } => handle_at(angle + FRAC_PI_2, width).max(body),
+      Grip::BigWalker { width, body } => handle_at(angle + FRAC_PI_2, width).max(body),
       Grip::Ridge { width } => {
         // the flanks sweep in from a wide foot to a thin crest, hollow like a tent's, and
         // the nose sweeps up from its point at the foot to where the crest ends
@@ -168,7 +168,7 @@ impl Grip {
       // enough to keep a beak's sides straight and its point sharp
       Grip::Pointed { .. } => 180,
       // enough to keep a handle's long sides straight
-      Grip::Bar { .. } | Grip::Lever { .. } | Grip::Ridge { .. } => 180,
+      Grip::Bar { .. } | Grip::BigWalker { .. } | Grip::Ridge { .. } => 180,
     }
   }
 }

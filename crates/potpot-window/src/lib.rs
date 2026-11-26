@@ -4,7 +4,8 @@
 //! its [`Settings`], its [`Param`]s and the [`controls`] that turn them, drawn by a [`Skin`].
 //! The window draws the skin with wgpu and sees to everything between the pointer, the keys
 //! and the panel's parameters. The menu, the grip and a value being typed work the same
-//! under any skin.
+//! under any skin. A [`Feed`] carries numbers no parameter holds, such as a meter's level, from
+//! an audio thread to the skin.
 //!
 //! # Examples
 //!
@@ -40,8 +41,11 @@
 //! # Drawing
 //!
 //! The picture is drawn off the window and put in it as plain pixels, so nothing of the
-//! graphics driver's own window code runs in a host's process.
+//! graphics driver's own window code runs in a host's process. Where a skin names the parts of
+//! its picture that a frame differs in, with [`Skin::changed`], those parts alone are read back
+//! and put in the window.
 
+mod feed;
 mod flat;
 #[cfg(feature = "nice-plug")]
 pub mod nice_plug;
@@ -50,6 +54,7 @@ mod screen;
 mod skin;
 mod window;
 
+pub use feed::Feed;
 pub use open::{Opened, Opening, Param, Remembered, Settings, Shared, Tell, open};
 pub use skin::{Gpu, Skin, View};
 // what the types above are made of, so that a skin is built on the same versions

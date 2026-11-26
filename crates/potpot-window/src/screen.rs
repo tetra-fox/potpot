@@ -19,10 +19,28 @@ pub(super) struct Screen {
 ///
 /// `pixels` holds its rows from the top. Each row is `row` bytes long and starts with four
 /// bytes for every pixel across: blue, green, red and one more.
-struct Kept {
-  size: [u32; 2],
-  row: u32,
-  pixels: Vec<u8>,
+pub(super) struct Kept {
+  pub(super) size: [u32; 2],
+  pub(super) row: u32,
+  pub(super) pixels: Vec<u8>,
+}
+
+impl Kept {
+  /// Takes the parts of a picture that differ from this one.
+  ///
+  /// The two are of the same size. Each part is `[left, top, width, height]` in the picture's
+  /// pixels and lies on it. `pixels` holds the picture's rows from `top` on as this has them, of
+  /// which only the parts are read.
+  pub(super) fn patch(&mut self, parts: &[[u32; 4]], top: u32, pixels: &[u8]) {
+    let row = self.row as usize;
+    for [left, part_top, width, height] in parts.iter().map(|part| part.map(|side| side as usize)) {
+      for down in part_top..part_top + height {
+        let from = (down - top as usize) * row + left * 4;
+        let to = down * row + left * 4;
+        self.pixels[to..to + width * 4].copy_from_slice(&pixels[from..from + width * 4]);
+      }
+    }
+  }
 }
 
 impl Screen {
@@ -44,7 +62,37 @@ impl Screen {
       row,
       pixels: held,
     });
-    self.again()
+    self.put(None, true)
+  }
+
+  /// Shows and keeps a picture that is new in parts.
+  ///
+  /// The picture is of the size of the one shown last and differs from it in `parts`. Those,
+  /// `top` and `pixels` are as [`Kept::patch`] takes them.
+  ///
+  /// `all` is whether the window may have lost any of the picture shown last. If it has not,
+  /// the parts are all that has to go in it.
+  ///
+  /// # Panics
+  ///
+  /// Panics if no picture has been shown.
+  pub(super) fn patch(
+    &mut self,
+    parts: &[[u32; 4]],
+    top: u32,
+    pixels: &[u8],
+    all: bool,
+  ) -> Result<(), HandlerError> {
+    let kept = self.kept.as_mut().expect("a picture was shown before");
+    kept.patch(parts, top, pixels);
+    self.put(Some(parts), all)
+  }
+
+  /// Puts the picture last shown in the window again.
+  ///
+  /// With none shown yet it does nothing.
+  pub(super) fn again(&mut self) -> Result<(), HandlerError> {
+    self.put(Some(&[]), true)
   }
 }
 
@@ -64,8 +112,12 @@ impl Screen {
     })
   }
 
-  /// Puts the picture last shown in the window again, if there has been one.
-  pub(super) fn again(&mut self) -> Result<(), HandlerError> {
+  /// Puts the kept picture in the window, all of it.
+  ///
+  /// baseview draws every frame here for a paint message, and the system takes the window as
+  /// painted once the message is answered, whatever was put in it. So all of it goes in each
+  /// time, whichever parts are new.
+  fn put(&mut self, _new: Option<&[[u32; 4]]>, _all: bool) -> Result<(), HandlerError> {
     use windows_sys::Win32::Graphics::Gdi::{
       BI_RGB, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, GetDC, ReleaseDC, SetDIBitsToDevice,
     };
@@ -140,9 +192,17 @@ impl Screen {
     })
   }
 
-  /// Puts the picture last shown in the window again, if there has been one.
-  pub(super) fn again(&mut self) -> Result<(), HandlerError> {
+  /// Puts the kept picture in the window.
+  ///
+  /// `new` is the parts of it that differ from what was put there last, or `None` for any part.
+  /// The surface is written the parts alone where it still holds the rest. All of the picture
+  /// is sent to the window if `all` is set, and else the parts alone.
+  fn put(&mut self, new: Option<&[[u32; 4]]>, all: bool) -> Result<(), HandlerError> {
     use std::num::NonZeroU32;
+
+    if !all && new.is_some_and(<[_]>::is_empty) {
+      return Ok(());
+    }
 
     let Some(Kept { size, row, pixels }) = &self.kept else {
       return Ok(());
@@ -152,15 +212,46 @@ impl Screen {
     };
     self.surface.resize(width, height)?;
     let mut shown = self.surface.buffer_mut()?;
-    let rows = shown.chunks_exact_mut(size[0] as usize);
-    for (shown, drawn) in rows.zip(pixels.chunks_exact(*row as usize)) {
-      for (shown, &[blue, green, red, _]) in shown.iter_mut().zip(drawn.as_chunks::<4>().0) {
-        // softbuffer has a pixel as a number with blue lowest. baseview's x11 window has a
-        // 32 bit visual, where a compositor reads the byte above red as how opaque the pixel is
-        *shown = u32::from_le_bytes([blue, green, red, u8::MAX]);
+    let (wide, row) = (size[0] as usize, *row as usize);
+    let write = |shown: &mut [u32], [left, top, width, height]: [usize; 4]| {
+      for down in top..top + height {
+        let drawn = &pixels[down * row + left * 4..][..width * 4];
+        let shown = &mut shown[down * wide + left..][..width];
+        for (shown, &[blue, green, red, _]) in shown.iter_mut().zip(drawn.as_chunks::<4>().0) {
+          // softbuffer has a pixel as a number with blue lowest. baseview's x11 window has a
+          // 32 bit visual, where a compositor reads the byte above red as how opaque the pixel is
+          *shown = u32::from_le_bytes([blue, green, red, u8::MAX]);
+        }
       }
+    };
+    // at an age of one the surface holds the picture put there last, and at any other nothing
+    // to go by
+    let Some(new) = new.filter(|_| shown.age() == 1) else {
+      write(&mut shown, [0, 0, wide, size[1] as usize]);
+      shown.present()?;
+      return Ok(());
+    };
+    let mut sent = Vec::with_capacity(new.len());
+    for &[left, top, width, height] in new {
+      let [Some(width), Some(height)] = [width, height].map(NonZeroU32::new) else {
+        continue;
+      };
+      write(
+        &mut shown,
+        [left, top, width.get(), height.get()].map(|side| side as usize),
+      );
+      sent.push(softbuffer::Rect {
+        x: left,
+        y: top,
+        width,
+        height,
+      });
     }
-    shown.present()?;
+    if all {
+      shown.present()?;
+    } else {
+      shown.present_with_damage(&sent)?;
+    }
     Ok(())
   }
 }

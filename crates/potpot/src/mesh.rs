@@ -3,7 +3,7 @@
 use std::f32::consts::TAU;
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Mat4, Vec2, Vec3, Vec3A};
 
 /// One corner of a mesh's triangles.
 #[repr(C)]
@@ -253,6 +253,18 @@ impl Mesh {
       .indices
       .extend(other.indices.iter().map(|index| base + index));
     self
+  }
+
+  /// Returns the box around the mesh.
+  ///
+  /// It is its least and its greatest corner. A mesh without a vertex has none.
+  pub(crate) fn bounds(&self) -> Option<[Vec3; 2]> {
+    let mut corners = (self.vertices.iter()).map(|vertex| Vec3A::from(vertex.position));
+    let first = corners.next()?;
+    let (min, max) = corners.fold((first, first), |(min, max), corner| {
+      (min.min(corner), max.max(corner))
+    });
+    Some([min.into(), max.into()])
   }
 
   pub(crate) fn quad(&mut self, corners: [Vec3; 4], normal: Vec3) {

@@ -1,5 +1,6 @@
 // the rendered picture stretched over its place in the window, as blocks, and cut to few colors
-// `decode` is in srgb.wgsl, which is put ahead of this source when it is loaded
+// `decode` is in srgb.wgsl, which is put ahead of this source when it is loaded, as is HAZE_REACH,
+// how many of the picture's pixels off the haze around what lights itself is gathered from
 
 struct Present {
   // x the steps each channel is cut to if two or more, y one when the target encodes srgb
@@ -67,7 +68,7 @@ fn fragment(spread: Spread) -> @location(0) vec4<f32> {
     for (var step = 0; step < PLACES; step++) {
       let out = sqrt((f32(step) + 0.5) / f32(PLACES));
       let turn = f32(step) * 2.3999632;
-      let aside = vec2<f32>(cos(turn), sin(turn)) * out * 13.0 * pixel;
+      let aside = vec2<f32>(cos(turn), sin(turn)) * out * HAZE_REACH * pixel;
       let near = textureSampleLevel(picture, picture_sampler, spread.at + aside, 0.0);
       // less the further it has to come
       haze += near.rgb * near.a * (1.0 - 0.6 * out);

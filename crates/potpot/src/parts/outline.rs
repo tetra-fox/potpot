@@ -9,6 +9,9 @@ use glam::Vec2;
 use super::CREASE;
 use crate::mesh::Mesh;
 
+/// The height of a strip's top over the panel.
+pub(super) const STRIP: f32 = 0.2;
+
 /// A rectangle with round corners, centered on the origin.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Outline {
@@ -128,8 +131,8 @@ impl Outline {
   pub(super) fn strip(&self) -> Mesh {
     let rings = [
       Vec2::new(1.0, 0.0),
-      Vec2::new(1.0, 0.2),
-      Vec2::new(0.0, 0.2),
+      Vec2::new(1.0, STRIP),
+      Vec2::new(0.0, STRIP),
     ];
     Mesh::rings(rings.len(), 96, CREASE, |ring, around| {
       let ring = rings[ring];

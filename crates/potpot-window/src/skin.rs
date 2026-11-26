@@ -32,6 +32,10 @@ pub struct View<'a> {
   ///
   /// A skin draws from these whatever belongs to no control.
   pub values: &'a [f32],
+  /// The number in each slot of the [`Feed`](crate::Feed).
+  ///
+  /// They are in the order of the slots.
+  pub feed: &'a [f32],
   /// The value being typed, if there is one.
   pub edit: Option<&'a Edit>,
   /// The menu, if it is up.
@@ -93,6 +97,24 @@ pub trait Skin: 'static {
   /// `place` is `[left, top, width, height]` in the target's pixels. The skin touches
   /// nothing outside `place`.
   fn draw(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, place: [u32; 4]);
+
+  /// Returns the parts of the place where the picture is new.
+  ///
+  /// Each part is `[left, top, width, height]` in pixels from the top left of the place the
+  /// panel is drawn on, which is [`View::pixels`] wide and high. `None` is the whole place.
+  ///
+  /// The window calls this after each [`Skin::prepare`] that it draws a frame for. The parts
+  /// are those of that call: they hold every pixel that [`Skin::draw`] draws otherwise after it
+  /// than after the [`Skin::prepare`] before it, for a place of the same size. A pixel that
+  /// differs and is in no part stays in the window as it was.
+  ///
+  /// The window copies only the parts back from the graphics device and into the window, in
+  /// place of the whole frame. A skin that leaves this as it is has every frame copied whole.
+  /// The window sees for itself where the flat shapes differ, so a skin that draws nothing else
+  /// names no parts.
+  fn changed(&self) -> Option<&[[u32; 4]]> {
+    None
+  }
 
   /// Returns the [`Target`] at a point of the panel as last prepared.
   ///

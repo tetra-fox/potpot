@@ -125,6 +125,22 @@ impl Material {
     }
   }
 
+  /// Creates the lit face of a screen behind glass.
+  ///
+  /// The glass is `size` across. The face lights itself in `color`, its black, so that the scene's
+  /// light and shadows leave it even and no [`Lamp`](crate::Lamp) shows in its glass. The glass is
+  /// a dimmer mirror than [`Material::pane`], with the same sheen.
+  pub fn screen(color: Vec3, size: f32) -> Self {
+    Self {
+      specular: 0.12,
+      shininess: 260.0,
+      glow: 1.0,
+      reflect: 0.3,
+      glaze: size,
+      ..Self::matte(color)
+    }
+  }
+
   /// Creates the end of a clear plastic rod that carries a light.
   ///
   /// The rod carries the light up to the panel from under it. The material is dark and smoky

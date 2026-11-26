@@ -2,6 +2,9 @@
 
 use std::mem::size_of;
 
+use super::damage::{
+  BOUNCE_REACHES, HAZE_REACH, OPEN_CLEAR, OPEN_REACHES, SHADOW_BIAS, SHADOW_SPREAD,
+};
 use super::uniforms::Placed;
 use crate::mesh::Vertex;
 use crate::scene::LAMPS;
@@ -25,19 +28,44 @@ pub(super) const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
 /// The sRGB curve, which goes ahead of each shader that uses it.
 const SRGB_SOURCE: &str = include_str!("srgb.wgsl");
 
-/// Returns `scene.wgsl` with the length of its array of lamps ahead of it.
+/// Returns `scene.wgsl` with what it is given ahead of it.
 ///
-/// The length is [`LAMPS`], and the sRGB curve goes ahead of the shader too.
+/// That is [`LAMPS`], the length of its array of lamps, how far around a point it looks things
+/// up, and the sRGB curve.
 pub(super) fn scene_source() -> String {
+  // a row of numbers as the shader language writes it
+  let listed = |numbers: &[f32]| {
+    let numbers: Vec<String> = numbers.iter().map(|number| format!("{number:?}")).collect();
+    numbers.join(", ")
+  };
   format!(
-    "const LAMPS: u32 = {LAMPS};\n{SRGB_SOURCE}{}",
+    "const LAMPS: u32 = {LAMPS};\n\
+     const SHADOW_SPREAD: i32 = {SHADOW_SPREAD};\n\
+     const SHADOW_BIAS: f32 = {SHADOW_BIAS:?};\n\
+     const OPEN_RINGS: i32 = {};\n\
+     const OPEN_REACHES = array<f32, {}>({});\n\
+     const OPEN_CLEAR: f32 = {OPEN_CLEAR:?};\n\
+     const BOUNCE_RINGS: i32 = {};\n\
+     const BOUNCE_REACHES = array<f32, {}>({});\n\
+     {SRGB_SOURCE}{}",
+    OPEN_REACHES.len(),
+    OPEN_REACHES.len(),
+    listed(&OPEN_REACHES),
+    BOUNCE_REACHES.len(),
+    BOUNCE_REACHES.len(),
+    listed(&BOUNCE_REACHES),
     include_str!("scene.wgsl")
   )
 }
 
-/// Returns `present.wgsl` with the sRGB curve ahead of it.
+/// Returns `present.wgsl` with what it is given ahead of it.
+///
+/// That is the sRGB curve and the reach of its haze.
 pub(super) fn present_source() -> String {
-  format!("{SRGB_SOURCE}{}", include_str!("present.wgsl"))
+  format!(
+    "const HAZE_REACH: f32 = {HAZE_REACH:?};\n{SRGB_SOURCE}{}",
+    include_str!("present.wgsl")
+  )
 }
 
 #[derive(Debug)]
@@ -123,6 +151,17 @@ pub(super) struct Pipelines {
   pub(super) bounce: wgpu::RenderPipeline,
   /// The scene pipelines for one sample a pixel and for [`SAMPLES`].
   pub(super) scene: [wgpu::RenderPipeline; 2],
+  /// The pipelines that wipe triangles of the picture.
+  ///
+  /// What they cover is put back to what a picture starts from. They are for one sample a pixel
+  /// and for [`SAMPLES`].
+  pub(super) wipe: [wgpu::RenderPipeline; 2],
+  /// The pipeline that wipes the shadow map or the height map.
+  ///
+  /// It puts the map back to what it starts from, as far as the scissor lets it.
+  pub(super) wipe_depth: wgpu::RenderPipeline,
+  /// The pipeline that wipes the bounce map the same way.
+  pub(super) wipe_bounce: wgpu::RenderPipeline,
   pub(super) present: wgpu::RenderPipeline,
 }
 
@@ -231,6 +270,82 @@ impl Pipelines {
       BOUNCE,
       SAMPLES,
     );
+    // whatever is there is overwritten
+    let overwritten = || wgpu::DepthStencilState {
+      depth_compare: wgpu::CompareFunction::Always,
+      ..depth()
+    };
+    let far = wgpu::VertexState {
+      module: &scene_shader,
+      entry_point: Some("far_vertex"),
+      compilation_options: wgpu::PipelineCompilationOptions::default(),
+      buffers: &[],
+    };
+    let wipe_depth = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+      label: Some("potpot wipe depth"),
+      layout: Some(&layout("potpot wipe depth", &[])),
+      vertex: far.clone(),
+      fragment: None,
+      primitive,
+      depth_stencil: Some(overwritten()),
+      multisample: wgpu::MultisampleState::default(),
+      multiview: None,
+      cache: None,
+    });
+    let wipe_bounce = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+      label: Some("potpot wipe bounce"),
+      layout: Some(&layout("potpot wipe bounce", &[&layouts.globals])),
+      vertex: far,
+      fragment: Some(wgpu::FragmentState {
+        module: &scene_shader,
+        entry_point: Some("no_bounce_fragment"),
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+        targets: &[Some(wgpu::ColorTargetState::from(BOUNCE))],
+      }),
+      primitive,
+      depth_stencil: Some(overwritten()),
+      multisample: wgpu::MultisampleState {
+        count: SAMPLES,
+        ..Default::default()
+      },
+      multiview: None,
+      cache: None,
+    });
+    let wipe_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+      label: Some("potpot wipe"),
+      source: wgpu::ShaderSource::Wgsl(include_str!("wipe.wgsl").into()),
+    });
+    let wipe_layout = layout("potpot wipe", &[]);
+    let wipe = [1, SAMPLES].map(|count| {
+      device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("potpot wipe"),
+        layout: Some(&wipe_layout),
+        vertex: wgpu::VertexState {
+          module: &wipe_shader,
+          entry_point: Some("vertex"),
+          compilation_options: wgpu::PipelineCompilationOptions::default(),
+          buffers: &[wgpu::VertexBufferLayout {
+            array_stride: size_of::<[f32; 2]>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![0 => Float32x2],
+          }],
+        },
+        fragment: Some(wgpu::FragmentState {
+          module: &wipe_shader,
+          entry_point: Some("fragment"),
+          compilation_options: wgpu::PipelineCompilationOptions::default(),
+          targets: &[Some(wgpu::ColorTargetState::from(PICTURE))],
+        }),
+        primitive,
+        depth_stencil: Some(overwritten()),
+        multisample: wgpu::MultisampleState {
+          count,
+          ..Default::default()
+        },
+        multiview: None,
+        cache: None,
+      })
+    });
     let present = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
       label: Some("potpot present"),
       layout: Some(&layout("potpot present", &[&layouts.present])),
@@ -258,6 +373,9 @@ impl Pipelines {
       height: depth_only("potpot heights", "height_vertex"),
       bounce,
       scene,
+      wipe,
+      wipe_depth,
+      wipe_bounce,
       present,
     }
   }

@@ -106,8 +106,8 @@ pub(super) fn knobs(look: Look) -> Scene {
       Marker::Line,
     ),
     shown(
-      "LEVER",
-      Knob::lever(radius, tall * 0.8),
+      "BIG WALKER",
+      Knob::big_walker(radius, tall * 0.8),
       Material::glossy(Vec3::new(0.70, 0.36, 0.04)),
       Marker::Line,
     ),

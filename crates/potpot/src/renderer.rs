@@ -1,9 +1,11 @@
 //! The drawing of a [`Scene`] with `wgpu`.
 //!
 //! A scene is drawn as a few maps, then the lit picture at its own resolution, then that picture
-//! stretched into place on a target. The picture is kept, and drawn again only for a scene that
-//! differs from the one it shows.
+//! stretched into place on a target. The picture is kept. For a scene that differs from the one
+//! it shows, the maps that the difference is in are drawn again, and of the picture as much as
+//! the difference shows in.
 
+mod damage;
 mod picture;
 mod pipelines;
 mod uniforms;
@@ -12,8 +14,10 @@ use std::mem::size_of;
 use std::sync::Arc;
 
 use bytemuck::Zeroable;
+use glam::{Mat4, Vec2, Vec3};
 use wgpu::util::DeviceExt;
 
+use self::damage::{Bounds, Reach, Redrawn};
 use self::picture::Picture;
 use self::pipelines::{BOUNCE, DEPTH, Layouts, Pipelines, SAMPLES};
 use self::uniforms::{Globals, Placed, Present};
@@ -121,6 +125,82 @@ pub struct Renderer {
   meshes: Vec<Loaded>,
   /// The place in `meshes` of the mesh of each object of the drawn scene, in order.
   draws: Vec<usize>,
+  /// The rectangles each object of the drawn scene is drawn in.
+  ///
+  /// They are those only while `spanned` is set.
+  spans: Vec<Spans>,
+  /// Whether `spans` holds the drawn scene's.
+  ///
+  /// They are worked out only for a scene that may be drawn in part.
+  spanned: bool,
+  /// Whether a change of the drawn scene can be bounded.
+  ///
+  /// [`damage::bounded`] tells, and is asked only of a scene that few objects differ in.
+  sound: bool,
+  /// The objects that differ from the drawn scene's, if few do.
+  ///
+  /// The vector is kept for its room.
+  differing: Vec<Differing>,
+  /// The corners of the triangles over what is drawn again.
+  ///
+  /// They are in the picture's clip space. The vector is kept for its room.
+  wiped: Vec<[f32; 2]>,
+  /// The start and end across each band of what is drawn again.
+  ///
+  /// The bands are of the picture. The vector is kept for its room.
+  bands: Vec<[f32; 2]>,
+  /// The corners as the wipe pipeline is handed them.
+  wipe: wgpu::Buffer,
+  /// The number of corners the wipe buffer has room for.
+  wipe_room: usize,
+  /// The size of the target the picture was last prepared for.
+  held_size: [u32; 2],
+  /// The parts of that target where the picture is new.
+  ///
+  /// The picture shows otherwise there than the one before it. The vector is kept for its room.
+  parts: Vec<[u32; 4]>,
+  /// Whether the picture may be new anywhere on the target.
+  ///
+  /// It may whatever `parts` holds.
+  anywhere: bool,
+}
+
+/// The rectangles one object is drawn in.
+///
+/// Each is its left, top, right and foot, one past the object on every side.
+#[derive(Clone, Copy, Debug)]
+struct Spans {
+  /// The rectangle of the picture, in pixels.
+  seen: [f32; 4],
+  /// The rectangle of the shadow map, in texels.
+  shadowed: [f32; 4],
+  /// The rectangle of the height map, in texels.
+  overhead: [f32; 4],
+}
+
+/// What a pass draws the objects on.
+///
+/// It is one of the three that an object's [`Spans`] are of.
+#[derive(Clone, Copy, Debug)]
+enum Map {
+  Picture,
+  Shadows,
+  Heights,
+}
+
+/// An object that differs from the drawn scene's at its place.
+#[derive(Clone, Copy, Debug)]
+struct Differing {
+  /// The object's place among the scene's.
+  index: usize,
+  /// Whether it differs in shape or place.
+  ///
+  /// If it does not, it differs in its material alone.
+  reshaped: bool,
+  /// The box around it in the drawn scene, in the panel's space.
+  was: Option<Bounds>,
+  /// The box around it in the scene that is being prepared.
+  now: Option<Bounds>,
 }
 
 /// A mesh on the GPU, and the allocation it came from.
@@ -130,6 +210,10 @@ struct Loaded {
   vertices: wgpu::Buffer,
   indices: wgpu::Buffer,
   count: u32,
+  /// The box around the mesh in its own space.
+  ///
+  /// A mesh without a vertex has none.
+  bounds: Option<Bounds>,
 }
 
 impl Renderer {
@@ -242,13 +326,25 @@ impl Renderer {
       next_placed: Vec::new(),
       meshes: Vec::new(),
       draws: Vec::new(),
+      spans: Vec::new(),
+      spanned: false,
+      sound: false,
+      differing: Vec::new(),
+      wiped: Vec::new(),
+      bands: Vec::new(),
+      wipe: wipe_buffer(device, 0),
+      wipe_room: 0,
+      held_size: [0; 2],
+      parts: Vec::new(),
+      anywhere: true,
     }
   }
 
   /// Draws the picture of a scene to go over `size` pixels of a target.
   ///
   /// A scene that is in every part the one prepared last has its picture already, and costs no
-  /// drawing.
+  /// drawing. One that differs from it in the places and materials of some objects and in some
+  /// lamps costs the drawing of the part of the picture those show in.
   pub fn prepare(
     &mut self,
     device: &wgpu::Device,
@@ -262,7 +358,7 @@ impl Renderer {
     let picture_size = size
       .map(|side| ((side as f32 / look.pixel_size.max(1.0)).ceil() as u32).clamp(1, self.max_side));
     let kept = (self.picture.take()).filter(|picture| picture.fits(picture_size, look.antialias));
-    let mut stale = kept.is_none();
+    let fresh = kept.is_none();
     let picture = kept.unwrap_or_else(|| {
       Picture::new(
         device,
@@ -275,41 +371,203 @@ impl Renderer {
 
     // the present pass reads these every time it runs, so new ones need no new picture
     let present = Present::of(look, self.target_encodes);
+    let presented_alike = present == self.held_present && size == self.held_size;
     if present != self.held_present {
       queue.write_buffer(&self.present_options, 0, bytemuck::bytes_of(&present));
       self.held_present = present;
     }
+    self.held_size = size;
     let globals = Globals::of(scene);
-    if globals != self.held_globals {
+    let before = std::mem::replace(&mut self.held_globals, globals);
+    let lit_alike = globals.lit_alike(&before);
+    if globals != before {
       queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
-      self.held_globals = globals;
-      stale = true;
     }
 
     let objects = &scene.objects;
-    let same_meshes = objects.len() == self.draws.len()
-      && (objects.iter().zip(&self.draws))
-        .all(|(object, &mesh)| Arc::ptr_eq(&object.mesh, &self.meshes[mesh].from));
-    if !same_meshes {
-      self.load(device, objects);
-      stale = true;
-    }
     self.next_placed.clear();
     self.next_placed.extend(objects.iter().map(Placed::of));
-    if self.next_placed != self.held_placed {
+    // two scenes of as many objects are compared object by object, and any others in whole.
+    // the objects that differ are listed while their bound may still be worth building
+    let counted_alike = objects.len() == self.draws.len();
+    let (mut same_meshes, mut alike, mut few) = (counted_alike, counted_alike, counted_alike);
+    let mut shapes = 0;
+    self.differing.clear();
+    if counted_alike {
+      let held = self.held_placed.iter().zip(&self.draws);
+      for (index, ((object, placed), (held, &mesh))) in
+        (objects.iter().zip(&self.next_placed).zip(held)).enumerate()
+      {
+        let loaded = &self.meshes[mesh];
+        let same_mesh = Arc::ptr_eq(&object.mesh, &loaded.from);
+        same_meshes &= same_mesh;
+        if !few {
+          continue;
+        }
+        let reshaped = !same_mesh || placed.model != held.model;
+        if reshaped || placed != held {
+          alike = false;
+          shapes += if reshaped { damage::MOVED_SHAPES } else { 1 };
+          few = shapes <= damage::MOST_SHAPES;
+          self.differing.push(Differing {
+            index,
+            reshaped,
+            was: None,
+            now: None,
+          });
+        }
+      }
+    }
+    // where each was, while the drawn scene's meshes and places are still held
+    for differing in self.differing.iter_mut().filter(|_| few) {
+      let loaded = &self.meshes[self.draws[differing.index]];
+      differing.was = loaded.bounds_as(&self.held_placed[differing.index]);
+    }
+    if !same_meshes {
+      self.load(device, objects);
+    }
+    if !alike {
       std::mem::swap(&mut self.held_placed, &mut self.next_placed);
       if self.held_placed.len() > self.placed_room {
         self.placed_room = self.held_placed.len().next_power_of_two();
         self.placed = placed_buffer(device, self.placed_room);
       }
       queue.write_buffer(&self.placed, 0, bytemuck::cast_slice(&self.held_placed));
-      stale = true;
     }
+    for differing in self.differing.iter_mut().filter(|_| few) {
+      differing.now =
+        self.meshes[self.draws[differing.index]].bounds_as(&self.held_placed[differing.index]);
+    }
+    let differs = globals != before || !alike;
 
-    if stale {
-      self.draw_picture(device, queue, &picture);
+    // a scene is drawn in part only if what differs can be bounded: in this scene and the one
+    // before it, under the same light and view, for objects few enough to be worth it
+    let boxes = self.meshes.iter().map(|loaded| loaded.bounds);
+    let sound = few && damage::bounded(&globals, &self.held_placed, boxes);
+    let bounded = sound && self.sound && lit_alike && few;
+    self.sound = sound;
+    let reshaped = || (self.differing.iter()).filter(|differing| differing.reshaped);
+
+    // where each object is drawn, which tells the objects to draw in a part. a map is stale
+    // where an object that is elsewhere was and where it is
+    let [wide, high] = picture_size.map(|side| side as f32);
+    let onto = [
+      damage::to_pixels(&globals.view, Vec2::new(wide, high)),
+      damage::to_pixels(&globals.light_view, Vec2::splat(SHADOW_SIZE as f32)),
+      damage::to_pixels(&globals.overhead, Vec2::splat(HEIGHT_SIZE as f32)),
+    ];
+    let spans =
+      |index: usize| self.meshes[self.draws[index]].spans(&self.held_placed[index], &onto);
+    let gather = |stale: [[f32; 4]; 2], spans: &[Spans]| {
+      reshaped().fold(stale, |[shadows, heights], differing| {
+        let spans = spans[differing.index];
+        [
+          around(shadows, spans.shadowed),
+          around(heights, spans.overhead),
+        ]
+      })
+    };
+    let kept = self.spanned && !fresh;
+    let mut stale = None;
+    if bounded && differs {
+      if kept {
+        let before = gather([NOWHERE; 2], &self.spans);
+        for differing in reshaped() {
+          self.spans[differing.index] = spans(differing.index);
+        }
+        stale = Some(gather(before, &self.spans));
+      } else {
+        self.spans.clear();
+        self.spans.extend((0..objects.len()).map(spans));
+      }
+      self.spanned = true;
+    } else {
+      self.spanned = kept && !differs;
     }
+    let shapes = match stale {
+      _ if lit_alike && few && reshaped().next().is_none() => [Redrawn::Nothing; 2],
+      Some([shadows, heights]) => [
+        damage::texels(corners_of(shadows), SHADOW_SIZE),
+        damage::texels(corners_of(heights), HEIGHT_SIZE),
+      ],
+      None => [Redrawn::Whole; 2],
+    };
+
+    // the bounce map holds every part of the scene, and the picture all of that as it is seen
+    let (mut wiped, mut bands) = (
+      std::mem::take(&mut self.wiped),
+      std::mem::take(&mut self.bands),
+    );
+    let (redrawn, light) = if !differs {
+      (Redrawn::Nothing, Redrawn::Nothing)
+    } else if bounded && !fresh {
+      let mut reach = Reach::new(&before, &globals, picture_size, &mut wiped, &mut bands);
+      let moved = reshaped().flat_map(|differing| differing.was.into_iter().chain(differing.now));
+      let recolored = self.differing.len() - reshaped().count();
+      if reach.takes(&before, &globals, moved.clone(), recolored) <= damage::MOST_SHAPES {
+        reach.relight(&before, &globals);
+        moved.for_each(|bounds| reach.moved(bounds));
+        let recolored = self
+          .differing
+          .iter()
+          .filter(|differing| !differing.reshaped);
+        (recolored.filter_map(|differing| differing.now))
+          .for_each(|bounds| reach.recolored(bounds));
+        (reach.redrawn(), reach.relit())
+      } else {
+        (Redrawn::Whole, Redrawn::Whole)
+      }
+    } else {
+      (Redrawn::Whole, Redrawn::Whole)
+    };
+    let redrawn = if fresh { Redrawn::Whole } else { redrawn };
+    (self.wiped, self.bands) = (wiped, bands);
+    if let Redrawn::Within(_) = redrawn {
+      if self.wiped.len() > self.wipe_room {
+        self.wipe_room = self.wiped.len().next_power_of_two();
+        self.wipe = wipe_buffer(device, self.wipe_room);
+      }
+      queue.write_buffer(&self.wipe, 0, bytemuck::cast_slice(&self.wiped));
+    }
+    self.anywhere = !presented_alike || redrawn == Redrawn::Whole;
+    self.parts.clear();
+    if let Redrawn::Within(_) = redrawn {
+      damage::parts(&self.bands, picture_size, size, &mut self.parts);
+    }
+    self.draw_picture(device, queue, &picture, shapes, light, redrawn);
     self.picture = Some(picture);
+  }
+
+  /// Returns the parts of the target where the picture is new.
+  ///
+  /// They are where the picture of the last [`Renderer::prepare`] differs from that of the one
+  /// before it. Each part is x, y, width and height in pixels of the `size` the last was given,
+  /// from its top left. Outside the parts [`Renderer::render`] draws every pixel as it did
+  /// after the earlier one, when it is given a place of that size both times. It is `None` when
+  /// any pixel may differ, as after the first picture or one of another size.
+  pub fn changed(&self) -> Option<&[[u32; 4]]> {
+    (!self.anywhere).then_some(&self.parts)
+  }
+
+  /// Returns the object seen at a point of the last picture.
+  ///
+  /// The object is of the scene last prepared. It is given as its place in the scene's
+  /// [`Scene::objects`], and it is the one [`Scene::pick`] finds in that scene at `at`. This
+  /// looks only at the meshes whose bounds the line of sight passes through. Before any scene
+  /// is prepared it is `None`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if an index of an object's mesh is past the end of the mesh's vertices.
+  pub fn pick(&self, at: Vec2) -> Option<usize> {
+    let [width, height, ..] = self.held_globals.panel;
+    let objects = (self.held_placed.iter().zip(&self.draws)).map(|(placed, &mesh)| {
+      let loaded = &self.meshes[mesh];
+      let transform = Mat4::from_cols_array_2d(&placed.model);
+      (transform, &*loaded.from, loaded.bounds)
+    });
+    let view = Mat4::from_cols_array_2d(&self.held_globals.view);
+    crate::pick::seen(view, Vec2::new(width, height), at, objects)
   }
 
   /// Puts every mesh the objects use on the GPU once.
@@ -334,56 +592,113 @@ impl Renderer {
     }
   }
 
-  /// Draws the maps and then the lit scene into the picture.
+  /// Draws what is stale of the maps and then of the picture.
   ///
-  /// The maps are the shadow map, the height map, and the bounce map if light bounces.
-  fn draw_picture(&self, device: &wgpu::Device, queue: &wgpu::Queue, picture: &Picture) {
+  /// `shapes` is the parts of the shadow map and of the height map to draw again, and `light`
+  /// the part of the bounce map, which is left alone unless light bounces.
+  fn draw_picture(
+    &self,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    picture: &Picture,
+    shapes: [Redrawn; 2],
+    light: Redrawn,
+    redrawn: Redrawn,
+  ) {
+    let light = if self.held_globals.bounces() {
+      light
+    } else {
+      Redrawn::Nothing
+    };
+    if [shapes[0], shapes[1], light, redrawn] == [Redrawn::Nothing; 4] {
+      return;
+    }
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
       label: Some("potpot picture"),
     });
+    let [shadows, heights] = shapes;
     let depth_passes = [
-      ("potpot shadow", &self.pipelines.shadow, &self.shadow_map),
-      ("potpot heights", &self.pipelines.height, &self.height_map),
+      (
+        "potpot shadow",
+        &self.pipelines.shadow,
+        &self.shadow_map,
+        shadows,
+        Map::Shadows,
+      ),
+      (
+        "potpot heights",
+        &self.pipelines.height,
+        &self.height_map,
+        heights,
+        Map::Heights,
+      ),
     ];
-    for (label, pipeline, map) in depth_passes {
+    for (label, pipeline, map, part, span) in depth_passes {
+      if part == Redrawn::Nothing {
+        continue;
+      }
+      // a part is drawn over the map as it is kept, once the part is as far off as can be
+      let load = match part {
+        Redrawn::Within(_) => wgpu::LoadOp::Load,
+        _ => wgpu::LoadOp::Clear(1.0),
+      };
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some(label),
         color_attachments: &[],
-        depth_stencil_attachment: Some(depth_attachment(map)),
+        depth_stencil_attachment: Some(depth_attachment(map, load)),
         timestamp_writes: None,
         occlusion_query_set: None,
       });
+      let mut within = None;
+      if let Redrawn::Within(part @ [x, y, width, height]) = part {
+        pass.set_scissor_rect(x, y, width, height);
+        pass.set_pipeline(&self.pipelines.wipe_depth);
+        pass.draw(0..3, 0..1);
+        within = Some((part.map(|side| side as f32), span));
+      }
       pass.set_pipeline(pipeline);
       pass.set_bind_group(0, &self.globals_group, &[]);
-      self.draw_objects(&mut pass);
+      self.draw_objects(&mut pass, within);
     }
-    if self.held_globals.bounces() {
-      // where nothing is drawn no light comes off, from as low as anything gets
-      let nothing = wgpu::Color {
-        a: f64::from(self.held_globals.lowest()),
-        ..wgpu::Color::TRANSPARENT
-      };
+    if light != Redrawn::Nothing {
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("potpot bounce"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
           view: &self.bounce_samples,
           depth_slice: None,
           resolve_target: Some(&self.bounce_map),
+          // all of it is kept, for a part to be drawn over later
           ops: wgpu::Operations {
-            load: wgpu::LoadOp::Clear(nothing),
-            store: wgpu::StoreOp::Discard,
+            load: wgpu::LoadOp::Load,
+            store: wgpu::StoreOp::Store,
           },
         })],
-        depth_stencil_attachment: Some(depth_attachment(&self.bounce_depth)),
+        // with everything as near as can be, nothing is drawn but where the wipe puts the map
+        // back as far off as can be
+        depth_stencil_attachment: Some(depth_attachment(
+          &self.bounce_depth,
+          wgpu::LoadOp::Clear(0.0),
+        )),
         timestamp_writes: None,
         occlusion_query_set: None,
       });
-      pass.set_pipeline(&self.pipelines.bounce);
+      let mut within = None;
+      if let Redrawn::Within(part @ [x, y, width, height]) = light {
+        pass.set_scissor_rect(x, y, width, height);
+        // an object is known by its place on the height map, which is as much finer
+        let finer = (HEIGHT_SIZE / BOUNCE_SIZE) as f32;
+        within = Some((part.map(|side| side as f32 * finer), Map::Heights));
+      }
       pass.set_bind_group(0, &self.globals_group, &[]);
+      pass.set_pipeline(&self.pipelines.wipe_bounce);
+      pass.draw(0..3, 0..1);
+      pass.set_pipeline(&self.pipelines.bounce);
       pass.set_bind_group(1, &self.shadow_group, &[]);
-      self.draw_objects(&mut pass);
+      self.draw_objects(&mut pass, within);
     }
-    {
+    if redrawn != Redrawn::Nothing {
+      let whole = redrawn == Redrawn::Whole;
+      let smooth = usize::from(picture.smoothed.is_some());
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("potpot scene"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -391,18 +706,35 @@ impl Renderer {
           depth_slice: None,
           resolve_target: picture.smoothed.as_ref().map(|_| &picture.color),
           ops: wgpu::Operations {
-            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+            load: if whole {
+              wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+            } else {
+              wgpu::LoadOp::Load
+            },
             store: wgpu::StoreOp::Store,
           },
         })],
-        depth_stencil_attachment: Some(depth_attachment(&picture.depth)),
+        // a part is drawn over the picture as it is kept. with everything as near as can be,
+        // nothing is drawn but where the wipe puts it back as far off as can be
+        depth_stencil_attachment: Some(depth_attachment(
+          &picture.depth,
+          wgpu::LoadOp::Clear(if whole { 1.0 } else { 0.0 }),
+        )),
         timestamp_writes: None,
         occlusion_query_set: None,
       });
-      pass.set_pipeline(&self.pipelines.scene[usize::from(picture.smoothed.is_some())]);
+      let mut within = None;
+      if let Redrawn::Within(part @ [x, y, width, height]) = redrawn {
+        pass.set_scissor_rect(x, y, width, height);
+        pass.set_pipeline(&self.pipelines.wipe[smooth]);
+        pass.set_vertex_buffer(0, self.wipe.slice(..));
+        pass.draw(0..self.wiped.len() as u32, 0..1);
+        within = Some((part.map(|side| side as f32), Map::Picture));
+      }
+      pass.set_pipeline(&self.pipelines.scene[smooth]);
       pass.set_bind_group(0, &self.globals_group, &[]);
       pass.set_bind_group(1, &self.maps_group, &[]);
-      self.draw_objects(&mut pass);
+      self.draw_objects(&mut pass, within);
     }
     queue.submit([encoder.finish()]);
   }
@@ -447,12 +779,28 @@ impl Renderer {
     pass.draw(0..3, 0..1);
   }
 
-  fn draw_objects(&self, pass: &mut wgpu::RenderPass<'_>) {
+  /// Draws the objects of the scene.
+  ///
+  /// Each is drawn with its place and material. `within` is a rectangle of what is drawn on, as
+  /// x, y, width and height in its pixels, and what that is. With it, only the objects drawn in
+  /// the rectangle are drawn.
+  fn draw_objects(&self, pass: &mut wgpu::RenderPass<'_>, within: Option<([f32; 4], Map)>) {
     pass.set_vertex_buffer(1, self.placed.slice(..));
     for (object, &mesh) in (0..).zip(&self.draws) {
       let mesh = &self.meshes[mesh];
       // wgpu has no slice of an empty buffer, and such a mesh has nothing to draw
       if mesh.count == 0 {
+        continue;
+      }
+      if within.is_some_and(|([x, y, width, height], on)| {
+        let spans = self.spans[object as usize];
+        let [left, top, right, foot] = match on {
+          Map::Picture => spans.seen,
+          Map::Shadows => spans.shadowed,
+          Map::Heights => spans.overhead,
+        };
+        right < x || left > x + width || foot < y || top > y + height
+      }) {
         continue;
       }
       pass.set_vertex_buffer(0, mesh.vertices.slice(..));
@@ -465,6 +813,7 @@ impl Renderer {
 impl Loaded {
   fn new(device: &wgpu::Device, mesh: &Arc<Mesh>) -> Self {
     Self {
+      bounds: mesh.bounds(),
       from: Arc::clone(mesh),
       vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("potpot vertices"),
@@ -484,6 +833,65 @@ impl Loaded {
       },
     }
   }
+
+  /// Returns the rectangles the mesh is drawn in as an object.
+  ///
+  /// `placed` is the object's place. `onto` is the matrix from panel points to the pixels of the
+  /// picture, to the texels of the shadow map and to those of the height map.
+  fn spans(&self, placed: &Placed, onto: &[Mat4; 3]) -> Spans {
+    let model = Mat4::from_cols_array_2d(&placed.model);
+    let [seen, shadowed, overhead] = onto.map(|onto| {
+      let onto = onto * model;
+      let corners = (self.bounds.into_iter()).flat_map(damage::corners);
+      corners.fold(NOWHERE, |span, corner| {
+        let at = onto.transform_point3(corner);
+        around(span, [at.x - 1.0, at.y - 1.0, at.x + 1.0, at.y + 1.0])
+      })
+    });
+    Spans {
+      seen,
+      shadowed,
+      overhead,
+    }
+  }
+
+  /// Returns the box around the mesh as an object.
+  ///
+  /// The box is in the panel's space. `placed` is the object's place. A mesh without a vertex
+  /// has none.
+  fn bounds_as(&self, placed: &Placed) -> Option<Bounds> {
+    let model = Mat4::from_cols_array_2d(&placed.model);
+    let corners = damage::corners(self.bounds?).map(|corner| model.transform_point3(corner));
+    Some(
+      corners.fold([Vec3::MAX, Vec3::MIN], |[least, most], corner| {
+        [least.min(corner), most.max(corner)]
+      }),
+    )
+  }
+}
+
+/// A rectangle that holds nothing.
+///
+/// It is its left, top, right and foot, as the other rectangles of an object are.
+const NOWHERE: [f32; 4] = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+
+/// Returns the rectangle around two.
+///
+/// Each is its left, top, right and foot.
+fn around(one: [f32; 4], other: [f32; 4]) -> [f32; 4] {
+  [
+    one[0].min(other[0]),
+    one[1].min(other[1]),
+    one[2].max(other[2]),
+    one[3].max(other[3]),
+  ]
+}
+
+/// Returns the least and greatest corner of a rectangle.
+///
+/// The rectangle is given as its left, top, right and foot.
+fn corners_of([left, top, right, foot]: [f32; 4]) -> [Vec2; 2] {
+  [Vec2::new(left, top), Vec2::new(right, foot)]
 }
 
 /// Creates a square texture that a pass draws into.
@@ -515,15 +923,27 @@ fn map(
     .create_view(&wgpu::TextureViewDescriptor::default())
 }
 
-fn depth_attachment(view: &wgpu::TextureView) -> wgpu::RenderPassDepthStencilAttachment<'_> {
+fn depth_attachment(
+  view: &wgpu::TextureView,
+  load: wgpu::LoadOp<f32>,
+) -> wgpu::RenderPassDepthStencilAttachment<'_> {
   wgpu::RenderPassDepthStencilAttachment {
     view,
     depth_ops: Some(wgpu::Operations {
-      load: wgpu::LoadOp::Clear(1.0),
+      load,
       store: wgpu::StoreOp::Store,
     }),
     stencil_ops: None,
   }
+}
+
+fn wipe_buffer(device: &wgpu::Device, room: usize) -> wgpu::Buffer {
+  device.create_buffer(&wgpu::BufferDescriptor {
+    label: Some("potpot wipe"),
+    size: (room.max(1) * size_of::<[f32; 2]>()) as u64,
+    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+    mapped_at_creation: false,
+  })
 }
 
 fn placed_buffer(device: &wgpu::Device, room: usize) -> wgpu::Buffer {
@@ -534,3 +954,6 @@ fn placed_buffer(device: &wgpu::Device, room: usize) -> wgpu::Buffer {
     mapped_at_creation: false,
   })
 }
+
+#[cfg(test)]
+mod tests;

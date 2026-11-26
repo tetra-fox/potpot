@@ -1,8 +1,10 @@
 //! A window with every kind of control on it, opened by `just demo`.
 //!
-//! Lamps and meters follow the controls. Each control answers the pointer the way its kind
-//! does: knobs and faders are dragged, buttons are pressed, and the row of keys is one switch
-//! that each click moves a step on.
+//! Lamps follow the controls, and the two meters beside the fader follow a [`Feed`] that a
+//! thread standing in for a plugin's audio thread writes. Each control answers the pointer the
+//! way its kind does: knobs and faders are dragged, buttons are pressed, and the row of keys is
+//! one switch that each click moves a step on. The puck of the pad in the corner is dragged both
+//! ways at once, and the light over the whole panel comes from where it stands.
 //!
 //! The six knobs along the top, from the left:
 //!
@@ -10,18 +12,21 @@
 //! - `HUE`: the lamp's color
 //! - `LAMP`: whether the lamp is on
 //! - `BOUNCE`: how much light bounces between neighbors
-//! - `LEVEL`: where the fader stands, with the meters beside it
+//! - `LEVEL`: where the fader stands, which is how loud the meters beside it show the sound
 //! - `DOTS`: how many of a column of dots are lit
 
 use std::f32::consts::FRAC_PI_2;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::thread;
+use std::time::Duration;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
-use potpot::parts::{self, Button, Fader, Knob, Meter, PushSwitch};
+use potpot::parts::{self, Button, Fader, Knob, Meter, Pad, PushSwitch};
 use potpot::{Light, Look, Material, Mesh, Object, Place, Renderer, Scene};
 use potpot_window::controls::flat::{Color, Flat};
 use potpot_window::controls::interaction::{Control, Dial, Drag, Push, Readout, Target, Touch};
-use potpot_window::{Gpu, Opening, Param, Settings, Skin, View, wgpu};
+use potpot_window::{Feed, Gpu, Opening, Param, Settings, Skin, View, wgpu};
 
 const SIZE: [f32; 2] = [900.0, 520.0];
 // the knobs that drive something, in the order of `knobs`
@@ -37,20 +42,34 @@ const WIRED: usize = 6;
 const REST: usize = 9;
 /// The count of knobs, each a control on the parameter at its own place.
 const KNOBS: usize = WIRED + REST;
-// the parameters after the knobs' own: the pad that flashes the lamp, the switch the keys are
-// and the fader on its side. each button of `buttons` on none of these has its own after them
+// the parameters after the knobs' own: the pad that flashes the lamp, the switch the keys are,
+// the fader on its side, and how far across and up the light over the panel is. each button of
+// `buttons` on none of these has its own after them
 const FLASH: usize = KNOBS;
 const KEYS: usize = KNOBS + 1;
 const SLIDE: usize = KNOBS + 2;
-const BUTTONS: usize = KNOBS + 3;
+const LIGHT_ACROSS: usize = KNOBS + 3;
+const LIGHT_UP: usize = KNOBS + 4;
+const BUTTONS: usize = KNOBS + 5;
 // the controls after the knobs: the fader on the level, the switch that turns the lamp on, the
-// fader on its side, and then one for each of `buttons`
+// fader on its side, the xy pad, and then one for each of `buttons`
 const FADER_CONTROL: usize = KNOBS;
 const SWITCH_CONTROL: usize = KNOBS + 1;
 const SLIDE_CONTROL: usize = KNOBS + 2;
-const BUTTON_CONTROLS: usize = KNOBS + 3;
+const XY_CONTROL: usize = KNOBS + 3;
+const BUTTON_CONTROLS: usize = KNOBS + 4;
+// the slots of the feed: how loud the sound is on the left and on the right
+const LEFT: usize = 0;
+const RIGHT: usize = 1;
+/// The time between two blocks of the sound the meters show.
+const BLOCK: Duration = Duration::from_millis(10);
 /// The light that bounces with its knob all the way up.
 const MOST_BOUNCE: f32 = 6.0;
+/// The light's reach to a side, for each unit of its height.
+///
+/// The first is with the puck of the xy pad at the left or the foot of its room, and the second
+/// with it at the right or the top.
+const LIGHT_REACH: [f32; 2] = [-1.0, 1.0];
 
 // the wired knobs' middles down the panel, and the names and readouts under them
 const WIRED_Y: f32 = 100.0;
@@ -79,6 +98,9 @@ const BUTTONS_Y: f32 = 440.0;
 const SLIDE_AT: Vec2 = Vec2::new(678.0, 466.0);
 const SLIDE_TRAVEL: f32 = 100.0;
 const LIGHTS_Y: f32 = 418.0;
+// the middle of the xy pad and the side of its square surface
+const XY: Vec2 = Vec2::new(806.0, 446.0);
+const XY_SIDE: f32 = 70.0;
 const LIGHT_SIZE: f32 = 11.0;
 /// The color of each light of the row, from the left.
 const LIGHT_COLORS: [Vec3; 4] = [
@@ -179,7 +201,7 @@ fn knobs() -> Vec<Shown> {
     ("DIMPLED", Knob::dimpled(26.0, 14.0)),
     ("CHICKEN", Knob::chicken_head(26.0, 22.0)),
     ("BAR", Knob::bar(26.0, 26.0)),
-    ("LEVER", Knob::lever(26.0, 18.0)),
+    ("WALKER", Knob::big_walker(26.0, 18.0)),
     ("RIDGE", Knob::ridge(26.0, 28.0)),
     ("HEX", Knob::hex(26.0, 24.0)),
     ("RIBBED", Knob::ribbed(22.0, 24.0)),
@@ -259,16 +281,25 @@ fn buttons() -> Vec<Pressed> {
   ]
 }
 
+/// Returns the xy pad in the corner.
+fn xy() -> Pad {
+  Pad::new(XY_SIDE, XY_SIDE)
+}
+
 /// Returns every parameter, and every control with the parameter it is on.
 ///
 /// The controls are a knob for each of the first parameters, then the faders and the switch,
-/// then the buttons.
+/// then the xy pad, then the buttons.
 fn wiring() -> (Vec<Dial>, Vec<Control>) {
   let switch = || Dial::linear([0.0, 1.0], 0.0, Some(1.0), 0, "");
   let mut dials: Vec<Dial> = knobs().into_iter().map(|shown| shown.dial).collect();
   dials.push(switch());
   dials.push(Dial::linear([0.0, 2.0], 0.0, Some(1.0), 0, ""));
   dials.push(Dial::linear([0.0, 100.0], 60.0, None, 0, "%"));
+  // the light starts where it is by default, which is up the panel and to the left
+  let toward = Light::default().toward;
+  dials.push(Dial::linear(LIGHT_REACH, toward.x, None, 2, ""));
+  dials.push(Dial::linear(LIGHT_REACH, -toward.y, None, 2, ""));
   let own = buttons()
     .into_iter()
     .filter(|button| button.parameter >= BUTTONS);
@@ -295,6 +326,9 @@ fn wiring() -> (Vec<Dial>, Vec<Control>) {
   controls.push(slides(LEVEL, [0.0, -1.0], TRAVEL));
   controls.push(pressed(ON, Touch::Press(Push::Latching)));
   controls.push(slides(SLIDE, [1.0, 0.0], SLIDE_TRAVEL));
+  // dragged over the room the puck's middle has
+  let room = xy().travel().into();
+  controls.push(Control::pad(LIGHT_ACROSS, LIGHT_UP, room, readout));
   controls.extend(
     buttons()
       .iter()
@@ -362,14 +396,11 @@ impl Drawn {
 
 /// The panel as potpot draws it.
 ///
-/// It holds its meshes, each made once, and the scene last laid out.
+/// It holds its meshes, each made once.
 struct Demo {
+  /// The renderer, which also finds the pointer on the scene.
   renderer: Renderer,
-  /// The scene last laid out, which is what the pointer is on.
-  ///
-  /// It is `None` until the first is laid out.
-  scene: Option<Scene>,
-  /// What each of the scene's objects is, in the same order.
+  /// What each of that scene's objects is, in the same order.
   targets: Vec<Option<Target>>,
   /// Everything that never moves or changes.
   fixed: Drawn,
@@ -390,6 +421,8 @@ struct Demo {
   segments: [Arc<Mesh>; 2],
   /// The buttons along the bottom, each with its body.
   buttons: Vec<(Pressed, Arc<Mesh>)>,
+  xy: Pad,
+  puck: Arc<Mesh>,
 }
 
 impl Demo {
@@ -471,7 +504,8 @@ impl Demo {
     fixed.extend(dots.seats(&Arc::new(dots.seat()), DOTS_X, METER_FOOT));
 
     // along the bottom: the gaps the buttons sit in, the slot of the fader on its side
-    // under the seats of its row of lights, and slots that let the air out
+    // under the seats of its row of lights, the xy pad's surface in its rim, and slots that
+    // let the air out
     let buttons: Vec<_> = (buttons().into_iter())
       .map(|button| {
         fixed.put(button.shape.seat(2.5), Vec2::new(button.x, BUTTONS_Y), hole);
@@ -488,15 +522,17 @@ impl Demo {
     for light in 0..LIGHT_COLORS.len() {
       fixed.put(parts::led_seat(LIGHT_SIZE), light_at(light), hole);
     }
-    for slot in 0..6 {
-      let at = Vec2::new(790.0 + 12.0 * slot as f32, BUTTONS_Y);
+    let xy = xy();
+    fixed.put(xy.surface(), XY, Material::glossy(Vec3::splat(0.02)));
+    fixed.put(xy.rim(), XY, chrome);
+    for slot in 0..3 {
+      let at = Vec2::new(862.0 + 12.0 * slot as f32, BUTTONS_Y);
       fixed.put(parts::slot(5.0, 60.0), at, hole);
     }
 
     let fader = Fader::console(24.0, 38.0, 14.0);
     Self {
       renderer: Renderer::new(gpu.device, gpu.format),
-      scene: None,
       targets: Vec::new(),
       fixed,
       turned: (knobs.iter())
@@ -513,14 +549,21 @@ impl Demo {
       ladder,
       dots,
       buttons,
+      puck: Arc::new(xy.puck()),
+      xy,
     }
   }
 
   /// Returns the scene and what each of its objects is.
   ///
-  /// `values` is where each parameter stands, as a part of its whole turn, and `held` is the
-  /// control that is held down.
-  fn scene(&self, values: &[f32], held: Option<usize>) -> (Scene, Vec<Option<Target>>) {
+  /// `values` is where each parameter stands, as a part of its whole turn, `feed` is how loud
+  /// the sound is on each side, and `held` is the control that is held down.
+  fn scene(
+    &self,
+    values: &[f32],
+    feed: &[f32],
+    held: Option<usize>,
+  ) -> (Scene, Vec<Option<Target>>) {
     // the scene owns this frame's objects, so the ones that never move are copied into it
     let mut drawn = self.fixed.clone();
     let mut lamps = Vec::new();
@@ -584,10 +627,8 @@ impl Demo {
       }
     }
 
-    // the fader stands where the level is, and the meters beside it follow, the second a
-    // little behind the first
-    let stands = values[LEVEL];
-    let cap = parts::fader_transform(FADER.x, FADER.y, TRAVEL, stands);
+    // the fader stands where the level is, and the meters beside it show the sound
+    let cap = parts::fader_transform(FADER.x, FADER.y, TRAVEL, values[LEVEL]);
     let materials = [
       Material::glossy(Vec3::splat(0.04)),
       Material::matte(Vec3::splat(0.9)),
@@ -596,7 +637,7 @@ impl Demo {
       drawn.place(mesh, cap, material, Some(Target::Control(FADER_CONTROL)));
     }
     let [segment, dot] = &self.segments;
-    for (x, level) in LADDERS.into_iter().zip([stands, stands * 0.85]) {
+    for (x, level) in LADDERS.into_iter().zip([feed[LEFT], feed[RIGHT]]) {
       drawn.extend(self.ladder.lights(segment, x, METER_FOOT, level, None));
       lamps.extend(self.ladder.lamp(x, METER_FOOT, level));
     }
@@ -620,12 +661,24 @@ impl Demo {
       );
     }
 
+    // the puck of the xy pad, and the light from the side of the panel the puck is on
+    let [across, up] = [LIGHT_ACROSS, LIGHT_UP].map(|light| values[light]);
+    drawn.place(
+      &self.puck,
+      self.xy.transform(XY.x, XY.y, across, up),
+      rubber,
+      Some(Target::Control(XY_CONTROL)),
+    );
+    let [left, right] = LIGHT_REACH;
+    let reach = |turn: f32| left + (right - left) * turn;
+
     let scene = Scene {
       size: SIZE.into(),
       heights: [-8.0, 48.0],
       lean: Vec2::new(0.0, -0.25),
       // dimmed, so that what the lamps do shows
       light: Light {
+        toward: Vec3::new(reach(across), -reach(up), 1.0),
         color: Vec3::splat(0.6),
         ambient: Vec3::splat(0.2),
         bounce: values[BOUNCE] * MOST_BOUNCE,
@@ -641,9 +694,9 @@ impl Demo {
 
 impl Skin for Demo {
   fn prepare(&mut self, gpu: &Gpu, view: &View, over: &mut Flat) {
-    let (scene, targets) = self.scene(view.values, view.held);
+    let (scene, targets) = self.scene(view.values, view.feed, view.held);
     (self.renderer).prepare(gpu.device, gpu.queue, &scene, view.pixels);
-    (self.scene, self.targets) = (Some(scene), targets);
+    self.targets = targets;
 
     // each wired knob's value, written flat over the glass of its window
     let wired = self.knobs.iter().zip(view.controls).take(WIRED);
@@ -670,17 +723,58 @@ impl Skin for Demo {
     self.renderer.render(encoder, target, on, place);
   }
 
+  fn changed(&self) -> Option<&[[u32; 4]]> {
+    self.renderer.changed()
+  }
+
   fn target_at(&self, at: [f32; 2]) -> Option<Target> {
-    let object = self.scene.as_ref()?.pick(at.into())?;
+    let object = self.renderer.pick(at.into())?;
     self.targets[object]
   }
 }
 
+/// Writes how loud a made-up sound is on each side into `feed`, a block at a time.
+///
+/// The sound swells and dies away, a little later on the right, and is as loud at most as
+/// `level` has it. This is what a plugin's audio thread does at the end of each block.
+fn sound(feed: &Feed, level: &AtomicU32) {
+  let mut blocks = 0.0_f32;
+  loop {
+    let level = f32::from_bits(level.load(Ordering::Relaxed));
+    let swell = |behind: f32| ((blocks - behind) * 0.02).sin().max(0.0);
+    feed.set(LEFT, level * swell(0.0));
+    feed.set(RIGHT, level * swell(20.0));
+    blocks += 1.0;
+    // an audio thread is called back for each block, which this stands in for
+    thread::sleep(BLOCK);
+  }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-  let settings = Settings::new("potpot", SIZE);
+  let mut settings = Settings::new("potpot", SIZE);
+  let feed = Feed::new(2);
+  settings.feed = feed.clone();
   let (dials, controls) = wiring();
-  // no host has these parameters: each stands where the panel last set it
-  let params = dials.into_iter().map(Param::free).collect();
+  // no host has these parameters: each stands where the panel last set it. the level is kept
+  // where the thread that makes the sound reads it too
+  let level = Arc::new(AtomicU32::new(dials[LEVEL].default.to_bits()));
+  let params = (dials.into_iter().enumerate())
+    .map(|(parameter, dial)| {
+      if parameter != LEVEL {
+        return Param::free(dial);
+      }
+      let (value, set) = (Arc::clone(&level), Arc::clone(&level));
+      Param::new(
+        dial,
+        move || f32::from_bits(value.load(Ordering::Relaxed)),
+        || {},
+        move |to| set.store(to.to_bits(), Ordering::Relaxed),
+        || {},
+      )
+    })
+    .collect();
+  // the thread is left running, and ends with the process when the window closes
+  thread::spawn(move || sound(&feed, &level));
   let opened = potpot_window::open(settings, params, controls, Opening::alone(), Demo::new)?;
   opened.window.run_until_closed()?;
   Ok(())

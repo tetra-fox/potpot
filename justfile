@@ -9,12 +9,20 @@ flat:
 picture *args:
     cargo run -p potpot --example picture -- {{ args }}
 
-# open a window with every kind of part on it, lamps and meters following the controls
+# open a window with every kind of part on it, lamps following the controls and meters a feed
 demo:
     cargo run -p potpot --example demo
 
+# open a window with a three-band equalizer on a lit screen, over a spectrum from a feed
+equalizer:
+    cargo run -p potpot --example equalizer
+
 test:
     cargo test --workspace
+
+# run the tests that draw with a graphics device, which `test` and `ci` leave out
+gpu-test:
+    cargo test --workspace -- --ignored
 
 lint:
     cargo fmt --all --check

@@ -16,14 +16,15 @@ use potpot_controls::interaction::{Control, Dial, Key};
 use tracing::error;
 use wgpu::rwh::HasWindowHandle;
 
+use crate::feed::Feed;
 use crate::skin::{Gpu, Skin};
 use crate::window::{Guarded, Window};
 
 /// The settings a panel's window opens with.
 ///
 /// They are what there is to say of the window before anything is drawn in it.
-/// [`Settings::new`] takes the title and the size. The scales and the looks of the menu and the
-/// grip are changed a field at a time.
+/// [`Settings::new`] takes the title and the size. The scales, the looks of the menu and the
+/// grip, and the feed are changed a field at a time.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct Settings {
@@ -39,13 +40,15 @@ pub struct Settings {
   pub menu: MenuLook,
   /// The look of the grip the window is pulled larger and smaller by.
   pub grip: GripLook,
+  /// The [`Feed`] whose numbers the skin is handed.
+  pub feed: Feed,
 }
 
 impl Settings {
   /// Creates the settings of a window called `title` for a panel of `size`.
   ///
-  /// The window is pulled from half the panel's own size to three times it, and the menu and
-  /// the grip look as they do by default.
+  /// The window is pulled from half the panel's own size to three times it, the menu and the
+  /// grip look as they do by default, and the feed has no slots.
   pub fn new(title: impl Into<String>, size: Point) -> Self {
     Self {
       title: title.into(),
@@ -53,6 +56,7 @@ impl Settings {
       scales: [0.5, 3.0],
       menu: MenuLook::default(),
       grip: GripLook::default(),
+      feed: Feed::default(),
     }
   }
 

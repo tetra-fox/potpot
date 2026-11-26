@@ -2,8 +2,9 @@
 //!
 //! A [`Scene`] is a panel seen from above with [`Object`]s on it, one [`Light`] casting shadows,
 //! and a [`Look`] that can make the picture as blocky and banded as an old render. A
-//! [`Renderer`] draws it onto a `wgpu` texture, and again only when it has changed.
-//! [`Scene::pick`] returns the object seen at a point of the picture.
+//! [`Renderer`] draws it onto a `wgpu` texture, and of a scene that has changed draws again
+//! only what the change shows in. [`Scene::pick`] returns the object seen at a point of the
+//! picture, and [`Renderer::pick`] the same of the scene it drew last, with less work.
 //!
 //! # Examples
 //!

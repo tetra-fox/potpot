@@ -11,13 +11,14 @@ under one light, so shadows, shine and the spill of a lamp come from the scene.
 | Crate             | Description                                                                                                  |
 | ----------------- | ------------------------------------------------------------------------------------------------------------ |
 | `potpot`          | Draws a scene of parts with wgpu and returns the object under a point                                        |
-| `potpot-controls` | What a panel's controls do, with no look and no dependencies                                                 |
+| `potpot-controls` | What a panel's controls do and its displays plot, with no look and no dependencies                           |
 | `potpot-window`   | A baseview window for a panel of controls, and an editor for [nice-plug](https://crates.io/crates/nice-plug) |
 
 ## Usage
 
 ```sh
 just demo                    # a window with every kind of part on it
+just equalizer               # an equalizer's curve on a lit screen
 just flat                    # a panel drawn with flat shapes alone
 just picture out.png synth   # one of potpot's example panels, drawn to a file
 ```

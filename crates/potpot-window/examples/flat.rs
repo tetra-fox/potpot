@@ -1,4 +1,4 @@
-//! A panel of four knobs drawn with flat shapes alone.
+//! Knobs, an XY pad and a wave, drawn with flat shapes alone.
 //!
 //! It opens in a window of its own with no host, and is the least there is to write to have
 //! working controls. `just flat` runs it.
@@ -14,14 +14,14 @@
 //!
 //! The example holds the table of controls and how they are drawn.
 
-use std::f32::consts::PI;
+use std::f32::consts::{PI, TAU};
 
 use potpot_window::controls::flat::{Color, Flat};
 use potpot_window::controls::interaction::{Control, Dial, Feel, Readout, Target};
 use potpot_window::{Gpu, Opening, Param, Settings, Skin, View, wgpu};
 
 /// The panel's width and height in its own points.
-const SIZE: [f32; 2] = [420.0, 300.0];
+const SIZE: [f32; 2] = [600.0, 390.0];
 // how far down the knobs' middles, their names and their readouts are
 const KNOB_Y: f32 = 120.0;
 const NAME_Y: f32 = 178.0;
@@ -32,6 +32,26 @@ const READOUT: [f32; 2] = [38.0, 12.0];
 const LETTERS: f32 = 9.0;
 /// The width of the strokes of all the lettering.
 const WEIGHT: f32 = 1.2;
+// the middle of the pad's well, half its side, and how far out from its middle the puck reaches
+const PAD: [f32; 2] = [500.0, 100.0];
+const PAD_HALF: f32 = 60.0;
+const PUCK: f32 = 9.0;
+/// The width and height of the room the puck's middle has.
+const ROOM: f32 = (PAD_HALF - PUCK) * 2.0;
+// the two parameters the pad turns, and its two controls: the pad itself, whose readout is
+// of the one up, and a readout alone on the one across
+const PAN: usize = 4;
+const DEPTH: usize = 5;
+const PAD_CONTROL: usize = 4;
+const PAN_CONTROL: usize = 5;
+/// The pad's two readouts.
+///
+/// Each is its control, its name and how far across the panel its middle is.
+const UNDER_PAD: [(usize, &str, f32); 2] =
+  [(PAN_CONTROL, "PAN", 460.0), (PAD_CONTROL, "DEPTH", 540.0)];
+
+/// The top left and bottom right of the wave's well.
+const WAVE: [[f32; 2]; 2] = [[22.0, 250.0], [578.0, 370.0]];
 
 const GROUND: Color = [0.11, 0.12, 0.14, 1.0];
 const WELL: Color = [0.05, 0.055, 0.065, 1.0];
@@ -127,11 +147,65 @@ impl Knob {
   }
 }
 
+/// Adds a control's readout, its middle `x` across the panel.
+fn readout(over: &mut Flat, view: &View, control: usize, x: f32) {
+  let middle = [x, READOUT_Y];
+  let corner = |sign: f32| [middle[0] + sign * READOUT[0], middle[1] + sign * READOUT[1]];
+  let edit = view.edit.filter(|edit| edit.control == control);
+  over.rect(
+    corner(-1.0),
+    corner(1.0),
+    if edit.is_some() { MARK } else { LINE },
+  );
+  let inside = |sign: f32| corner(sign).map(|along| along - sign * view.pixel);
+  over.rect(inside(-1.0), inside(1.0), WELL);
+  match edit {
+    // what is selected is on a bright block
+    Some(edit) => over.typed(edit, middle, LETTERS, WEIGHT, INK, MARK),
+    None => {
+      let reading = &view.controls[control];
+      let written = format!("{}{}", reading.text, reading.unit);
+      over.centered(&written, middle, LETTERS, WEIGHT, INK);
+    }
+  }
+}
+
+/// Adds the wave the four knobs shape.
+///
+/// It lies over the region between it and its middle line. `values` is where each knob stands, as a
+/// part of its whole turn: the tune sets how many cycles show, the drive flattens their crests, the
+/// tone adds a ripple and the level is their height.
+fn wave(over: &mut Flat, values: [f32; 4]) {
+  let [tune, drive, tone, level] = values;
+  let [min, max] = WAVE;
+  over.rect(min, max, WELL);
+  let (middle, reach) = ((min[1] + max[1]) / 2.0, (max[1] - min[1]) / 2.0 - 8.0);
+  // an octave down at the start of the tune's turn and an octave up at its end
+  let cycles = 4.0 * 2.0_f32.powf(tune * 2.0 - 1.0);
+  let gain = 0.5 + drive * 6.0;
+  let points: Vec<[f32; 2]> = (0..=270u16)
+    .map(|step| {
+      let across = f32::from(step) / 270.0;
+      let turn = across * cycles * TAU;
+      let driven = (gain * (turn.sin() + tone * 0.4 * (turn * 5.0).sin())).tanh() / gain.tanh();
+      [
+        min[0] + 8.0 + across * (max[0] - min[0] - 16.0),
+        middle - driven * level * reach,
+      ]
+    })
+    .collect();
+  let [red, green, blue, _] = MARK;
+  over.area(&points, middle, [red, green, blue, 0.25]);
+  over.curve(&points, 2.0, MARK);
+}
+
 /// The look of the panel.
 ///
-/// Flat shapes need nothing of the graphics device, so it keeps only the knobs.
+/// Flat shapes need nothing of the graphics device, so it keeps only the knobs and where the
+/// pad's puck was last drawn.
 struct Look {
   knobs: [Knob; 4],
+  puck: [f32; 2],
 }
 
 impl Skin for Look {
@@ -152,26 +226,23 @@ impl Skin for Look {
       }
       over.line(on_ring(value, 8.0), on_ring(value, RADIUS - 6.0), 3.0, INK);
       over.centered(knob.name, [knob.x, NAME_Y], 8.0, WEIGHT, LINE);
-
-      let middle = [knob.x, READOUT_Y];
-      let corner = |sign: f32| [middle[0] + sign * READOUT[0], middle[1] + sign * READOUT[1]];
-      let edit = view.edit.filter(|edit| edit.control == control);
-      over.rect(
-        corner(-1.0),
-        corner(1.0),
-        if edit.is_some() { MARK } else { LINE },
-      );
-      let inside = |sign: f32| corner(sign).map(|along| along - sign * view.pixel);
-      over.rect(inside(-1.0), inside(1.0), WELL);
-      match edit {
-        // what is selected is on a bright block
-        Some(edit) => over.typed(edit, middle, LETTERS, WEIGHT, INK, MARK),
-        None => {
-          let written = format!("{}{}", reading.text, reading.unit);
-          over.centered(&written, middle, LETTERS, WEIGHT, INK);
-        }
-      }
+      readout(over, view, control, knob.x);
     }
+
+    // the pad: a well, a line each way through the puck, and the puck as a dot
+    let corner = |sign: f32| PAD.map(|middle| middle + sign * PAD_HALF);
+    over.rect(corner(-1.0), corner(1.0), WELL);
+    let [pan, depth] = [PAN_CONTROL, PAD_CONTROL].map(|control| view.controls[control].value);
+    self.puck = [PAD[0] + (pan - 0.5) * ROOM, PAD[1] + (0.5 - depth) * ROOM];
+    let [x, y] = self.puck;
+    over.rect([corner(-1.0)[0], y], [corner(1.0)[0], y + view.pixel], LINE);
+    over.rect([x, corner(-1.0)[1]], [x + view.pixel, corner(1.0)[1]], LINE);
+    over.line(self.puck, self.puck, PUCK * 2.0, MARK);
+    for (control, name, x) in UNDER_PAD {
+      over.centered(name, [x, NAME_Y], 8.0, WEIGHT, LINE);
+      readout(over, view, control, x);
+    }
+    wave(over, std::array::from_fn(|knob| view.controls[knob].value));
   }
 
   fn draw(&self, _: &mut wgpu::CommandEncoder, _: &wgpu::TextureView, _: [u32; 4]) {
@@ -179,33 +250,46 @@ impl Skin for Look {
   }
 
   fn target_at(&self, at: [f32; 2]) -> Option<Target> {
-    self.knobs.iter().enumerate().find_map(|(control, knob)| {
-      let from = [at[0] - knob.x, at[1] - KNOB_Y];
-      if from[0].hypot(from[1]) <= RADIUS {
-        return Some(Target::Control(control));
-      }
-      let within = (at[0] - knob.x).abs() <= READOUT[0] && (at[1] - READOUT_Y).abs() <= READOUT[1];
-      within.then_some(Target::Readout(control))
-    })
+    let within =
+      |middle: [f32; 2], reach: f32| (at[0] - middle[0]).hypot(at[1] - middle[1]) <= reach;
+    if within(self.puck, PUCK) {
+      return Some(Target::Control(PAD_CONTROL));
+    }
+    let on_readout =
+      |x: f32| (at[0] - x).abs() <= READOUT[0] && (at[1] - READOUT_Y).abs() <= READOUT[1];
+    let knobs = (self.knobs.iter().enumerate()).map(|(control, knob)| (control, knob.x));
+    let knob = (knobs.clone()).find(|&(_, x)| within([x, KNOB_Y], RADIUS));
+    let under_pad = UNDER_PAD.into_iter().map(|(control, _, x)| (control, x));
+    let readout = knobs.chain(under_pad).find(|&(_, x)| on_readout(x));
+    knob
+      .map(|(control, _)| Target::Control(control))
+      .or(readout.map(|(control, _)| Target::Readout(control)))
   }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   let settings = Settings::new("Flat", SIZE);
-  // a parameter for each knob, which no host has: each stands where the panel last set it
-  let params = knobs()
+  // a parameter for each knob and two for the pad, which no host has: each stands where the
+  // panel last set it
+  let mut params: Vec<Param> = knobs()
     .iter()
     .map(|knob| Param::free(knob.dial()))
     .collect();
-  let controls = (knobs().iter().enumerate())
+  params.push(Param::free(Dial::linear([-50.0, 50.0], 0.0, None, 0, "")));
+  params.push(Param::free(Dial::linear([0.0, 100.0], 50.0, None, 0, "%")));
+  let mut controls: Vec<Control> = (knobs().iter().enumerate())
     .map(|(parameter, knob)| {
       let mut control = Control::new(parameter, Readout::new(knob.room));
       control.feel = knob.feel;
       control
     })
     .collect();
+  // dragged over the room the puck's middle has
+  controls.push(Control::pad(PAN, DEPTH, [ROOM; 2], Readout::new(3)));
+  controls.push(Control::new(PAN, Readout::new(3)));
   let opened = potpot_window::open(settings, params, controls, Opening::alone(), |_| Look {
     knobs: knobs(),
+    puck: PAD,
   })?;
   opened.window.run_until_closed()?;
   Ok(())

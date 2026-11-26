@@ -12,18 +12,25 @@ use crate::scene::{LAMPS, Look, Object, Scene};
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(super) struct Globals {
-  view: [[f32; 4]; 4],
-  light_view: [[f32; 4]; 4],
-  toward_light: [f32; 4],
+  pub(super) view: [[f32; 4]; 4],
+  pub(super) light_view: [[f32; 4]; 4],
+  /// The way to the light, and how wide shadow edges are.
+  pub(super) toward_light: [f32; 4],
   toward_viewer: [f32; 4],
   light_color: [f32; 4],
   ambient: [f32; 4],
+  /// The shadow options, one in each component.
+  ///
+  /// - One when shadow edges are softened
+  /// - The size of a shadow map texel
+  /// - The count of lamps
+  /// - How much the light all around is kept out of corners
   shadows: [f32; 4],
-  overhead: [[f32; 4]; 4],
+  pub(super) overhead: [[f32; 4]; 4],
   /// The panel's width and height, and the lowest and highest anything on it reaches.
-  panel: [f32; 4],
+  pub(super) panel: [f32; 4],
   /// Each lamp's place with its reach, and then its color with its radius.
-  lamps: [[[f32; 4]; 2]; LAMPS],
+  pub(super) lamps: [[[f32; 4]; 2]; LAMPS],
 }
 
 impl Globals {
@@ -32,9 +39,18 @@ impl Globals {
     self.ambient[3] > 0.0
   }
 
-  /// Returns the lowest anything on the panel reaches.
-  pub(super) fn lowest(&self) -> f32 {
-    self.panel[2]
+  /// Returns whether two scenes differ in their lamps at most.
+  ///
+  /// Everything else of the two is the same: the view, the light and the panel.
+  pub(super) fn lit_alike(&self, other: &Self) -> bool {
+    let but_lamps = |globals: &Self| {
+      let mut globals = *globals;
+      globals.lamps = [[[0.0; 4]; 2]; LAMPS];
+      // the count of lamps
+      globals.shadows[2] = 0.0;
+      globals
+    };
+    but_lamps(self) == but_lamps(other)
   }
 
   pub(super) fn of(scene: &Scene) -> Self {
@@ -77,7 +93,7 @@ impl Globals {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(super) struct Placed {
-  model: [[f32; 4]; 4],
+  pub(super) model: [[f32; 4]; 4],
   color: [f32; 4],
   highlight: [f32; 4],
   finish: [f32; 4],

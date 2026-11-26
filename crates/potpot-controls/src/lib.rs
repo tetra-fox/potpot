@@ -1,4 +1,4 @@
-//! What the controls of an audio plugin's panel do, with no look of their own.
+//! What an audio plugin panel's controls do and its displays plot, with no look.
 //!
 //! [`Interaction`](interaction::Interaction) takes pointer and key events and returns the
 //! [`Action`](interaction::Action)s for the host and the window. The crate draws nothing and
@@ -43,13 +43,21 @@
 //! - [`fit`] puts a panel of one shape in windows of any.
 //! - [`furniture`] holds the menu and the grip.
 //! - [`flat`] and [`stroke`] hold plain shapes and lettering to draw them in.
+//!
+//! # Displays
+//!
+//! - [`axis`] lays plain values along a line, evenly or by ratio, for a parameter and for a
+//!   drawing of it alike.
+//! - [`response`] gives the gain of an equalizer's bands over frequency.
 
 /// A place or a size, across and down.
 pub type Point = [f32; 2];
 
+pub mod axis;
 pub mod fit;
 pub mod flat;
 pub mod furniture;
 pub mod interaction;
+pub mod response;
 pub mod sent;
 pub mod stroke;

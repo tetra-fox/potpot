@@ -9,7 +9,43 @@ use super::PAINT;
 use crate::mesh::{Mesh, Vertex};
 
 /// The count of sides in the half round at each end of a stroke.
-const END: usize = 4;
+pub(super) const END: usize = 4;
+
+/// Adds a flat stroke between two points to a mesh.
+///
+/// The stroke is `weight` wide and lies at `height`, facing up. It has a half round of `sides`
+/// sides past each end, so that strokes meet at any angle without a notch and one of no length
+/// is a dot.
+pub(super) fn add_stroke(
+  mesh: &mut Mesh,
+  [from, to]: [Vec2; 2],
+  weight: f32,
+  height: f32,
+  sides: usize,
+) {
+  let along = (to - from).try_normalize().unwrap_or(Vec2::X) * weight / 2.0;
+  let across = along.perp();
+  mesh.quad(
+    [from - across, from + across, to + across, to - across].map(|at| at.extend(height)),
+    Vec3::Z,
+  );
+  for (end, out) in [(from, -along), (to, along)] {
+    let middle = mesh.vertices.len() as u32;
+    let rim = (0..=sides).map(|step| {
+      let turn = (step as f32 / sides as f32 - 0.5) * PI;
+      end + Vec2::from_angle(turn).rotate(out)
+    });
+    for at in std::iter::once(end).chain(rim) {
+      mesh.vertices.push(Vertex {
+        position: at.extend(height).into(),
+        normal: Vec3::Z.into(),
+      });
+    }
+    for side in 1..=sides as u32 {
+      (mesh.indices).extend([middle, middle + side, middle + side + 1]);
+    }
+  }
+}
 
 /// Returns lettering painted flat on the panel.
 ///
@@ -19,31 +55,7 @@ const END: usize = 4;
 pub fn legend(text: &str, height: f32, weight: f32) -> Mesh {
   let mut legend = Mesh::default();
   for line in stroke::lines(text, height) {
-    let [from, to] = line.map(Vec2::from);
-    // a stroke with a half round past each end, so that strokes meet at any angle
-    // without a notch and one of no length is a dot
-    let along = (to - from).try_normalize().unwrap_or(Vec2::X) * weight / 2.0;
-    let across = along.perp();
-    legend.quad(
-      [from - across, from + across, to + across, to - across].map(|at| at.extend(PAINT)),
-      Vec3::Z,
-    );
-    for (end, out) in [(from, -along), (to, along)] {
-      let middle = legend.vertices.len() as u32;
-      let rim = (0..=END).map(|step| {
-        let turn = (step as f32 / END as f32 - 0.5) * PI;
-        end + Vec2::from_angle(turn).rotate(out)
-      });
-      for at in std::iter::once(end).chain(rim) {
-        legend.vertices.push(Vertex {
-          position: at.extend(PAINT).into(),
-          normal: Vec3::Z.into(),
-        });
-      }
-      for side in 1..=END as u32 {
-        (legend.indices).extend([middle, middle + side, middle + side + 1]);
-      }
-    }
+    add_stroke(&mut legend, line.map(Vec2::from), weight, PAINT, END);
   }
   legend
 }

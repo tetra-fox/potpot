@@ -1,7 +1,8 @@
 //! The object of a scene that is seen at a point of its picture.
 
-use glam::{Vec2, Vec3};
+use glam::{DVec3, Mat4, Vec2, Vec3};
 
+use crate::mesh::Mesh;
 use crate::scene::Scene;
 
 impl Scene {
@@ -17,33 +18,83 @@ impl Scene {
   ///
   /// Panics if an index of an object's mesh is past the end of the mesh's vertices.
   pub fn pick(&self, at: Vec2) -> Option<usize> {
-    let across = at / self.size * 2.0 - 1.0;
-    if across.abs().max_element() > 1.0 {
-      return None;
-    }
-    let from_clip = self.view().inverse();
-    // the line of sight from the highest the scene reaches to the lowest
-    let near = from_clip.transform_point3(Vec3::new(across.x, -across.y, 0.0));
-    let far = from_clip.transform_point3(Vec3::new(across.x, -across.y, 1.0));
+    // the box around a mesh takes a look at each of its vertices, which is less than a look at
+    // each of its triangles
+    let objects =
+      (self.objects.iter()).map(|object| (object.transform, &*object.mesh, object.mesh.bounds()));
+    seen(self.view(), self.size, at, objects)
+  }
+}
 
-    let mut seen: Option<(f32, usize)> = None;
-    for (index, object) in self.objects.iter().enumerate() {
-      // the same line in the mesh's own space, where a point is as far along it as in the
-      // panel's
-      let to_mesh = object.transform.inverse();
-      let from = to_mesh.transform_point3(near);
-      let along = to_mesh.transform_vector3(far - near);
-      let corner = |index: u32| Vec3::from(object.mesh.vertices[index as usize].position);
-      for triangle in object.mesh.indices.as_chunks::<3>().0 {
-        if let Some(distance) = crossing(from, along, triangle.map(corner))
-          && seen.is_none_or(|(nearest, _)| distance < nearest)
-        {
-          seen = Some((distance, index));
-        }
+/// Returns the place of the object seen at a point.
+///
+/// The place is among `objects`. `view` is the matrix from panel points to clip space and
+/// `size` the panel's width and height. Each object is its transform, its mesh, and the box
+/// around the mesh in the mesh's own space, which a mesh without a vertex has none of. A mesh
+/// whose box the line of sight misses is not looked into.
+pub(crate) fn seen<'a>(
+  view: Mat4,
+  size: Vec2,
+  at: Vec2,
+  objects: impl Iterator<Item = (Mat4, &'a Mesh, Option<[Vec3; 2]>)>,
+) -> Option<usize> {
+  let across = at / size * 2.0 - 1.0;
+  if across.abs().max_element() > 1.0 {
+    return None;
+  }
+  let from_clip = view.inverse();
+  // the line of sight from the highest the scene reaches to the lowest
+  let near = from_clip.transform_point3(Vec3::new(across.x, -across.y, 0.0));
+  let far = from_clip.transform_point3(Vec3::new(across.x, -across.y, 1.0));
+
+  let mut seen: Option<(f64, usize)> = None;
+  for (index, (transform, mesh, bounds)) in objects.enumerate() {
+    // the same line in the mesh's own space, where a point is as far along it as in the
+    // panel's
+    let to_mesh = transform.inverse();
+    let from = to_mesh.transform_point3(near);
+    let along = to_mesh.transform_vector3(far - near);
+    if !bounds.is_some_and(|bounds| passes(from, along, bounds)) {
+      continue;
+    }
+    let (from, along) = (from.as_dvec3(), along.as_dvec3());
+    let corner = |index: u32| Vec3::from(mesh.vertices[index as usize].position);
+    for triangle in mesh.indices.as_chunks::<3>().0 {
+      if let Some(distance) = crossing(from, along, triangle.map(corner))
+        && seen.is_none_or(|(nearest, _)| distance < nearest)
+      {
+        seen = Some((distance, index));
       }
     }
-    seen.map(|(_, index)| index)
   }
+  seen.map(|(_, index)| index)
+}
+
+/// Returns whether a line passes through a box or its margin.
+///
+/// The line runs from `from` to `from + along`. The margin is wider than the one of a triangle
+/// in the box, so a line that crosses such a triangle passes.
+fn passes(from: Vec3, along: Vec3, [min, max]: [Vec3; 2]) -> bool {
+  let margin = (max - min).max_element() * EDGE * 2.0 + f32::EPSILON;
+  let (min, max) = (min - margin, max + margin);
+  // the stretch of the line between each pair of the box's sides, as parts of its length. a
+  // line that runs along a pair is between them all the way or not at all
+  let (mut enters, mut leaves) = (0.0_f32, 1.0_f32);
+  for axis in 0..3 {
+    if along[axis] == 0.0 {
+      if from[axis] < min[axis] || from[axis] > max[axis] {
+        return false;
+      }
+      continue;
+    }
+    let (one, other) = (
+      (min[axis] - from[axis]) / along[axis],
+      (max[axis] - from[axis]) / along[axis],
+    );
+    enters = enters.max(one.min(other));
+    leaves = leaves.min(one.max(other));
+  }
+  enters <= leaves
 }
 
 /// The margin past a triangle's edges that counts as crossed.
@@ -56,19 +107,25 @@ const EDGE: f32 = 1e-4;
 ///
 /// The distance runs from zero at `from` to one at `from + along`, and is `None` for a line
 /// that does not go through the triangle between the two.
-fn crossing(from: Vec3, along: Vec3, [a, b, c]: [Vec3; 3]) -> Option<f32> {
+///
+/// The sums are worked out with twice the digits the corners are held in. With no more than the
+/// corners' own, a triangle with next to no area gives sums that are all rounding, which can
+/// come out as a crossing for a line that passes well outside it.
+fn crossing(from: DVec3, along: DVec3, corners: [Vec3; 3]) -> Option<f64> {
+  let [a, b, c] = corners.map(|corner| corner.as_dvec3());
   let (ab, ac) = (b - a, c - a);
   let across = along.cross(ac);
   let facing = ab.dot(across);
   // a triangle seen edge on, or one with no area
-  if facing.abs() < f32::EPSILON {
+  if facing == 0.0 {
     return None;
   }
   let offset = from - a;
   let u = offset.dot(across) / facing;
   let around = offset.cross(ab);
   let v = along.dot(around) / facing;
-  if u < -EDGE || v < -EDGE || u + v > 1.0 + EDGE {
+  let edge = f64::from(EDGE);
+  if u < -edge || v < -edge || u + v > 1.0 + edge {
     return None;
   }
   let distance = ac.dot(around) / facing;
@@ -243,6 +300,73 @@ mod tests {
         "{across}"
       );
     }
+  }
+
+  #[test]
+  fn passing_over_a_mesh_whose_box_is_missed_changes_nothing_that_is_picked() {
+    // a slab, a cone and a bar turned and leaned over, under a view that leans both ways
+    let mut scene = scene(Vec2::new(0.2, -0.3), &[]);
+    let parts = [
+      (
+        crate::parts::slab(92.0, 38.0, 3.5, 3.0),
+        Mat4::from_translation(Vec3::new(282.0, 100.05, 0.0)),
+      ),
+      (
+        Mesh::lathe(&[[10.0, 0.0], [0.0, 5.0]], 24, true),
+        Mat4::from_translation(Vec3::new(96.3, 94.7, 0.0)),
+      ),
+      (
+        Mesh::cuboid(Vec3::new(-30.0, -2.0, 0.0), Vec3::new(30.0, 2.0, 12.0)),
+        Mat4::from_translation(Vec3::new(200.0, 60.0, 0.0))
+          * Mat4::from_rotation_z(0.7)
+          * Mat4::from_rotation_x(0.4),
+      ),
+    ];
+    for (mesh, transform) in parts {
+      scene.objects.push(Object {
+        mesh: Arc::new(mesh),
+        transform,
+        material: Material::matte(Vec3::ONE),
+      });
+    }
+    // a box as large as can be is missed by no line of sight, so every triangle is looked at
+    let unboxed = |scene: &Scene, at: Vec2| {
+      let all = [Vec3::splat(-1e9), Vec3::splat(1e9)];
+      let objects =
+        (scene.objects.iter()).map(|object| (object.transform, &*object.mesh, Some(all)));
+      seen(scene.view(), scene.size, at, objects)
+    };
+    let mut picked = [0; 4];
+    for across in -1..=37 {
+      for down in -1..=19 {
+        let at = Vec2::new(across as f32, down as f32) * 11.03;
+        let found = scene.pick(at);
+        assert_eq!(unboxed(&scene, at), found, "{at}");
+        if let Some(found) = found {
+          picked[found] += 1;
+        }
+      }
+    }
+    assert!(picked.iter().all(|count| *count > 0), "{picked:?}");
+  }
+
+  #[test]
+  fn a_line_past_a_sliver_of_a_triangle_does_not_cross_it() {
+    // three corners nearly in a row, and a line a hundred margins outside them. in the
+    // corners' own digits every sum is rounding, and the line comes out as crossing
+    let sliver = [
+      Vec3::new(128.61543, 166.79066, 35.804226),
+      Vec3::new(128.887, 166.81381, 35.608494),
+      Vec3::new(128.70503, 166.79831, 35.73964),
+    ];
+    let from = Vec3::new(129.51566, 163.725, 48.0).as_dvec3();
+    let along = Vec3::new(-3.2910554, 14.0, -56.0).as_dvec3();
+    assert_eq!(crossing(from, along, sliver), None);
+    // the same line moved over onto the sliver crosses it, a fifth of the way along
+    let onto = (sliver[2] - sliver[0]).as_dvec3() * 0.3 + (sliver[1] - sliver[0]).as_dvec3() * 0.4;
+    let through = sliver[0].as_dvec3() + onto - along * 0.2;
+    let distance = crossing(through, along, sliver).expect("the line crosses the sliver");
+    assert!((distance - 0.2).abs() < 1e-9, "{distance}");
   }
 
   #[test]

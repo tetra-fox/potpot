@@ -8,7 +8,7 @@
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
-use crate::Point;
+use crate::{Point, axis};
 
 /// The longest time between the two presses of a double click.
 const DOUBLE_TIME: Duration = Duration::from_millis(400);
@@ -100,7 +100,7 @@ impl Push {
 }
 
 /// The effect of the left button on a control.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Touch {
   /// A control that is dragged.
@@ -115,6 +115,19 @@ pub enum Touch {
   ///
   /// From the end of its turn a click moves it back to the start.
   Step,
+  /// A control dragged two ways at once, like a pad's puck.
+  ///
+  /// A drag turns its own parameter the way its [`Feel`] says, and a drag to the right turns
+  /// `across` on as well. The puck keeps to the pointer. A stepped parameter goes at the pace
+  /// of its drag and lands on its steps, and a pointer gone past an end of a turn comes all the
+  /// way back before the value moves. The fine key slows both, each from where it shows, and
+  /// the puck is off the pointer from then on. A double click resets it.
+  Pad {
+    /// The parameter a drag across the panel turns.
+    across: usize,
+    /// The part of that parameter's whole turn that one point is.
+    turn: f32,
+  },
 }
 
 /// The way a control answers the pointer and the wheel.
@@ -127,7 +140,8 @@ pub struct Feel {
   pub drag: Drag,
   /// The least points a stepped control is dragged for each step.
   ///
-  /// One with few steps is dragged further for each, at the pace of a control without any.
+  /// One with few steps is dragged further for each, at the pace of a control without any. A
+  /// [`Touch::Pad`] goes at the pace of its drag whatever its steps.
   pub points_per_step: f32,
   /// The part of its pace it keeps while the fine key is held.
   pub fine: f32,
@@ -233,9 +247,23 @@ impl Dial {
     decimals: usize,
     unit: &'static str,
   ) -> Self {
-    let [least, most] = range;
-    let plain = move |value: f32| least + value * (most - least);
-    let turn = move |plain: f32| ((plain - least) / (most - least)).clamp(0.0, 1.0);
+    Self::along(axis::Axis::linear(range), default, step, decimals, unit)
+  }
+
+  /// Creates a parameter whose plain values lie along an axis.
+  ///
+  /// A value is the place of its plain value on the [`Axis`](axis::Axis), so something drawn along
+  /// the same axis lines up with the control. `default` is the plain value a reset gives. A value
+  /// is written with `decimals` decimals and `unit` after it, and read with or without the unit.
+  pub fn along(
+    axis: axis::Axis,
+    default: f32,
+    step: Option<f32>,
+    decimals: usize,
+    unit: &'static str,
+  ) -> Self {
+    let plain = move |value: f32| axis.plain(value);
+    let turn = move |plain: f32| axis.turn(plain);
     Self {
       default: turn(default),
       step,
@@ -267,11 +295,11 @@ impl Dial {
 
   /// Returns how far a point of dragging turns it.
   ///
-  /// `feel` is the feel of the control that is dragged.
-  fn turn_per_point(&self, feel: Feel) -> f32 {
+  /// `drag` is the way it is dragged, and a step of it takes `points_per_step` points at least.
+  fn turn_per_point(&self, drag: Drag, points_per_step: f32) -> f32 {
     match self.step {
-      Some(step) => (feel.drag.turn()).min(self.step_turn(step) / feel.points_per_step),
-      None => feel.drag.turn(),
+      Some(step) => (drag.turn()).min(self.step_turn(step) / points_per_step),
+      None => drag.turn(),
     }
   }
 
@@ -314,9 +342,16 @@ impl Dial {
 /// One of a panel's controls.
 ///
 /// A control is something on the panel that is turned, with a readout of its own. It is known
-/// by its place among the panel's controls, and names the parameter it turns by that one's
+/// by its place among the panel's controls, and names each parameter it turns by that one's
 /// place among the panel's parameters. The two orders are separate: a parameter may have no
 /// control, or more than one.
+///
+/// A control turns up to three parameters: its own, one more that a [`Touch::Pad`] is dragged
+/// across for, and one that `wheel` gives the wheel. The three are different parameters. A
+/// reset puts each one the control can turn at its default, which leaves out the wheel's on a
+/// [`Touch::Press`]. The readout, a value typed into it, and the menu's copy and paste are of
+/// its own parameter alone. Another of its parameters has those through a second control on
+/// it.
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct Control {
@@ -328,19 +363,102 @@ pub struct Control {
   pub readout: Readout,
   /// The effect of the left button on it.
   pub touch: Touch,
+  /// The parameter the wheel turns, if another than its own.
+  ///
+  /// It is neither `parameter` nor the one a [`Touch::Pad`] is dragged across for. The wheel
+  /// turns it at the pace of `feel` and by the steps of its own [`Dial`]. With `None` the wheel
+  /// turns `parameter`.
+  pub wheel: Option<usize>,
 }
 
 impl Control {
   /// Creates a dragged control on a parameter, with a readout.
   ///
-  /// It feels as [`Feel::default`] does.
+  /// It feels as [`Feel::default`] does, and the wheel turns the same parameter.
   pub fn new(parameter: usize, readout: Readout) -> Self {
     Self {
       parameter,
       feel: Feel::default(),
       readout,
       touch: Touch::Turn,
+      wheel: None,
     }
+  }
+
+  /// Creates a control dragged both ways, on two parameters.
+  ///
+  /// A drag to the right turns `across` and a drag up the panel turns `up`, which is the
+  /// control's own parameter. `size` is the width and height in points of the room the middle
+  /// of its puck has, and each parameter goes through its whole turn over its side of that. So
+  /// the puck keeps to the pointer from wherever it was taken hold of, as [`Touch::Pad`] says.
+  ///
+  /// # Panics
+  ///
+  /// Panics if a side of `size` is not a finite number of points above zero.
+  pub fn pad(across: usize, up: usize, size: Point, readout: Readout) -> Self {
+    assert!(
+      size.iter().all(|side| side.is_finite() && *side > 0.0),
+      "the room of a pad has a width and a height"
+    );
+    let mut control = Self::new(up, readout);
+    control.feel.drag = Drag::Up {
+      turn: 1.0 / size[1],
+    };
+    control.touch = Touch::Pad {
+      across,
+      turn: 1.0 / size[0],
+    };
+    control
+  }
+
+  /// Returns the parameter dragged across for, and its drag.
+  fn across(&self) -> Option<(usize, Drag)> {
+    match self.touch {
+      Touch::Pad { across, turn } => {
+        let way = [1.0, 0.0];
+        Some((across, Drag::Along { way, turn }))
+      }
+      Touch::Turn | Touch::Press(_) | Touch::Step => None,
+    }
+  }
+
+  /// Returns whether the wheel turns the control.
+  ///
+  /// A button is pressed, and the wheel does nothing to it.
+  fn takes_wheel(&self) -> bool {
+    match self.touch {
+      Touch::Press(_) => false,
+      Touch::Turn | Touch::Step | Touch::Pad { .. } => true,
+    }
+  }
+
+  /// Returns the parameter the wheel turns.
+  fn wheel_parameter(&self) -> usize {
+    self.wheel.unwrap_or(self.parameter)
+  }
+
+  /// Returns the parameters it names, its own first.
+  ///
+  /// After it are the one across and the wheel's.
+  fn named(&self) -> [Option<usize>; 3] {
+    let across = self.across().map(|(across, _)| across);
+    [Some(self.parameter), across, self.wheel]
+  }
+
+  /// Returns every parameter it can turn, its own first.
+  fn parameters(&self) -> impl Iterator<Item = usize> {
+    let [own, across, wheel] = self.named();
+    let wheel = wheel.filter(|_| self.takes_wheel());
+    [own, across, wheel].into_iter().flatten()
+  }
+
+  /// Returns whether it fits a panel of so many parameters.
+  ///
+  /// It fits if every parameter it names is one of the `parameters` and none is named twice.
+  pub fn fits(&self, parameters: usize) -> bool {
+    let [own, across, wheel] = self.named();
+    let twice = across == own || wheel == own || (wheel.is_some() && wheel == across);
+    !twice && (self.named().into_iter().flatten()).all(|named| named < parameters)
   }
 }
 
@@ -367,6 +485,8 @@ impl Readout {
 }
 
 /// What a control shows, as the panel's look is handed it.
+///
+/// All of it is of the control's own parameter.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Reading {
@@ -680,25 +800,39 @@ pub struct Menu {
   pub hovered: Option<Item>,
 }
 
+/// One of the parameters a drag turns.
+#[derive(Clone, Copy, Debug)]
+struct Axis {
+  parameter: usize,
+  /// The way the pointer is dragged to turn it.
+  drag: Drag,
+  /// The value the pointer has taken it to.
+  ///
+  /// Between two steps the control shows another value, and so it does while a pad's pointer
+  /// is past an end of the turn.
+  reached: f32,
+  /// The value last shown.
+  shown: f32,
+  /// Whether the host has heard of a gesture on it.
+  begun: bool,
+}
+
 #[derive(Debug)]
 enum State {
   Idle,
-  /// The left button went down on a knob.
+  /// The left button went down on a control that is dragged.
   ///
-  /// The host hears of it once the value changes.
+  /// The host hears of each parameter once its value changes.
   Drag {
     control: usize,
-    /// The value the pointer has taken the knob to.
-    ///
-    /// Between two steps the knob shows another value.
-    turned: f32,
-    /// The value last shown.
-    value: f32,
+    /// The control's own parameter.
+    own: Axis,
+    /// The parameter a pad is dragged across for.
+    across: Option<Axis>,
     /// The place the pointer last was.
     from: Point,
     /// Whether the fine key was held at the last move.
     fine: bool,
-    begun: bool,
   },
   /// The left button went down on the grip.
   ///
@@ -788,13 +922,12 @@ impl Interaction {
   ///
   /// # Panics
   ///
-  /// Panics if a control names a parameter that `dials` has none for.
+  /// Panics if a control names a parameter that `dials` has none for, or names one twice, which
+  /// [`Control::fits`] tells.
   pub fn new(dials: Vec<Dial>, controls: Vec<Control>, size: Point, scales: [f32; 2]) -> Self {
     assert!(
-      controls
-        .iter()
-        .all(|control| control.parameter < dials.len()),
-      "every control turns one of the panel's parameters"
+      controls.iter().all(|control| control.fits(dials.len())),
+      "every control names parameters of the panel, each once"
     );
     Self {
       dials,
@@ -872,7 +1005,7 @@ impl Interaction {
   ///
   /// Panics if the event is over a control that the panel has none of.
   ///
-  /// Panics if the values of `moment` have none for the parameter of a control.
+  /// Panics if the values of `moment` have none for a parameter that a control turns.
   ///
   /// Panics if the pointer moves while the grip is held and the first of the `scales` given
   /// to [`Interaction::new`] is larger than the second or either is not a number.
@@ -884,7 +1017,7 @@ impl Interaction {
         window,
         over,
         fine,
-      } => self.moved(at, window, over, fine, &mut actions),
+      } => self.moved(at, window, over, fine, moment.values, &mut actions),
       Event::Press {
         button,
         at,
@@ -947,10 +1080,9 @@ impl Interaction {
   /// The left button is up, or as good as.
   fn let_go(&mut self, actions: &mut Vec<Action>) {
     match self.state {
-      State::Drag { control, begun, .. } => {
-        if begun {
-          actions.push(Action::End(self.controls[control].parameter));
-        }
+      State::Drag { own, across, .. } => {
+        let begun = std::iter::once(own).chain(across).filter(|axis| axis.begun);
+        actions.extend(begun.map(|axis| Action::End(axis.parameter)));
         self.state = State::Idle;
       }
       State::Held { control, push, on } => {
@@ -977,45 +1109,71 @@ impl Interaction {
     window: Point,
     over: Option<Target>,
     now_fine: bool,
+    values: &[f32],
     actions: &mut Vec<Action>,
   ) {
     match &mut self.state {
       State::Drag {
         control,
-        turned,
-        value,
+        own,
+        across,
         from,
         fine,
-        begun,
       } => {
-        let Control {
-          parameter, feel, ..
-        } = self.controls[*control];
-        let dial = &self.dials[parameter];
-        // with the fine key the knob goes on from where it shows, so pressing the key moves
-        // nothing. every move adds its own part of a turn, so the key changes only the pace
-        if now_fine && !*fine {
-          *turned = *value;
+        let Control { feel, touch, .. } = self.controls[*control];
+        // a pad's puck keeps to the pointer: its steps do not slow it, and what the pointer
+        // goes past an end of the turn is kept for it to come back
+        let follows = matches!(touch, Touch::Pad { .. });
+        for axis in std::iter::once(own).chain(across) {
+          let dial = &self.dials[axis.parameter];
+          // until the host hears of it, it goes on from wherever its parameter is taken, less
+          // what the pointer has gone past an end of the turn
+          let stands = values[axis.parameter];
+          if !axis.begun && stands != axis.shown {
+            axis.reached = stands + (axis.reached.clamp(0.0, 1.0) - axis.shown);
+            axis.shown = stands;
+          }
+          // with the fine key the knob goes on from where it shows, so pressing the key moves
+          // nothing. every move adds its own part of a turn, so the key changes only the pace
+          if now_fine && !*fine {
+            axis.reached = axis.shown;
+          }
+          let pace = if follows {
+            axis.drag.turn()
+          } else {
+            dial.turn_per_point(axis.drag, feel.points_per_step)
+          };
+          let slowed = if now_fine { feel.fine } else { 1.0 };
+          let travel = axis.drag.travel(*from, at);
+          // a move another way than its own begins nothing on it, though its parameter may
+          // stand off the step it would show
+          if !axis.begun && travel == 0.0 {
+            continue;
+          }
+          axis.reached += travel * pace * slowed;
+          let within = axis.reached.clamp(0.0, 1.0);
+          if !follows {
+            axis.reached = within;
+          }
+          let now = if now_fine {
+            within
+          } else {
+            dial.snapped(within)
+          };
+          // at the end of the turn, between two steps, or with the pointer moved only another
+          // way than this one's
+          if now == axis.shown {
+            continue;
+          }
+          axis.shown = now;
+          if !axis.begun {
+            axis.begun = true;
+            actions.push(Action::Begin(axis.parameter));
+          }
+          actions.push(Action::Set(axis.parameter, now));
         }
-        *fine = now_fine;
-        let pace = dial.turn_per_point(feel) * if now_fine { feel.fine } else { 1.0 };
-        *turned = (*turned + feel.drag.travel(*from, at) * pace).clamp(0.0, 1.0);
         *from = at;
-        let shown = if now_fine {
-          *turned
-        } else {
-          dial.snapped(*turned)
-        };
-        // at the end of the turn, between two steps, or with the pointer moved only sideways
-        if shown == *value {
-          return;
-        }
-        *value = shown;
-        if !*begun {
-          *begun = true;
-          actions.push(Action::Begin(parameter));
-        }
-        actions.push(Action::Set(parameter, shown));
+        *fine = now_fine;
       }
       State::Resize { grab, from, scale } => {
         // the further of across and down since the pointer took hold sets the scale. measured
@@ -1077,7 +1235,7 @@ impl Interaction {
           Some(Target::Item(Item::Edit)) => self.begin_edit(control, values, actions),
           Some(Target::Item(Item::Reset)) => {
             self.state = State::Idle;
-            actions.extend(gesture(parameter, dial.default));
+            self.reset(control, actions);
             actions.push(Action::Redraw);
           }
           // with its unit, which keeps it from being read as the value of a control that
@@ -1120,16 +1278,22 @@ impl Interaction {
         let dial = &self.dials[parameter];
         match touch {
           // a second click on what is pressed or stepped is one more of the same
-          _ if reset => actions.extend(gesture(parameter, dial.default)),
-          Touch::Turn if double => actions.extend(gesture(parameter, dial.default)),
-          Touch::Turn => {
+          _ if reset => self.reset(control, actions),
+          Touch::Turn | Touch::Pad { .. } if double => self.reset(control, actions),
+          Touch::Turn | Touch::Pad { .. } => {
+            let axis = |(parameter, drag): (usize, Drag)| Axis {
+              parameter,
+              drag,
+              reached: values[parameter],
+              shown: values[parameter],
+              begun: false,
+            };
             self.state = State::Drag {
               control,
-              turned: values[parameter],
-              value: values[parameter],
+              own: axis((parameter, feel.drag)),
+              across: self.controls[control].across().map(axis),
               from: at,
               fine: false,
-              begun: false,
             };
           }
           Touch::Press(push) => {
@@ -1200,16 +1364,11 @@ impl Interaction {
     if lines == 0.0 {
       return;
     }
-    let Control {
-      parameter,
-      feel,
-      touch,
-      ..
-    } = self.controls[control];
-    // a button is pressed, and the wheel does nothing to it
-    if let Touch::Press(_) = touch {
+    let turned = self.controls[control];
+    if !turned.takes_wheel() {
       return;
     }
+    let (feel, parameter) = (turned.feel, turned.wheel_parameter());
     if (self.wheel.as_ref()).is_none_or(|wheel| wheel.control != control) {
       self.rest_wheel(actions);
     }
@@ -1256,7 +1415,7 @@ impl Interaction {
       ..
     }) = self.wheel.take()
     {
-      actions.push(Action::End(self.controls[control].parameter));
+      actions.push(Action::End(self.controls[control].wheel_parameter()));
     }
   }
 
@@ -1385,6 +1544,15 @@ impl Interaction {
     let read = (self.dials[self.controls[control].parameter].read)(&text.replace(',', "."));
     // "nan" is a number to a dial that reads any, and no place on its turn
     read.filter(|value| value.is_finite())
+  }
+
+  /// Puts every parameter a control turns at its default.
+  ///
+  /// Each is set as one whole gesture.
+  fn reset(&self, control: usize, actions: &mut Vec<Action>) {
+    for parameter in self.controls[control].parameters() {
+      actions.extend(gesture(parameter, self.dials[parameter].default));
+    }
   }
 
   fn dismiss(&mut self, actions: &mut Vec<Action>) {

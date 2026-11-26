@@ -236,10 +236,10 @@ impl Knob {
   }
 
   /// Creates a small round knob with a long handle sticking out.
-  pub fn lever(radius: f32, height: f32) -> Self {
+  pub fn big_walker(radius: f32, height: f32) -> Self {
     Self {
       skirt: 0.0,
-      grip: Grip::Lever {
+      grip: Grip::BigWalker {
         width: 0.3,
         body: 0.5,
       },
@@ -315,7 +315,7 @@ impl Knob {
       // the point reaches the full radius and the rest stays inside it
       Grip::Pointed { reach } => self.radius / (1.0 + reach),
       // the handle's end reaches the full radius
-      Grip::Lever { .. } | Grip::Ridge { .. } => self.radius,
+      Grip::BigWalker { .. } | Grip::Ridge { .. } => self.radius,
       _ => self.radius * (1.0 - self.skirt),
     }
   }
@@ -388,7 +388,7 @@ impl Knob {
       rounded: 0.0,
     };
     let mut rings = Vec::new();
-    let skirtless = matches!(self.grip, Grip::Pointed { .. } | Grip::Lever { .. });
+    let skirtless = matches!(self.grip, Grip::Pointed { .. } | Grip::BigWalker { .. });
     let waist = if self.skirt > 0.0 && !skirtless {
       rings.push(round(self.radius, 0.0));
       rings.push(round(self.radius, self.height * 0.13));
@@ -511,7 +511,9 @@ impl Knob {
     let face = self.face_radius();
     // a handle's line runs its whole length, any other stops short of the middle
     let (from, half_width) = match self.grip {
-      Grip::Pointed { .. } | Grip::Lever { .. } | Grip::Bar { .. } => (0.0, self.radius * 0.045),
+      Grip::Pointed { .. } | Grip::BigWalker { .. } | Grip::Bar { .. } => {
+        (0.0, self.radius * 0.045)
+      }
       // a blade's crest has room only for a hairline
       Grip::Ridge { .. } => (0.0, self.radius * 0.04),
       _ => (face * 0.4, self.radius * 0.045),
@@ -595,7 +597,7 @@ mod tests {
       Knob::faceted(radius, height),
       Knob::chicken_head(radius, height),
       Knob::bar(radius, height),
-      Knob::lever(radius, height),
+      Knob::big_walker(radius, height),
       Knob::ridge(radius, height),
       Knob::hex(radius, height),
       Knob::ribbed(radius, height),

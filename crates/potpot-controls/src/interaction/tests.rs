@@ -70,6 +70,7 @@ fn a_control_turns_the_parameter_it_names_and_not_the_one_at_its_own_place() {
       shows: |_| true,
     },
     touch: Touch::Turn,
+    wheel: None,
   };
   let mut panel = Interaction::new(dials, vec![on(MIX), on(PITCH)], SIZE, SCALES);
   let values = [0.5, 0.5, 1.0, 0.5];
@@ -156,6 +157,7 @@ fn each_readout_holds_and_shows_what_its_own_control_says_it_can() {
       shows: |letter| letter.is_ascii_digit(),
     },
     touch: Touch::Turn,
+    wheel: None,
   };
   let wide = Control {
     parameter: 1,
@@ -165,6 +167,7 @@ fn each_readout_holds_and_shows_what_its_own_control_says_it_can() {
       shows: |_| true,
     },
     touch: Touch::Turn,
+    wheel: None,
   };
   let mut panel = Interaction::new(dials, vec![narrow, wide], SIZE, SCALES);
   let values = [0.5, 1.0];
@@ -228,6 +231,7 @@ fn interaction() -> Interaction {
         shows: |letter| letter.is_ascii_digit() || " +-.,%st".contains(letter),
       },
       touch: Touch::Turn,
+      wheel: None,
     })
     .collect();
   Interaction::new(dials, controls, SIZE, SCALES)
@@ -1426,6 +1430,239 @@ fn a_stepped_switch_goes_one_step_on_with_each_click_and_around_from_the_end() {
   assert_eq!(click(0.0), 0.5);
   assert_eq!(click(0.5), 1.0);
   assert_eq!(click(1.0), 0.0);
+}
+
+/// Creates the bench with its pitch control made a pad.
+///
+/// A drag up turns the pitch and a drag to the right turns `across`. The puck has 128 points
+/// of room across and 64 up, so each move is a turn that an `f32` holds exactly.
+fn pad(across: usize) -> Bench {
+  let mut bench = Bench::new();
+  let readout = bench.interaction.controls[PITCH].readout;
+  bench.interaction.controls[PITCH] = Control::pad(across, PITCH, [128.0, 64.0], readout);
+  bench
+}
+
+#[test]
+fn a_pad_is_one_gesture_on_each_parameter_from_its_first_change_to_the_release() {
+  let mut bench = pad(FORMANT);
+  assert_eq!(bench.press(Some(Target::Control(PITCH)), 100.0), []);
+  // straight to the right the host hears of the formant alone
+  assert_eq!(
+    slide(&mut bench, [132.0, 100.0]),
+    [Begin(FORMANT), Set(FORMANT, 0.75)]
+  );
+  // up and part of the way back at once: the pitch begins here, and the formant goes on
+  assert_eq!(
+    slide(&mut bench, [116.0, 84.0]),
+    [Begin(PITCH), Set(PITCH, 0.75), Set(FORMANT, 0.625)]
+  );
+  assert_eq!(slide(&mut bench, [116.0, 92.0]), [Set(PITCH, 0.625)]);
+  assert_eq!(bench.release(), [End(PITCH), End(FORMANT)]);
+  assert_eq!(slide(&mut bench, [0.0, 0.0]), []);
+}
+
+#[test]
+fn a_pad_dragged_one_way_ends_no_gesture_on_its_other_parameter() {
+  let mut bench = pad(FORMANT);
+  bench.press(Some(Target::Control(PITCH)), 100.0);
+  assert_eq!(
+    slide(&mut bench, [100.0, 84.0]),
+    [Begin(PITCH), Set(PITCH, 0.75)]
+  );
+  // the window goes with the button still down
+  assert_eq!(bench.send(Event::Closed), [End(PITCH)]);
+}
+
+#[test]
+fn a_pad_lands_on_the_steps_of_one_parameter_at_the_pace_of_the_other() {
+  // the stepped shift across: its 48 semitones over the 128 points, with no slowing for them
+  let mut bench = pad(STEPPED);
+  bench.press(Some(Target::Control(PITCH)), 100.0);
+  // two points are three quarters of a semitone, which shows as one
+  assert_eq!(
+    slide(&mut bench, [102.0, 96.0]),
+    [
+      Begin(PITCH),
+      Set(PITCH, 0.5625),
+      Begin(STEPPED),
+      Set(STEPPED, semitones(1.0))
+    ]
+  );
+  // a point on is short of half way to the next, and only the pitch has anything new
+  assert_eq!(slide(&mut bench, [103.0, 92.0]), [Set(PITCH, 0.625)]);
+  let fine = |bench: &mut Bench, at: Point| {
+    bench.send(Event::Move {
+      at,
+      window: at,
+      over: None,
+      fine: true,
+    })
+  };
+  // the fine key going down moves neither, though the pointer has the stepped one past the
+  // semitone it shows
+  assert_eq!(fine(&mut bench, [103.0, 92.0]), []);
+  // and from where each shows both go a tenth as fast, the stepped one off its steps
+  match fine(&mut bench, [113.0, 60.0])[..] {
+    [Set(PITCH, pitch), Set(STEPPED, stepped)] => {
+      assert!(close(pitch, 0.675), "{pitch}");
+      assert!(close(stepped, semitones(1.375)), "{stepped}");
+    }
+    ref other => panic!("the actions set both values: {other:?}"),
+  }
+}
+
+#[test]
+fn a_pad_past_an_end_of_its_room_waits_for_the_pointer_to_come_back() {
+  let mut bench = pad(STEPPED);
+  bench.press(Some(Target::Control(PITCH)), 100.0);
+  // the end of the room is 64 points to the right, and the pointer goes 200
+  assert_eq!(
+    slide(&mut bench, [300.0, 100.0]),
+    [Begin(STEPPED), Set(STEPPED, 1.0)]
+  );
+  // on its way back the puck stays at the end until the pointer is over the room again
+  assert_eq!(slide(&mut bench, [290.0, 100.0]), []);
+  assert_eq!(slide(&mut bench, [164.0, 100.0]), []);
+  // a quarter of the room back in is a quarter of the turn, a semitone for a semitone
+  assert_eq!(
+    slide(&mut bench, [132.0, 100.0]),
+    [Set(STEPPED, semitones(12.0))]
+  );
+}
+
+#[test]
+fn a_drag_goes_on_from_where_the_host_has_taken_a_parameter_it_has_yet_to_change() {
+  // a knob held still while the host moves it, then dragged a point
+  let mut bench = Bench::new();
+  bench.press(Some(Target::Control(PITCH)), 100.0);
+  bench.values[PITCH] = 0.875;
+  assert_eq!(bench.drag(100.0, false), []);
+  let moved = bench.drag(99.0, false);
+  assert_eq!(moved[0], Begin(PITCH));
+  assert!(close(set(&moved[1..], PITCH), 0.88));
+  // a pad dragged across alone while the host moves the pitch, then a little way up
+  let mut bench = pad(FORMANT);
+  bench.press(Some(Target::Control(PITCH)), 100.0);
+  slide(&mut bench, [132.0, 100.0]);
+  bench.values[PITCH] = 0.25;
+  assert_eq!(
+    slide(&mut bench, [132.0, 92.0]),
+    [Begin(PITCH), Set(PITCH, 0.375)]
+  );
+}
+
+#[test]
+fn a_pad_dragged_one_way_begins_nothing_on_a_stepped_parameter_the_other_way() {
+  // the stepped shift across, standing a hair off a step, as a host hands one back
+  let mut bench = pad(STEPPED);
+  bench.values[STEPPED] = 0.5 + 1e-6;
+  bench.press(Some(Target::Control(PITCH)), 100.0);
+  assert_eq!(
+    slide(&mut bench, [100.0, 92.0]),
+    [Begin(PITCH), Set(PITCH, 0.625)]
+  );
+  // the host moves it between two steps, and the drag goes on straight up
+  bench.values[STEPPED] = 0.613;
+  assert_eq!(slide(&mut bench, [100.0, 84.0]), [Set(PITCH, 0.75)]);
+  assert_eq!(bench.release(), [End(PITCH)]);
+}
+
+#[test]
+fn travel_past_an_end_is_dropped_when_the_host_moves_a_parameter_not_yet_begun() {
+  // the formant across is at the end of its turn, and the pointer goes 50 points past it
+  let mut bench = pad(FORMANT);
+  bench.values[FORMANT] = 1.0;
+  bench.press(Some(Target::Control(PITCH)), 100.0);
+  assert_eq!(slide(&mut bench, [150.0, 100.0]), []);
+  // the host takes it to the middle: from there it goes as far as the pointer does
+  bench.values[FORMANT] = 0.5;
+  assert_eq!(
+    slide(&mut bench, [134.0, 100.0]),
+    [Begin(FORMANT), Set(FORMANT, 0.375)]
+  );
+}
+
+#[test]
+fn a_control_fits_a_panel_that_has_each_parameter_it_names_and_names_none_twice() {
+  let readout = Readout::new(ROOM);
+  let puck = Control::pad(FORMANT, PITCH, [128.0, 64.0], readout);
+  let wheeled = |control: Control, wheel| Control {
+    wheel: Some(wheel),
+    ..control
+  };
+  assert!(puck.fits(2) && wheeled(puck, MIX).fits(3));
+  // a parameter past the panel's last, whichever way the control names it
+  assert!(!puck.fits(1) && !wheeled(puck, MIX).fits(2));
+  assert!(!Control::new(MIX, readout).fits(2));
+  // one parameter both ways, or under the wheel as well as the pointer
+  assert!(!Control::pad(PITCH, PITCH, [128.0, 64.0], readout).fits(4));
+  assert!(!wheeled(puck, FORMANT).fits(4) && !wheeled(puck, PITCH).fits(4));
+  assert!(!wheeled(Control::new(MIX, readout), MIX).fits(4));
+}
+
+#[test]
+fn a_reset_puts_every_parameter_a_control_turns_at_its_default() {
+  // a pad on the pitch and the formant, whose wheel turns the mix
+  let mut bench = pad(FORMANT);
+  bench.interaction.controls[PITCH].wheel = Some(MIX);
+  let all = [
+    Begin(PITCH),
+    Set(PITCH, 0.5),
+    End(PITCH),
+    Begin(FORMANT),
+    Set(FORMANT, 0.5),
+    End(FORMANT),
+    Begin(MIX),
+    Set(MIX, 1.0),
+    End(MIX),
+  ];
+  let puck = Some(Target::Control(PITCH));
+  bench.press(puck, 100.0);
+  bench.release();
+  assert_eq!(bench.press(puck, 100.0), all);
+  bench.release();
+  let mut chosen = choose(&mut bench, Target::Control(PITCH), Item::Reset);
+  assert_eq!(chosen.pop(), Some(Redraw));
+  assert_eq!(chosen, all);
+  // the wheel does nothing to a button, so a reset leaves the parameter given its wheel alone
+  let mut bench = button(Push::Latching);
+  bench.interaction.controls[MIX].wheel = Some(PITCH);
+  assert_eq!(
+    choose(&mut bench, Target::Control(MIX), Item::Reset),
+    [Begin(MIX), Set(MIX, 1.0), End(MIX), Redraw]
+  );
+}
+
+#[test]
+fn the_wheel_turns_the_parameter_a_control_gives_it_or_else_its_own() {
+  let mut bench = pad(FORMANT);
+  bench.interaction.controls[PITCH].wheel = Some(STEPPED);
+  let puck = Target::Control(PITCH);
+  assert_eq!(
+    bench.wheel(puck, 1.0, false),
+    [Begin(STEPPED), Set(STEPPED, semitones(1.0))]
+  );
+  // a press ends the wheel's gesture, and the drag after it is on the pad's other two
+  assert_eq!(bench.press(Some(puck), 100.0), [End(STEPPED)]);
+  assert_eq!(
+    slide(&mut bench, [132.0, 84.0]),
+    [
+      Begin(PITCH),
+      Set(PITCH, 0.75),
+      Begin(FORMANT),
+      Set(FORMANT, 0.75)
+    ]
+  );
+  // given none, the wheel turns the pad's own parameter, which is the one up
+  let mut bench = pad(FORMANT);
+  let first = bench.wheel(puck, 1.0, false);
+  assert_eq!(first[0], Begin(PITCH));
+  assert!(close(set(&first[1..], PITCH), 0.55));
+  assert_eq!(
+    bench.after(Duration::from_secs(1), Event::Tick),
+    [End(PITCH)]
+  );
 }
 
 #[test]

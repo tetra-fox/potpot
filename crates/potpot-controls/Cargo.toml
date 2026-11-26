@@ -3,7 +3,7 @@ name = "potpot-controls"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.100"
-description = "What the controls of an audio plugin's panel do, with no look of their own"
+description = "What an audio plugin panel's controls do and its displays plot, with no look"
 license.workspace = true
 publish = false
 

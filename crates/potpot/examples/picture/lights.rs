@@ -1,10 +1,10 @@
-//! Lit buttons, push switches and level meters.
+//! Lit buttons, push switches, level meters and an XY pad.
 
 use std::f32::consts::FRAC_PI_2;
 use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec3};
-use potpot::parts::{self, Button, Meter, PushSwitch};
+use potpot::parts::{self, Button, Meter, Pad, PushSwitch};
 use potpot::{Light, Look, Material, Object, Scene};
 use potpot_controls::interaction::Push;
 
@@ -12,8 +12,8 @@ use crate::{SEAT, SIZE, framed, screws};
 
 /// Returns rubber buttons and level meters on a dark panel.
 ///
-/// Some of the buttons are lit and the meters stand at a few levels. The light is dimmed so
-/// that what glows shows.
+/// Some of the buttons are lit, the meters stand at a few levels and the pad's puck is off its
+/// middle. The light is dimmed so that what glows shows.
 pub(super) fn lights(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let rubber = Material::silicone(Vec3::new(0.62, 0.62, 0.60));
@@ -196,6 +196,32 @@ pub(super) fn lights(look: Look) -> Scene {
   let [segment, gap] = &lyings;
   objects.extend(lying.seats(gap, 0.0, 0.0).map(turned));
   objects.extend(lying.lights(segment, 0.0, 0.0, 0.7, None).map(turned));
+
+  // a pad whose lit puck is most of the way to its top right corner
+  let xy = Pad::new(190.0, 130.0);
+  let (x, y) = (565.0, 525.0);
+  let on_panel = Mat4::from_translation(Vec3::new(x, y, 0.0));
+  let on_pad = xy.transform(x, y, 0.8, 0.7);
+  let blue = colors[2];
+  objects.extend([
+    Object {
+      mesh: Arc::new(xy.surface()),
+      transform: on_panel,
+      material: Material::glossy(Vec3::splat(0.02)),
+    },
+    Object {
+      mesh: Arc::new(xy.rim()),
+      transform: on_panel,
+      material: collar,
+    },
+    Object {
+      mesh: Arc::new(xy.puck()),
+      transform: on_pad,
+      material: rubber.lit(blue, 1.0, xy.puck.glow_radius()),
+    },
+  ]);
+  let puck = on_pad.transform_point3(Vec3::ZERO);
+  lamps.push(xy.puck.lamp(puck.x, puck.y, blue, 1.0));
 
   objects.extend(screws());
   Scene {
