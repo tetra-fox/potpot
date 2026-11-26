@@ -58,6 +58,11 @@ pub fn pack(span: [f32; 2], sizes: &[f32], how: Pack) -> Vec<[f32; 2]> {
     .collect()
 }
 
+/// Returns the middle of a span.
+pub fn middle(span: [f32; 2]) -> f32 {
+  (span[0] + span[1]) / 2.0
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;

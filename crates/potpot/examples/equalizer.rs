@@ -36,6 +36,7 @@ use potpot::{Light, Look, Material, Mesh, Object, Renderer, Scene};
 use potpot_window::controls::axis::Axis;
 use potpot_window::controls::flat::{Color, Flat};
 use potpot_window::controls::interaction::{Control, Dial, Drag, Push, Readout, Target, Touch};
+use potpot_window::controls::layout::{self, Pack};
 use potpot_window::controls::response::{self, Band, Kind};
 use potpot_window::controls::stroke;
 use potpot_window::{Feed, Gpu, Settings, Skin, View, wgpu};
@@ -138,7 +139,7 @@ const PICTURED_AFTER: u32 = 40;
 const PICTURED_GAINS: [f32; BANDS.len()] = [5.0, -7.0, 4.0, -3.0];
 
 // a band's strip under the screen: how wide it is, how far down its row of controls and what
-// is printed under them are, and how far to each side of its fader its knobs stand
+// is printed under them are, and the room each of its controls has across the panel
 const STRIP: f32 = 200.0;
 const TITLE_Y: f32 = 312.0;
 const CONTROLS_Y: f32 = 392.0;
@@ -155,8 +156,11 @@ const TRAVEL: f32 = 84.0;
 /// Half a readout's width and height.
 const READOUT: Vec2 = Vec2::new(28.0, 9.0);
 const LETTERS: f32 = 6.5;
-// how far across the two meters are, and how far down their foot is
-const METERS: [f32; 2] = [776.0, 794.0];
+// the two meters: how far across their middle is, the room each has across the panel, and how
+// far down their foot is
+const METERS: usize = 2;
+const METERS_X: f32 = 785.0;
+const METER_SLOT: f32 = 18.0;
 const METER_FOOT: f32 = SCREEN.y + GLASS.y / 2.0;
 
 /// How far from its middle a band's dot reaches.
@@ -172,25 +176,35 @@ fn plot() -> Plot {
   Plot::of(&Screen::new(GLASS.x, GLASS.y), SCREEN, INSET)
 }
 
-/// Returns the middle of a band's strip.
-///
-/// It is at the height of the strip's row of controls.
-fn strip(band: usize) -> Vec2 {
-  let left = (SIZE[0] - STRIP * BANDS.len() as f32) / 2.0;
-  Vec2::new(left + STRIP * (band as f32 + 0.5), CONTROLS_Y)
+/// Where a band's parts are across the panel.
+struct Strip {
+  /// The strip's left end and right end.
+  span: [f32; 2],
+  /// The middles of the frequency knob, fader and Q knob.
+  controls: [f32; 3],
+  /// The middle of the button.
+  button: f32,
+  /// The middle of the band's name, beside the button.
+  name: f32,
 }
 
-/// Returns the middles of a band's button and of its name.
+/// Returns where each band's parts are across the panel.
 ///
-/// The two are side by side over the middle of the band's strip.
-fn title(band: usize) -> [Vec2; 2] {
-  let name = stroke::width(BANDS[band].name.chars().count(), TITLE_LETTERS);
-  let whole = BUTTON_SIZE + 10.0 + name;
-  let left = strip(band).x - whole / 2.0;
-  [
-    Vec2::new(left + BUTTON_SIZE / 2.0, TITLE_Y),
-    Vec2::new(left + whole - name / 2.0, TITLE_Y),
-  ]
+/// The strips are side by side in the middle of the panel, and a band's button and name are
+/// side by side in the middle of its strip.
+fn strips() -> [Strip; BANDS.len()] {
+  let spans = layout::pack([0.0, SIZE[0]], &[STRIP; BANDS.len()], Pack::Center);
+  std::array::from_fn(|band| {
+    let span = spans[band];
+    let name = stroke::width(BANDS[band].name.chars().count(), TITLE_LETTERS);
+    let title = layout::pack(span, &[BUTTON_SIZE, 10.0, name], Pack::Center);
+    Strip {
+      span,
+      controls: shared::centered(span, ASIDE),
+      button: layout::middle(title[0]),
+      name: layout::middle(title[2]),
+    }
+  })
 }
 
 /// Returns whether a band is on.
@@ -409,6 +423,9 @@ struct Equalizer {
   segment: Arc<Mesh>,
   /// Each readout's control and its middle.
   readouts: Vec<(usize, Vec2)>,
+  strips: [Strip; BANDS.len()],
+  /// How far across each meter's middle is.
+  meter_xs: [f32; METERS],
 }
 
 impl Equalizer {
@@ -433,11 +450,12 @@ impl Equalizer {
     // the gaps the meters' lights sit in, with what they show over them
     let meter = Meter::ladder(18, 11.0, GLASS.y);
     let seat = Arc::new(meter.seat());
-    for x in METERS {
+    let half = METER_SLOT * METERS as f32 / 2.0;
+    let meter_xs = shared::centered([METERS_X - half, METERS_X + half], METER_SLOT);
+    for x in meter_xs {
       fixed.extend(meter.seats(&seat, x, METER_FOOT));
     }
-    let between = (METERS[0] + METERS[1]) / 2.0;
-    fixed.letters("OUT", Vec2::new(between, 30.0), 6.5, ink);
+    fixed.letters("OUT", Vec2::new(METERS_X, 30.0), 6.5, ink);
 
     // each band's strip: its name beside its button, the scales of its knobs and its fader,
     // what each is, and a readout under each
@@ -451,23 +469,19 @@ impl Equalizer {
     ));
     let button = Button::round(BUTTON_SIZE, 7.0);
     let mut readouts = Vec::new();
-    for (band, start) in BANDS.iter().enumerate() {
-      let middle = strip(band);
+    let strips = strips();
+    for (band, (start, strip)) in BANDS.iter().zip(&strips).enumerate() {
+      let [_, fader, _] = strip.controls.map(|x| Vec2::new(x, CONTROLS_Y));
       let first = band * CONTROLS_EACH;
-      let [at, name] = title(band);
-      fixed.put(button.seat(2.0), at, hole);
+      fixed.put(button.seat(2.0), Vec2::new(strip.button, TITLE_Y), hole);
+      let name = Vec2::new(strip.name, TITLE_Y);
       fixed.letters(start.name, name, TITLE_LETTERS, ink);
-      fixed.put(parts::fader_slot(TRAVEL, 5.0), middle, hole);
-      fixed.put(parts::fader_ticks(9, TRAVEL, 15.0, 20.0, 4), middle, ink);
-      let under = [
-        (FREQUENCY_KNOB, -ASIDE, "FREQ"),
-        (FADER, 0.0, "GAIN"),
-        (Q_KNOB, ASIDE, "Q"),
-      ];
-      for (control, aside, name) in under {
-        let x = middle.x + aside;
+      fixed.put(parts::fader_slot(TRAVEL, 5.0), fader, hole);
+      fixed.put(parts::fader_ticks(9, TRAVEL, 15.0, 20.0, 4), fader, ink);
+      let under = [(FREQUENCY_KNOB, "FREQ"), (FADER, "GAIN"), (Q_KNOB, "Q")];
+      for ((control, name), x) in under.into_iter().zip(strip.controls) {
         if control != FADER {
-          let on_panel = Mat4::from_translation(Vec3::new(x, middle.y, 0.0));
+          let on_panel = Mat4::from_translation(Vec3::new(x, CONTROLS_Y, 0.0));
           fixed.place(&scale, on_panel, ink, None);
         }
         fixed.letters(name, Vec2::new(x, NAME_Y), 6.5, ink);
@@ -479,7 +493,7 @@ impl Equalizer {
       if band > 0 {
         let half = Vec3::new(0.7, DIVIDER / 2.0, 0.0);
         let line = Mesh::cuboid(-half, half + Vec3::Z * 0.2);
-        fixed.put(line, Vec2::new(middle.x - STRIP / 2.0, DIVIDER_Y), hole);
+        fixed.put(line, Vec2::new(strip.span[0], DIVIDER_Y), hole);
       }
     }
 
@@ -501,6 +515,8 @@ impl Equalizer {
       segment: Arc::new(meter.segment()),
       meter,
       readouts,
+      strips,
+      meter_xs,
     }
   }
 
@@ -522,21 +538,21 @@ impl Equalizer {
 
     let metal = [Material::spun(ALUMINUM), Material::matte(BLACK)];
     let rubber = Material::silicone(Vec3::splat(0.62));
-    for (band, start) in BANDS.iter().enumerate() {
-      let (middle, first) = (strip(band), band * CONTROLS_EACH);
+    for (band, (start, strip)) in BANDS.iter().zip(&self.strips).enumerate() {
+      let first = band * CONTROLS_EACH;
       let value = |parameter: usize| values[band * PARAMETERS_EACH + parameter];
-      let aside = Vec2::X * ASIDE;
-      let knobs = [(FREQUENCY_KNOB, FREQUENCY, -aside), (Q_KNOB, Q, aside)];
-      for (control, parameter, aside) in knobs {
+      let [frequency, fader, q] = strip.controls.map(|x| Vec2::new(x, CONTROLS_Y));
+      let knobs = [(FREQUENCY_KNOB, FREQUENCY, frequency), (Q_KNOB, Q, q)];
+      for (control, parameter, at) in knobs {
         let turn = value(parameter);
-        drawn.knob(&self.knob, metal, middle + aside, turn, first + control);
+        drawn.knob(&self.knob, metal, at, turn, first + control);
       }
-      drawn.fader(&self.cap, middle, TRAVEL, value(GAIN), first + FADER);
+      drawn.fader(&self.cap, fader, TRAVEL, value(GAIN), first + FADER);
 
       // the button is lit in its band's color and most of the way in while the band is on
       let on = is_on(values, band);
       let level = f32::from(u8::from(on));
-      let [at, _] = title(band);
+      let at = Vec2::new(strip.button, TITLE_Y);
       let depth = Push::Latching.depth(on, held == Some(first + BUTTON));
       drawn.place(
         &self.button_body,
@@ -549,7 +565,7 @@ impl Equalizer {
       }
     }
 
-    for (x, loud) in METERS.into_iter().zip(&feed[BINS..]) {
+    for (x, loud) in self.meter_xs.into_iter().zip(&feed[BINS..]) {
       let level = METERED.turn(*loud);
       drawn.extend((self.meter).lights(&self.segment, x, METER_FOOT, level, None));
       lamps.extend(self.meter.lamp(x, METER_FOOT, level));
@@ -645,7 +661,7 @@ fn sound(feed: Feed, values: Arc<[AtomicU32]>) -> impl FnMut() + Send {
     // the two sides are as loud as the mean power of the frequencies, each a little off the
     // other
     let loud = 10.0 * (power / BINS as f32).log10();
-    for side in 0..METERS.len() {
+    for side in 0..METERS {
       feed.set(BINS + side, loud + 2.0 * noise.sample());
     }
     blocks += 1.0;
@@ -654,7 +670,7 @@ fn sound(feed: Feed, values: Arc<[AtomicU32]>) -> impl FnMut() + Send {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   let mut settings = Settings::new("potpot equalizer", SIZE);
-  let feed = Feed::new(BINS + METERS.len());
+  let feed = Feed::new(BINS + METERS);
   settings.feed = feed.clone();
   let (dials, controls) = wiring();
   let (params, values) = shared::params(dials);

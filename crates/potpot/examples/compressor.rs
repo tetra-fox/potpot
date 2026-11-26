@@ -29,6 +29,7 @@ use potpot::{Light, Look, Material, Mesh, Object, Renderer, Scene};
 use potpot_window::controls::axis::Axis;
 use potpot_window::controls::flat::{Color, Flat};
 use potpot_window::controls::interaction::{Control, Dial, Drag, Readout, Target};
+use potpot_window::controls::layout;
 use potpot_window::{Feed, Gpu, Settings, Skin, View, wgpu};
 
 use crate::shared::{BLACK, Drawn, INK, LABELS, Noise, Picture, Plot};
@@ -90,25 +91,17 @@ const PAST_SCREEN: Vec2 = Vec2::new(455.0, 160.0);
 const PAST_GLASS: Vec2 = Vec2::new(330.0, 220.0);
 /// The distance from the edge of a face in to its picture.
 const INSET: f32 = 12.0;
-// how far across the three meters are, and how far down their foot and their top are
-const METERS: [(usize, f32, &str); 3] = [
-  (IN, 664.0, "IN"),
-  (REDUCTION, 692.0, "GR"),
-  (OUT, 720.0, "OUT"),
-];
+// what the three meters show and their names, the room each has across the panel, and how far
+// down their foot and their top are
+const METERS: [(usize, &str); 3] = [(IN, "IN"), (REDUCTION, "GR"), (OUT, "OUT")];
+const METER_SLOT: f32 = 28.0;
 const METER_FOOT: f32 = CURVE.y + CURVE_GLASS.y / 2.0;
 const METER_TOP: f32 = CURVE.y - CURVE_GLASS.y / 2.0;
 
-/// Each knob's name and how far across the panel it is.
-///
-/// They are in the order of the parameters.
-const KNOB_PLACES: [(&str, f32); KNOBS] = [
-  ("THRESHOLD", 91.0),
-  ("RATIO", 201.0),
-  ("ATTACK", 400.0),
-  ("RELEASE", 510.0),
-  ("MAKEUP", 692.0),
-];
+/// Each knob's name, in the order of the parameters.
+const KNOB_NAMES: [&str; KNOBS] = ["THRESHOLD", "RATIO", "ATTACK", "RELEASE", "MAKEUP"];
+/// The room across the panel for each knob of a pair.
+const KNOB_SLOT: f32 = 110.0;
 // how far down the knobs' middles, their names and their readouts are
 const KNOB_Y: f32 = 346.0;
 const NAME_Y: f32 = 400.0;
@@ -333,6 +326,12 @@ struct Compressor {
   bend: [f32; 2],
   /// A knob's body and the line painted on it.
   knob: [Arc<Mesh>; 2],
+  /// How far across each knob's middle is.
+  ///
+  /// Two are under each screen, and the last is under the meters.
+  knob_xs: [f32; KNOBS],
+  /// How far across each meter's middle is.
+  meter_xs: [f32; METERS.len()],
   /// The meter of a level and the meter of the reduction.
   ///
   /// The reduction's lights are all of one color.
@@ -375,8 +374,12 @@ impl Compressor {
       red_from: 2.0,
       ..level
     };
+    // the meters, and the knob under them, in the room right of the wide screen
+    let across = |middle: Vec2, glass: Vec2| [middle.x - glass.x / 2.0, middle.x + glass.x / 2.0];
+    let room = [across(PAST_SCREEN, PAST_GLASS)[1], size.x];
+    let meter_xs = shared::centered(room, METER_SLOT);
     let seat = Arc::new(level.seat());
-    for (_, x, name) in METERS {
+    for ((_, name), x) in METERS.into_iter().zip(meter_xs) {
       fixed.extend(level.seats(&seat, x, METER_FOOT));
       fixed.letters(name, Vec2::new(x, METER_TOP - 14.0), 6.5, ink);
     }
@@ -389,7 +392,10 @@ impl Compressor {
       knob.radius + 11.0,
       5,
     ));
-    for (control, (name, x)) in KNOB_PLACES.into_iter().enumerate() {
+    let [threshold, ratio] = shared::centered(across(CURVE, CURVE_GLASS), KNOB_SLOT);
+    let [attack, release] = shared::centered(across(PAST_SCREEN, PAST_GLASS), KNOB_SLOT);
+    let knob_xs = [threshold, ratio, attack, release, layout::middle(room)];
+    for (control, (name, x)) in KNOB_NAMES.into_iter().zip(knob_xs).enumerate() {
       let on_panel = Mat4::from_translation(Vec3::new(x, KNOB_Y, 0.0));
       fixed.place(&scale, on_panel, ink, None);
       fixed.letters(name, Vec2::new(x, NAME_Y), 7.0, ink);
@@ -419,6 +425,8 @@ impl Compressor {
       past_reduction: Picture::new(),
       bend: [0.0; 2],
       knob: [knob.body(), knob.line()].map(Arc::new),
+      knob_xs,
+      meter_xs,
       segment: Arc::new(level.segment()),
       meters: [level, reduced],
     }
@@ -444,13 +452,13 @@ impl Compressor {
         .collect();
 
     let plastic = [Material::satin(CREAM), Material::matte(BLACK)];
-    for (control, (_, x)) in KNOB_PLACES.into_iter().enumerate() {
+    for (control, x) in self.knob_xs.into_iter().enumerate() {
       let at = Vec2::new(x, KNOB_Y);
       drawn.knob(&self.knob, plastic, at, values[control], control);
     }
 
     let [level, reduced] = self.meters;
-    for (slot, x, _) in METERS {
+    for ((slot, _), x) in METERS.into_iter().zip(self.meter_xs) {
       if slot == REDUCTION {
         // the reduction grows down from the top: its meter is a level's turned half around
         let shown = REDUCTIONS.turn(feed[slot]);
@@ -528,7 +536,7 @@ impl Skin for Compressor {
     let (scene, targets) = self.scene(view.values, view.feed, view.held);
     (self.renderer).prepare(gpu.device, gpu.queue, &scene, view.pixels);
     self.targets = targets;
-    for (control, (_, x)) in KNOB_PLACES.into_iter().enumerate() {
+    for (control, x) in self.knob_xs.into_iter().enumerate() {
       shared::written(over, view, control, Vec2::new(x, READOUT_Y), LETTERS);
     }
   }

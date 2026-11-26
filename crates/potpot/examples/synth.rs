@@ -173,14 +173,10 @@ const FILTER_KNOBS: [(usize, &str, Vec2); 2] = [
   (CUTOFF, "CUTOFF", Vec2::new(516.0, 240.0)),
   (RESONANCE, "RES", Vec2::new(516.0, 352.0)),
 ];
-// the envelope's faders: how far across each is, their middle down the panel, and how far
-// they slide
-const FADERS: [(&str, f32); 4] = [
-  ("ATTACK", 647.0),
-  ("DECAY", 709.0),
-  ("SUSTAIN", 771.0),
-  ("RELEASE", 833.0),
-];
+// the envelope's faders: their names, the room each has across the panel, their middle down the
+// panel, and how far they slide
+const FADERS: [&str; 4] = ["ATTACK", "DECAY", "SUSTAIN", "RELEASE"];
+const FADER_SLOT: f32 = 62.0;
 const FADER_Y: f32 = 302.0;
 const TRAVEL: f32 = 110.0;
 // how far under a knob's edge its name and its readout are, and how far down the faders'
@@ -521,6 +517,10 @@ struct Synth {
   knobs: [[Arc<Mesh>; 2]; 2],
   /// A fader's cap and its stripe.
   cap: [Arc<Mesh>; 2],
+  /// How far across each fader's middle is.
+  ///
+  /// The faders are under the envelope's screen.
+  faders: [f32; FADERS.len()],
   pad: Pad,
   puck: Arc<Mesh>,
   keybed: Keybed,
@@ -616,7 +616,9 @@ impl Synth {
     }
 
     // each fader's slot and scale, with its name and its readout under it
-    for (control, (name, x)) in (ATTACK..).zip(FADERS) {
+    let (x, width) = ENVELOPE;
+    let faders = shared::centered([x - width / 2.0, x + width / 2.0], FADER_SLOT);
+    for (control, (name, x)) in (ATTACK..).zip(FADERS.into_iter().zip(faders)) {
       let at = Vec2::new(x, FADER_Y);
       fixed.put(parts::fader_slot(TRAVEL, 5.0), at, hole);
       fixed.put(parts::fader_ticks(11, TRAVEL, 15.0, 20.0, 5), at, ink);
@@ -655,6 +657,7 @@ impl Synth {
         [knob.body(), knob.line()].map(Arc::new)
       }),
       cap: [cap.body(), cap.line()].map(Arc::new),
+      faders,
       puck: Arc::new(pad.puck()),
       pad,
       keys: [keybed.white(), keybed.black()].map(Arc::new),
@@ -693,7 +696,7 @@ impl Synth {
     for (control, _, at) in FILTER_KNOBS {
       drawn.knob(small, soft, at, values[control], control);
     }
-    for (control, (_, x)) in (ATTACK..).zip(FADERS) {
+    for (control, x) in (ATTACK..).zip(self.faders) {
       let at = Vec2::new(x, FADER_Y);
       drawn.fader(&self.cap, at, TRAVEL, values[control], control);
     }

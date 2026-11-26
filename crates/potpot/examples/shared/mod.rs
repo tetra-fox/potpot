@@ -13,6 +13,7 @@ use potpot::parts;
 use potpot::{Material, Mesh, Object, Place, Renderer};
 use potpot_window::controls::flat::{Color, Flat};
 use potpot_window::controls::interaction::{Dial, Target};
+use potpot_window::controls::layout::{self, Pack};
 use potpot_window::{Param, View, wgpu};
 
 // the way an example is run, which the one of potpot-window shares
@@ -43,6 +44,14 @@ const SELECTED: Color = [0.45, 0.28, 0.05, 1.0];
 /// Its strokes are wide enough to show when it is small.
 pub fn lettering(text: &str, tall: f32) -> Mesh {
   parts::legend(text, tall, (tall * 0.17).max(1.0))
+}
+
+/// Returns the middles of `N` slots centered in a span.
+///
+/// The slots are each `slot` wide and touch.
+pub fn centered<const N: usize>(span: [f32; 2], slot: f32) -> [f32; N] {
+  let slots = layout::pack(span, &[slot; N], Pack::Center);
+  std::array::from_fn(|place| layout::middle(slots[place]))
 }
 
 /// Objects on their way into a scene.
