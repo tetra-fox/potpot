@@ -48,12 +48,15 @@ pub struct Bound {
 impl Bound {
   /// Creates a control on `param`.
   ///
-  /// `param` has to be one of the parameters the editor is made with. The control is dragged,
-  /// turns smoothly and feels as [`Feel::default`] does, and the wheel turns `param` too.
+  /// `param` has to be one of the parameters the editor is made with. The control is dragged
+  /// and feels as [`Feel::default`] does, and the wheel turns `param` too. A parameter with
+  /// steps, as an `IntParam`, an `EnumParam` and a `BoolParam` have, moves by one of them, and
+  /// any other turns smoothly.
   pub fn new(param: &impl nice_plug::params::Param, readout: Readout) -> Self {
     Self {
       param: param.as_ptr(),
-      step: None,
+      // the plain values of those three are whole numbers, a step apart
+      step: param.step_count().map(|_| 1.0),
       feel: Feel::default(),
       readout,
       touch: Touch::Turn,
