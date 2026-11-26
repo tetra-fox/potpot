@@ -75,13 +75,9 @@ mod tests {
 
   /// Returns spans and the sizes packed in each.
   ///
-  /// The cases hold:
-  ///
-  /// - no sizes
-  /// - zero sizes
-  /// - one size
-  /// - sizes that fill their span exactly
-  /// - a span from an earlier call filled by sizes that add up to its width
+  /// - Some lists are empty, and some hold one size or sizes of zero.
+  /// - Some lists fill their span exactly.
+  /// - One list fills a span an earlier call returned.
   fn cases() -> Vec<([f32; 2], Vec<f32>)> {
     let spans = [[0.0, 100.0], [20.0, 500.0], [-30.0, 30.0]];
     let lists: [&[f32]; 6] = [
