@@ -519,7 +519,7 @@ struct Synth {
   /// How far across each fader's middle is.
   ///
   /// The faders are under the envelope's screen.
-  faders: [f32; FADERS.len()],
+  fader_xs: [f32; FADERS.len()],
   pad: Pad,
   puck: Arc<Mesh>,
   keybed: Keybed,
@@ -618,8 +618,8 @@ impl Synth {
 
     // each fader's slot and scale, with its name and its readout under it
     let [_, _, envelope] = faces;
-    let faders = shared::centered(envelope, FADER_SLOT);
-    for (control, (name, x)) in (ATTACK..).zip(FADERS.into_iter().zip(faders)) {
+    let fader_xs = shared::centered(envelope, FADER_SLOT);
+    for (control, (name, x)) in (ATTACK..).zip(FADERS.into_iter().zip(fader_xs)) {
       let at = Vec2::new(x, FADER_Y);
       fixed.put(parts::fader_slot(TRAVEL, 5.0), at, hole);
       fixed.put(parts::fader_ticks(11, TRAVEL, 15.0, 20.0, 5), at, ink);
@@ -658,7 +658,7 @@ impl Synth {
         [knob.body(), knob.line()].map(Arc::new)
       }),
       cap: [cap.body(), cap.line()].map(Arc::new),
-      faders,
+      fader_xs,
       puck: Arc::new(pad.puck()),
       pad,
       keys: [keybed.white(), keybed.black()].map(Arc::new),
@@ -697,7 +697,7 @@ impl Synth {
     for (control, _, at) in FILTER_KNOBS {
       drawn.knob(small, soft, at, values[control], control);
     }
-    for (control, x) in (ATTACK..).zip(self.faders) {
+    for (control, x) in (ATTACK..).zip(self.fader_xs) {
       let at = Vec2::new(x, FADER_Y);
       drawn.fader(&self.cap, at, TRAVEL, values[control], control);
     }
