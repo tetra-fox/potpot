@@ -13,3 +13,8 @@ missing_debug_implementations = "warn"
 [workspace.dependencies]
 potpot-controls = { path = "crates/potpot-controls" }
 wgpu = { version = "27", default-features = false, features = ["std", "wgsl"] }
+
+# the window copies every pixel of a frame on the cpu, which an unoptimized build is too slow
+# at to follow a drag in a large window
+[profile.dev]
+opt-level = 1
