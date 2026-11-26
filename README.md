@@ -23,7 +23,7 @@ just example compressor           # a curve to drag, and meters from an audio th
 just example synth                # a wave, a filter and an envelope on screens, and keys
 just example flat                 # a panel drawn with flat shapes alone
 just render demo out.png          # any of those, drawn to a file with no window
-just render gallery out.png knobs # a panel of parts, or faders, lights, lamp, rings, screens, retro
+just render gallery out.png knobs # a panel of parts, or faders, lights, lamp, rings, screens, retro, industrial
 ```
 
 `just example flat` runs on `potpot-controls` and `potpot-window` alone. A panel's look is a `Skin`:

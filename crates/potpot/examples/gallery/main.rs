@@ -10,11 +10,14 @@
 //! - `rings`: rings of lights around knobs
 //! - `screens`: screens that show an equalizer, a scope and an envelope
 //! - `retro`: a whole soft synth's front in an old manner
+//! - `industrial`: dark metal hardware lit from within, and a glow on its own
 //!
-//! After the panel's name, one number is the pixel size and a second the color steps, for the
-//! crude looks.
+//! After the panel's name, a whole number is the scale the picture is drawn at, as for the other
+//! examples. After it, one number is the pixel size and a second the color steps, for the crude
+//! looks.
 
 mod faders;
+mod industrial;
 mod knobs;
 mod lamp;
 mod lights;
@@ -31,6 +34,7 @@ use potpot::parts;
 use potpot::{Light, Look, Material, Object, Place, Renderer, Scene, wgpu};
 
 use crate::faders::faders;
+use crate::industrial::industrial;
 use crate::knobs::knobs;
 use crate::lamp::lamp;
 use crate::lights::lights;
@@ -41,7 +45,7 @@ use crate::shared::{ALUMINUM, BLACK, SEAT, lettering};
 
 const SIZE: [u32; 2] = [1024, 640];
 /// The names of the panels, as a message lists them.
-const PANELS: &str = "knobs, faders, lights, lamp, rings, screens, retro";
+const PANELS: &str = "knobs, faders, lights, lamp, rings, screens, retro, industrial";
 
 /// Returns a screw for each corner, each turned its own way.
 fn screws() -> [Object; 4] {
@@ -89,8 +93,15 @@ fn main() {
     "rings" => rings,
     "screens" => screens,
     "retro" => retro,
+    "industrial" => industrial,
     _ => panic!("gallery: unknown panel {panel}: expected one of {PANELS}"),
   };
+  // a whole number, so that a row of the picture stays a multiple of the 256 bytes wgpu
+  // copies rows by
+  let scale: u32 = arguments.next().map_or(1, |scale| {
+    scale.parse().expect("the scale is a whole number")
+  });
+  let size = SIZE.map(|side| side * scale);
   let look = Look {
     pixel_size: arguments.next().map_or(1.0, |size| {
       size.parse().expect("the pixel size is a number")
@@ -114,8 +125,8 @@ fn main() {
   let target = device.create_texture(&wgpu::TextureDescriptor {
     label: None,
     size: wgpu::Extent3d {
-      width: SIZE[0],
-      height: SIZE[1],
+      width: size[0],
+      height: size[1],
       depth_or_array_layers: 1,
     },
     mip_level_count: 1,
@@ -127,7 +138,7 @@ fn main() {
   });
 
   let mut renderer = Renderer::new(&device, format);
-  renderer.prepare(&device, &queue, &scene(look), SIZE);
+  renderer.prepare(&device, &queue, &scene(look), size);
   let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
   renderer.render(
     &mut encoder,
@@ -135,17 +146,16 @@ fn main() {
     Place {
       x: 0.0,
       y: 0.0,
-      width: SIZE[0] as f32,
-      height: SIZE[1] as f32,
+      width: size[0] as f32,
+      height: size[1] as f32,
     },
-    [0, 0, SIZE[0], SIZE[1]],
+    [0, 0, size[0], size[1]],
   );
 
-  // a row of 1024 rgba pixels is already a multiple of the 256 bytes wgpu copies rows by
-  let row = SIZE[0] * 4;
+  let row = size[0] * 4;
   let read = device.create_buffer(&wgpu::BufferDescriptor {
     label: None,
-    size: u64::from(row * SIZE[1]),
+    size: u64::from(row * size[1]),
     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
     mapped_at_creation: false,
   });
@@ -170,6 +180,6 @@ fn main() {
     .expect("the device finishes");
 
   let pixels = read.slice(..).get_mapped_range();
-  shared::window::write_png(path.as_ref(), SIZE, &pixels).expect("the png file is written");
+  shared::window::write_png(path.as_ref(), size, &pixels).expect("the png file is written");
   eprintln!("wrote {path}");
 }
