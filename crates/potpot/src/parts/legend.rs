@@ -53,8 +53,16 @@ pub(super) fn add_stroke(
 /// with letters `height` tall and strokes `weight` wide. A character the face has no letter for is
 /// a space.
 pub fn legend(text: &str, height: f32, weight: f32) -> Mesh {
+  tracked_legend(text, height, weight, 0.0)
+}
+
+/// Returns lettering painted flat on the panel, its letters spread `tracking` wider apart.
+///
+/// The lettering is as [`legend`] makes it. `tracking` is the room added between every two
+/// letters, as [`stroke::tracked_width`] takes it.
+pub fn tracked_legend(text: &str, height: f32, weight: f32, tracking: f32) -> Mesh {
   let mut legend = Mesh::default();
-  for line in stroke::lines(text, height) {
+  for line in stroke::tracked_lines(text, height, tracking) {
     add_stroke(&mut legend, line.map(Vec2::from), weight, PAINT, END);
   }
   legend
@@ -111,5 +119,12 @@ mod tests {
       assert!((middle - wanted).abs() < 1e-4, "{middles:?}");
     }
     assert_eq!(middles.len(), 3);
+    // and three units more apart when tracked by three
+    let tracked = tracked_legend("III", 12.0, 1.0, 3.0);
+    let first = (tracked.vertices[..letter].iter())
+      .map(|vertex| vertex.position[0])
+      .sum::<f32>()
+      / letter as f32;
+    assert!((first + 18.0).abs() < 1e-4, "{first}");
   }
 }

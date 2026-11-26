@@ -74,22 +74,30 @@ pub(crate) fn lettered(letter: char) -> bool {
 /// the last letter.
 pub fn gap(count: usize, index: usize, height: f32) -> f32 {
   let unit = height / 6.0;
-  left_edge(count, unit) + (index as f32 * 6.0 - 1.0) * unit
+  left_edge(count, unit, 0.0) + (index as f32 * 6.0 - 1.0) * unit
 }
 
 /// Returns how wide lettering of `count` letters `height` tall is.
 ///
 /// The width is from the left of its first letter to the right of its last.
 pub const fn width(count: usize, height: f32) -> f32 {
-  -2.0 * left_edge(count, height / 6.0)
+  tracked_width(count, height, 0.0)
+}
+
+/// Returns how wide lettering of `count` letters `height` tall is, spread `tracking` wider.
+///
+/// `tracking` is the room added between every two letters, in the units of the grid a letter
+/// is drawn on, six of which are its height.
+pub const fn tracked_width(count: usize, height: f32, tracking: f32) -> f32 {
+  -2.0 * left_edge(count, height / 6.0, tracking)
 }
 
 /// Returns the left edge of the first of `count` letters.
 ///
 /// The edge is measured from the middle of them all. Each letter is four units wide, and two
-/// more go to the gap after it.
-const fn left_edge(count: usize, unit: f32) -> f32 {
-  -(count as f32 * 6.0 - 2.0) * unit / 2.0
+/// more and `tracking` go to the gap after it.
+const fn left_edge(count: usize, unit: f32, tracking: f32) -> f32 {
+  -(count as f32 * (6.0 + tracking) - 2.0 - tracking) * unit / 2.0
 }
 
 /// Returns the strokes of lettering as lines from point to point.
@@ -97,11 +105,18 @@ const fn left_edge(count: usize, unit: f32) -> f32 {
 /// The lines lie about the middle of it all, with letters `height` tall, down the panel as y
 /// grows. Anything the face has no letter for is a space.
 pub fn lines(text: &str, height: f32) -> Vec<[Point; 2]> {
+  tracked_lines(text, height, 0.0)
+}
+
+/// Returns the strokes of lettering spread `tracking` wider, as lines from point to point.
+///
+/// `tracking` is as [`tracked_width`] takes it, and the lines are as [`lines`] makes them.
+pub fn tracked_lines(text: &str, height: f32, tracking: f32) -> Vec<[Point; 2]> {
   let unit = height / 6.0;
-  let left = left_edge(text.chars().count(), unit);
+  let left = left_edge(text.chars().count(), unit, tracking);
   let mut lines = Vec::new();
   for (index, letter) in text.chars().enumerate() {
-    let origin = [left + index as f32 * 6.0 * unit, height / 2.0];
+    let origin = [left + index as f32 * (6.0 + tracking) * unit, height / 2.0];
     for run in strokes(letter.to_ascii_uppercase()) {
       let points: Vec<Point> = (run.as_bytes().chunks(2))
         .map(|pair| {
@@ -120,7 +135,7 @@ pub fn lines(text: &str, height: f32) -> Vec<[Point; 2]> {
 ///
 /// The place is measured from the middle of lettering of `count` letters `height` tall.
 pub(crate) fn top_left(count: usize, height: f32) -> Point {
-  [left_edge(count, height / 6.0), -height / 2.0]
+  [left_edge(count, height / 6.0, 0.0), -height / 2.0]
 }
 
 #[cfg(test)]
@@ -154,5 +169,7 @@ mod tests {
     // with no letters the one gap is the middle
     assert_eq!(gap(0, 0, 12.0), 0.0);
     assert_eq!(width(3, 12.0), 32.0);
+    // a unit more between letters is two points more for each of the two gaps
+    assert_eq!(tracked_width(3, 12.0, 1.0), 36.0);
   }
 }

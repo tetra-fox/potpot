@@ -32,7 +32,7 @@ pub use handle::Handle;
 pub use keybed::Keybed;
 pub use knob::{Edge, KNOB_SWEEP, Knob, Top, knob_transform};
 pub use led::{led, led_lamp, led_material, led_seat, light_line, light_line_seat};
-pub use legend::legend;
+pub use legend::{legend, tracked_legend};
 pub use meter::Meter;
 pub use pad::Pad;
 pub use panel::{
