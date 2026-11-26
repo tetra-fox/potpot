@@ -95,7 +95,7 @@ impl Interaction {
     }
   }
 
-  /// Rests the wheel once it has been still long enough.
+  /// Rests the wheel once it has been still for [`WHEEL_REST`].
   pub(super) fn rest_wheel_if_still(&mut self, now: Instant, actions: &mut Vec<Action>) {
     if let Some(Wheel { last, .. }) = self.wheel
       && now.duration_since(last) >= WHEEL_REST
