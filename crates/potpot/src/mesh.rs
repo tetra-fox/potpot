@@ -3,7 +3,7 @@
 use std::f32::consts::TAU;
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec2, Vec3, Vec3A};
+use glam::{Mat4, Quat, Vec2, Vec3, Vec3A};
 
 /// One corner of a mesh's triangles.
 #[repr(C)]
@@ -62,9 +62,18 @@ impl Mesh {
   /// stretch between two points is its own band with a hard edge to the next. `segments` is how
   /// many sides the turn has, and `smooth` rounds the shading across them.
   pub fn lathe(profile: &[[f32; 2]], segments: u32, smooth: bool) -> Self {
+    Self::lathe_between(profile, [0.0, TAU], segments, smooth)
+  }
+
+  /// Creates a profile of (radius, height) points turned part of the way around the z axis.
+  ///
+  /// It is [`Mesh::lathe`] from the angle `turn[0]` to `turn[1]`, in radians counterclockwise from
+  /// x. `segments` sides span that part of the turn, and its two ends are left open.
+  pub fn lathe_between(profile: &[[f32; 2]], turn: [f32; 2], segments: u32, smooth: bool) -> Self {
     let mut mesh = Self::default();
+    let [from, to] = turn;
     let around = |step: f32| {
-      let (sin, cos) = (step / segments as f32 * TAU).sin_cos();
+      let (sin, cos) = (from + step / segments as f32 * (to - from)).sin_cos();
       Vec3::new(cos, sin, 0.0)
     };
     for band in profile.windows(2) {
@@ -228,6 +237,59 @@ impl Mesh {
     mesh
   }
 
+  /// Creates a round tube along a path.
+  ///
+  /// The tube is `radius` thick around each stretch of `path`, with `sides` sides, and its two
+  /// ends are left open. It shades as one smooth surface, and each ring of points is square to
+  /// the path where it turns, which keeps it round through a bend of many short stretches.
+  pub fn tube(path: &[Vec3], radius: f32, sides: u32) -> Self {
+    let mut mesh = Self::default();
+    if path.len() < 2 {
+      return mesh;
+    }
+    // the way along the path at each point, halfway between the stretches either side of it
+    let along: Vec<Vec3> = (0..path.len())
+      .map(|index| {
+        let before = path[index.saturating_sub(1)];
+        let after = path[(index + 1).min(path.len() - 1)];
+        (after - before).normalize_or_zero()
+      })
+      .collect();
+    // a way across the path at each point, carried from one ring to the next by the least
+    // turn, so that the tube does not twist
+    let mut across = Vec::with_capacity(path.len());
+    let first = along[0].any_orthonormal_vector();
+    across.push(first);
+    for pair in along.windows(2) {
+      let previous = *across.last().expect("the first ring has a way across");
+      let turned = Quat::from_rotation_arc(pair[0], pair[1]) * previous;
+      across.push(
+        turned
+          .reject_from_normalized(pair[1])
+          .normalize_or(previous),
+      );
+    }
+    let out = |index: usize, step: u32| {
+      let angle = step as f32 / sides as f32 * TAU;
+      let side = along[index].cross(across[index]);
+      across[index] * angle.cos() + side * angle.sin()
+    };
+    for index in 0..path.len() - 1 {
+      for step in 0..sides {
+        let normals = [
+          out(index, step),
+          out(index, step + 1),
+          out(index + 1, step + 1),
+          out(index + 1, step),
+        ];
+        let points = [index, index, index + 1, index + 1];
+        let corners = std::array::from_fn(|corner| path[points[corner]] + normals[corner] * radius);
+        mesh.quad_with_normals(corners, normals);
+      }
+    }
+    mesh
+  }
+
   /// Returns the mesh moved by a transform.
   ///
   /// It bakes a part into place before merging. `transform` is a rotation and a move, with at
@@ -330,6 +392,57 @@ mod tests {
             "side {side} of {segments} faces {normal}"
           );
         }
+      }
+    }
+  }
+
+  #[test]
+  fn a_lathe_between_two_angles_turns_only_that_far() {
+    let mesh = Mesh::lathe_between(&[[2.0, 1.0], [1.0, 1.0]], [0.5, 2.0], 6, true);
+    assert_eq!(mesh.indices.len(), 6 * 6);
+    for vertex in &mesh.vertices {
+      let position = Vec3::from(vertex.position);
+      let angle = position.y.atan2(position.x);
+      assert!((0.5 - 1e-5..=2.0 + 1e-5).contains(&angle), "{position}");
+      assert!((Vec3::from(vertex.normal) - Vec3::Z).length() < 1e-5);
+    }
+    // both ends are on the mesh
+    let ends = [0.5_f32, 2.0].map(|angle| Vec2::from_angle(angle).extend(1.0));
+    for end in ends {
+      let near =
+        (mesh.vertices.iter()).any(|vertex| Vec3::from(vertex.position).distance(end) < 1e-5);
+      assert!(near, "nothing at {end}");
+    }
+  }
+
+  #[test]
+  fn a_tube_is_round_and_square_to_its_path_through_a_bend() {
+    // up, a quarter round over and along, the shape of a handle's leg
+    let mut path = vec![Vec3::ZERO, Vec3::new(0.0, 0.0, 4.0)];
+    path.extend((1..=8).map(|step| {
+      let (sin, cos) = (step as f32 / 8.0 * std::f32::consts::FRAC_PI_2).sin_cos();
+      Vec3::new(0.0, 2.0 - 2.0 * cos, 4.0 + 2.0 * sin)
+    }));
+    path.push(Vec3::new(0.0, 10.0, 6.0));
+    let mesh = Mesh::tube(&path, 0.5, 12);
+    assert_eq!(mesh.indices.len(), (path.len() - 1) * 12 * 6);
+    for (quad, corners) in mesh.vertices.chunks(4).enumerate() {
+      let index = quad / 12;
+      for (corner, vertex) in corners.iter().enumerate() {
+        let point = path[index + usize::from(corner >= 2)];
+        let (position, normal) = (Vec3::from(vertex.position), Vec3::from(vertex.normal));
+        assert!(normal.is_normalized());
+        assert!(
+          (position - point - normal * 0.5).length() < 1e-4,
+          "{position} off {point}"
+        );
+      }
+    }
+    // the ring on the straight top is square to it, so the tube is as thick as it is told
+    let last = &mesh.vertices[mesh.vertices.len() - 12 * 4..];
+    for corners in last.chunks(4) {
+      for vertex in &corners[2..] {
+        assert!(vertex.normal[1].abs() < 1e-4, "{:?}", vertex.normal);
       }
     }
   }
