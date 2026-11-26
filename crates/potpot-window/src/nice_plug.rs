@@ -19,6 +19,7 @@ use potpot_controls::fit::{chosen, shaped};
 use potpot_controls::interaction::{Control, Dial, Feel, Key, Readout, Touch};
 
 use crate::open::{Opening, Param, Remembered, Settings, Shared, Tell, open};
+use crate::picture::{Picture, picture};
 use crate::skin::{Gpu, Skin};
 
 /// One of a panel's controls bound to one of the plugin's parameters.
@@ -305,6 +306,45 @@ impl<S: Skin> Editor<S> {
       }),
     }
   }
+
+  /// Draws one frame of the panel to pixels, with no host or window.
+  ///
+  /// The [`Picture`] is what [`picture()`](crate::picture()) draws of the panel at `scale`, with
+  /// each parameter where the plugin has it. The host is told nothing.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if [`picture()`](crate::picture()) does.
+  pub fn picture(&self, scale: f32) -> Result<Picture, baseview::Error> {
+    let params = (self.bound.iter())
+      .map(|bound| {
+        let held = self.held(bound);
+        let dial = held.dial(bound.step);
+        // a picture never sets a parameter
+        Param::new(dial, move || held.value(), || {}, |_| {}, || {})
+      })
+      .collect();
+    picture(&self.settings, params, self.controls(), scale, |gpu| {
+      (self.skin)(gpu)
+    })
+  }
+}
+
+impl<S> Editor<S> {
+  /// Returns the parameter of a bound control, held with the plugin's.
+  fn held(&self, bound: &Bound) -> Held {
+    Held {
+      _params: Arc::clone(&self.params),
+      param: bound.param,
+    }
+  }
+
+  /// Returns the panel's controls, each on the parameter bound at its own place.
+  fn controls(&self) -> Vec<Control> {
+    (self.bound.iter().enumerate())
+      .map(|(place, bound)| bound.control(place))
+      .collect()
+  }
 }
 
 /// Returns how many of the host's units go to a point.
@@ -341,17 +381,7 @@ impl<S: Skin> nice_plug::editor::Editor for Editor<S> {
         .with_main_thread(MainThreadCaller(host.main_thread_caller))
     });
     let params = (self.bound.iter())
-      .map(|bound| {
-        let held = Held {
-          _params: Arc::clone(&self.params),
-          param: bound.param,
-        };
-        held.bound(bound.step, &gui_context)
-      })
-      .collect();
-    // each bound control turns the parameter bound at its own place
-    let controls = (self.bound.iter().enumerate())
-      .map(|(place, bound)| bound.control(place))
+      .map(|bound| self.held(bound).bound(bound.step, &gui_context))
       .collect();
     let opening = Opening {
       parent: parent.as_ref(),
@@ -365,7 +395,7 @@ impl<S: Skin> nice_plug::editor::Editor for Editor<S> {
     let opened = open(
       self.settings.clone(),
       params,
-      controls,
+      self.controls(),
       opening,
       move |gpu| skin(gpu),
     )?;
