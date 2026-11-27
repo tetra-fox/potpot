@@ -6,7 +6,7 @@ use potpot::glam::{Mat4, Vec3};
 use potpot::parts::{self, Screen};
 use potpot::{Look, Material, Scene};
 use potpot_controls::axis::Axis;
-use potpot_controls::flat::Flat;
+use potpot_controls::flat::{Dashes, Flat};
 use potpot_controls::response::{self, Band, Kind};
 
 use super::shared::{self, GRID, Plot};
@@ -82,8 +82,24 @@ fn equalizer(flat: &mut Flat, plot: Plot) {
 }
 
 /// Adds a scope's trace of a note that dies away.
+///
+/// Dashed curves above and below the trace follow its height as it falls.
 fn scope(flat: &mut Flat, plot: Plot) {
   plot.divide(flat, 8, 4);
+  let dashes = Dashes {
+    length: 5.0,
+    gap: 4.0,
+  };
+  for side in [1.0, -1.0] {
+    let decay: Vec<[f32; 2]> = (0..=60)
+      .map(|step| {
+        let time = step as f32 / 60.0;
+        // the most the two waves of the trace add up to
+        plot.at([time, 0.5 + side * 0.34 * 1.16 * (-time * 2.6).exp()])
+      })
+      .collect();
+    flat.dashed(&decay, 1.2, dashes, [0.2, 0.55, 0.28, 1.0]);
+  }
   let trace: Vec<[f32; 2]> = (0..=300)
     .map(|step| {
       let time = step as f32 / 300.0;
@@ -96,7 +112,8 @@ fn scope(flat: &mut Flat, plot: Plot) {
 
 /// Adds an envelope of four stages.
 ///
-/// The stages are a curve over the region under it.
+/// The stages are a curve over the region under it, with a dashed line down from each place
+/// one stage gives way to the next.
 fn envelope(flat: &mut Flat, plot: Plot) {
   plot.divide(flat, 8, 4);
   // where each stage ends across the plot, and how high: attack, decay, sustain, release
@@ -119,6 +136,19 @@ fn envelope(flat: &mut Flat, plot: Plot) {
   }
   curve.push(plot.at(stages[4]));
   flat.area(&curve, plot.max.y, [0.3, 0.16, 0.03, 1.0]);
+  let dashes = Dashes {
+    length: 4.0,
+    gap: 3.0,
+  };
+  for stage in &stages[1..4] {
+    let at = plot.at(*stage);
+    flat.dashed(
+      &[at, plot.at([stage[0], 0.0])],
+      1.0,
+      dashes,
+      [0.6, 0.38, 0.1, 1.0],
+    );
+  }
   flat.curve(&curve, 2.0, [1.0, 0.7, 0.2, 1.0]);
   for stage in &stages[1..4] {
     let at = plot.at(*stage);

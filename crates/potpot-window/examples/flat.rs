@@ -19,7 +19,7 @@ mod shared;
 
 use std::f32::consts::{PI, TAU};
 
-use potpot_window::controls::flat::{Color, Flat};
+use potpot_window::controls::flat::{Color, Dashes, Flat};
 use potpot_window::controls::interaction::{Control, Dial, Feel, Readout, Target};
 use potpot_window::{Gpu, Param, Settings, Skin, View, wgpu};
 
@@ -179,9 +179,9 @@ fn readout(over: &mut Flat, view: &View, control: usize, x: f32) {
 
 /// Adds the wave the four knobs shape.
 ///
-/// It lies over the region between it and its middle line. `values` is where each knob stands, as a
-/// part of its whole turn: the tune sets how many cycles show, the drive flattens their crests, the
-/// tone adds a ripple and the level is their height.
+/// It lies over the region between it and its dashed middle line. `values` is where each knob
+/// stands, as a part of its whole turn: the tune sets how many cycles show, the drive flattens
+/// their crests, the tone adds a ripple and the level is their height.
 fn wave(over: &mut Flat, values: [f32; 4]) {
   let [tune, drive, tone, level] = values;
   let [min, max] = WAVE;
@@ -201,6 +201,12 @@ fn wave(over: &mut Flat, values: [f32; 4]) {
       ]
     })
     .collect();
+  let dashes = Dashes {
+    length: 6.0,
+    gap: 4.0,
+  };
+  let line = [[min[0] + 8.0, middle], [max[0] - 8.0, middle]];
+  over.dashed(&line, 1.0, dashes, LINE);
   let [red, green, blue, _] = MARK;
   over.area(&points, middle, [red, green, blue, 0.25]);
   over.curve(&points, 2.0, MARK);
