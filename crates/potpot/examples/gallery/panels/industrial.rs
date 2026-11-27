@@ -12,7 +12,7 @@ use super::{BLACK, Build, SEAT, SIZE, framed};
 /// The color of the light built into the hardware.
 const CYAN: Vec3 = Vec3::new(0.2, 0.85, 1.0);
 /// The color of the panel's dark metal.
-const GUNMETAL: Vec3 = Vec3::new(0.28, 0.3, 0.32);
+const GUNMETAL: Vec3 = Vec3::new(0.41, 0.44, 0.46);
 
 /// Returns the place (`x`, `y`) on the panel.
 fn on_panel(x: f32, y: f32) -> Mat4 {
@@ -62,7 +62,7 @@ impl Build {
 pub(super) fn industrial(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let mut build = Build::default();
-  let metal = Material::hammertone(GUNMETAL);
+  let metal = Material::brushed(GUNMETAL);
   build.put(parts::plate(width, height, 6.0), Mat4::IDENTITY, metal);
 
   // a rack ear at each side, with a handle between two screws

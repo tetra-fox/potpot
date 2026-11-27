@@ -105,7 +105,7 @@ pub enum Anisotropy {
 pub enum Textures {
   /// Walnut, as on the cheeks of a synthesizer.
   Walnut(f32),
-  /// Metallic paint dried into plateaus split by fine crevices.
+  /// Metallic paint dried into shallow pits between narrow ridges.
   Hammertone(f32),
   /// Aluminium brushed in straight lines along the panel's x.
   BrushedAluminium(f32),
