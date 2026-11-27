@@ -48,6 +48,11 @@ const AROUND: wgpu::Color = wgpu::Color {
 ///
 /// Blue comes first and the colors are in sRGB, which is how a window is given them.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8UnormSrgb;
+/// The format the flat shapes are drawn over the picture in.
+///
+/// It is [`FORMAT`] without the sRGB encoding, so the shapes' colors are blended as they are to
+/// look.
+const OVER: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 /// The longest a frame may take the graphics device before it is given up on.
 const DRAWN_WITHIN: Duration = Duration::from_secs(1);
 /// The longest a single wait for a frame lasts.
@@ -233,6 +238,8 @@ struct Canvas {
   size: [u32; 2],
   texture: wgpu::Texture,
   view: wgpu::TextureView,
+  /// The texture in [`OVER`], for the flat shapes to be drawn on.
+  over: wgpu::TextureView,
   /// The frame's pixels once it is drawn, in rows of `row` bytes.
   read: wgpu::Buffer,
   row: u32,
@@ -252,7 +259,7 @@ impl Canvas {
       dimension: wgpu::TextureDimension::D2,
       format: FORMAT,
       usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-      view_formats: &[],
+      view_formats: &[OVER],
     });
     let row = Self::row(size[0]);
     let read = device.create_buffer(&wgpu::BufferDescriptor {
@@ -264,6 +271,10 @@ impl Canvas {
     Self {
       size,
       view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
+      over: texture.create_view(&wgpu::TextureViewDescriptor {
+        format: Some(OVER),
+        ..Default::default()
+      }),
       texture,
       read,
       row,
@@ -486,7 +497,7 @@ fn made<S: Skin>(
     };
     let mut skin = skin(&gpu);
     laid_out(graphics, &mut skin, interaction, settings, first);
-    (skin, FlatRenderer::new(&graphics.device, FORMAT))
+    (skin, FlatRenderer::new(&graphics.device, OVER))
   })
 }
 
@@ -567,7 +578,7 @@ fn drawing<S: Skin>(
     });
   }
   skin.draw(&mut encoder, view, place);
-  flat.render(&mut encoder, view);
+  flat.render(&mut encoder, &canvas.over);
   encoder
 }
 
@@ -1761,7 +1772,7 @@ mod tests {
     let place = fitted(window, size);
     let canvas = Canvas::new(device, window);
     assert!(canvas.row > window[0] * 4);
-    let mut flat = FlatRenderer::new(device, FORMAT);
+    let mut flat = FlatRenderer::new(device, OVER);
     let mut number = numbers();
     let point = |number: &mut dyn FnMut() -> f32| [number() * 200.0, number() * 100.0];
     let mut lines: Vec<[[f32; 2]; 2]> = (0..6)
@@ -1796,7 +1807,7 @@ mod tests {
       };
       flat.prepare(device, queue, &over, size, place);
       let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-      flat.render(&mut encoder, &canvas.view);
+      flat.render(&mut encoder, &canvas.over);
       let read: &[[u32; 4]] = if patched { &parts } else { &whole };
       let rows = (canvas.read(&graphics, encoder, read)).expect("the frame is read back");
       let pixels = canvas.read.slice(rows.bytes).get_mapped_range();

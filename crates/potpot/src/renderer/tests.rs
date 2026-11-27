@@ -76,7 +76,8 @@ impl Target {
       dimension: wgpu::TextureDimension::D2,
       format: FORMAT,
       usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-      view_formats: &[],
+      // and seen without its encoding, which flat shapes are drawn through
+      view_formats: &[FORMAT.remove_srgb_suffix()],
     });
     let read = device.create_buffer(&wgpu::BufferDescriptor {
       label: None,
@@ -1250,10 +1251,13 @@ fn texels(target: &Target, texture: &wgpu::Texture) -> Vec<u8> {
     .collect()
 }
 
-/// Clears the target and draws a list of shapes on it, one pixel to a point.
-fn flat_drawn(target: &Target, shapes: &potpot_controls::flat::Flat) -> Vec<u8> {
-  let mut renderer = FlatRenderer::new(&target.device, FORMAT);
-  let size = SIZE.map(|side| side as f32);
+/// Clears the target and draws a list of shapes over all of it.
+///
+/// The shapes are of a panel `size` points wide and high, and blended as their colors look.
+fn flat_drawn(target: &Target, shapes: &potpot_controls::flat::Flat, size: Vec2) -> Vec<u8> {
+  let encoded = FORMAT.remove_srgb_suffix();
+  let mut renderer = FlatRenderer::new(&target.device, encoded);
+  let size = size.to_array();
   renderer.prepare(
     &target.device,
     &target.queue,
@@ -1261,7 +1265,10 @@ fn flat_drawn(target: &Target, shapes: &potpot_controls::flat::Flat) -> Vec<u8> 
     size,
     [0, 0, SIZE[0], SIZE[1]],
   );
-  let view = (target.texture).create_view(&wgpu::TextureViewDescriptor::default());
+  let view = (target.texture).create_view(&wgpu::TextureViewDescriptor {
+    format: Some(encoded),
+    ..Default::default()
+  });
   let mut encoder =
     (target.device).create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
   encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1295,22 +1302,23 @@ fn a_color_that_covers_in_part_is_blended_over_what_was_drawn_before_it() {
   let mut over = Flat::default();
   over.rect([0.0, 0.0], [10.0, 10.0], red);
   over.rect([5.0, 0.0], [15.0, 10.0], blue);
-  let pixels = flat_drawn(&target, &over);
+  let one_to_one = Vec2::new(SIZE[0] as f32, SIZE[1] as f32);
+  let pixels = flat_drawn(&target, &over, one_to_one);
   let at = |pixels: &[u8], x: usize| -> [u8; 4] {
     let start = (5 * SIZE[0] as usize + x) * 4;
     pixels[start..start + 4]
       .try_into()
       .expect("a pixel is four bytes")
   };
-  // half of each in linear light is 0.5, which is 188 as sRGB stores it, and the texel holds
-  // the color times its cover
+  // half of each as they look, and the texel holds the color times its cover. blended in
+  // linear light, half of each would be stored as 188
   assert_eq!(at(&pixels, 2), [255, 0, 0, 255]);
   let mixed = at(&pixels, 7);
-  assert!(mixed[0].abs_diff(188) <= 1 && mixed[1] == 0, "{mixed:?}");
-  assert!(mixed[2].abs_diff(188) <= 1 && mixed[3] == 255, "{mixed:?}");
+  assert!(mixed[0].abs_diff(128) <= 1 && mixed[1] == 0, "{mixed:?}");
+  assert!(mixed[2].abs_diff(128) <= 1 && mixed[3] == 255, "{mixed:?}");
   let alone = at(&pixels, 12);
   assert!(
-    alone[..2] == [0, 0] && alone[2].abs_diff(188) <= 1,
+    alone[..2] == [0, 0] && alone[2].abs_diff(128) <= 1,
     "{alone:?}"
   );
   assert!(alone[3].abs_diff(128) <= 1, "{alone:?}");
@@ -1318,62 +1326,74 @@ fn a_color_that_covers_in_part_is_blended_over_what_was_drawn_before_it() {
   let mut under = Flat::default();
   under.rect([5.0, 0.0], [15.0, 10.0], blue);
   under.rect([0.0, 0.0], [10.0, 10.0], red);
-  assert_eq!(at(&flat_drawn(&target, &under), 7), [255, 0, 0, 255]);
+  assert_eq!(
+    at(&flat_drawn(&target, &under, one_to_one), 7),
+    [255, 0, 0, 255]
+  );
 }
 
 #[test]
 #[ignore = "needs a graphics device"]
 fn a_picture_on_an_object_is_drawn_as_the_flat_shapes_are() {
-  use potpot_controls::flat::Flat;
+  use potpot_controls::flat::{Dashes, Flat};
 
   let target = Target::new();
   let cube = Arc::new(Mesh::cuboid(Vec3::ZERO, Vec3::ONE));
-  let mut scene = panel(&mut numbers(5), &[cube]);
-  scene.objects.truncate(1);
-  // one point to a pixel, seen straight down
-  scene.size = Vec2::new(SIZE[0] as f32, SIZE[1] as f32);
-  scene.lean = Vec2::ZERO;
-  let screen = crate::parts::Screen::new(160.0, 100.0);
-  let middle = Vec3::new(200.0, 120.0, 0.0);
-  let mut shown = Flat::default();
-  let points = [[110.0, 150.0], [190.0, 90.0], [230.0, 140.0], [300.0, 70.0]];
-  shown.area(&points, 160.0, [1.0, 0.6, 0.1, 0.4]);
-  shown.rect([150.0, 80.0], [250.0, 120.0], [0.2, 0.9, 1.0, 0.3]);
-  shown.curve(&points, 2.5, [0.2, 0.9, 1.0, 1.0]);
-  shown.dashed(
-    &[[140.0, 75.0], [140.0, 165.0]],
-    1.0,
-    potpot_controls::flat::Dashes {
+  let screen = crate::parts::Screen::new(80.0, 50.0);
+  let face = Arc::new(screen.face());
+  let middle = Vec3::new(100.0, 60.0, 0.0);
+  // the shapes, moved by an offset in points
+  let shown = |[x, y]: [f32; 2]| {
+    let at = |[across, down]: [f32; 2]| [across + x, down + y];
+    let points = [[55.0, 75.0], [95.0, 45.0], [115.0, 70.0], [150.0, 35.0]].map(at);
+    let mut flat = Flat::default();
+    flat.area(&points, 80.0 + y, [1.0, 0.6, 0.1, 0.4]);
+    flat.rect(at([75.0, 40.0]), at([125.0, 60.0]), [0.2, 0.9, 1.0, 0.3]);
+    flat.curve(&points, 2.5, [0.2, 0.9, 1.0, 1.0]);
+    let dashes = Dashes {
       length: 4.0,
       gap: 3.0,
-    },
-    [1.0, 0.66, 0.14, 1.0],
-  );
-  scene.objects.push(Object {
-    mesh: Arc::new(screen.face()),
-    transform: Mat4::from_translation(middle),
-    material: Material::display_glass(Vec3::splat(0.02), 1.5),
-    picture: vec![Arc::new(shown.clone())],
-  });
-  let mut renderer = Renderer::new(&target.device, FORMAT);
-  renderer.prepare(&target.device, &target.queue, &scene, SIZE);
-  let picture = renderer.shown[1]
-    .as_ref()
-    .expect("the face shows its picture");
-  let [left, top, width, height] = picture.frame.place.map(|side| side as usize);
-  // the face and a pixel around it
-  assert_eq!([width, height], [162, 102]);
-  let texels = texels(&target, &picture.texture);
-  let whole = flat_drawn(&target, &shown);
-  for down in 0..height {
-    for across in 0..width {
-      let texel = &texels[(down * width + across) * 4..][..4];
-      let pixel = &whole[((top + down) * SIZE[0] as usize + left + across) * 4..][..4];
-      let apart = (texel.iter().zip(pixel)).map(|(one, other)| one.abs_diff(*other));
-      assert!(
-        apart.max() <= Some(1),
-        "{texel:?} and {pixel:?} at {across}, {down}"
-      );
+    };
+    let line = [at([70.0, 37.0]), at([70.0, 82.0])];
+    flat.dashed(&line, 1.0, dashes, [1.0, 0.66, 0.14, 1.0]);
+    flat
+  };
+  let [_, high] = face.bounds().expect("the face has corners");
+  // one point to a pixel seen straight down, and two seen leaning, where the picture lies a
+  // part of a pixel off the shapes' own pixels
+  for (pixels, lean) in [(1.0, Vec2::ZERO), (2.0, Vec2::new(0.1, -0.15))] {
+    let mut scene = panel(&mut numbers(5), &[Arc::clone(&cube)]);
+    scene.objects.truncate(1);
+    scene.size = Vec2::new(SIZE[0] as f32, SIZE[1] as f32) / pixels;
+    scene.lean = lean;
+    scene.objects.push(Object {
+      mesh: Arc::clone(&face),
+      transform: Mat4::from_translation(middle),
+      material: Material::display_glass(Vec3::splat(0.02), 1.5),
+      picture: vec![Arc::new(shown([0.0; 2]))],
+    });
+    let mut renderer = Renderer::new(&target.device, FORMAT);
+    renderer.prepare(&target.device, &target.queue, &scene, SIZE);
+    let picture = renderer.shown[1]
+      .as_ref()
+      .expect("the face shows its picture");
+    let [left, top, width, height] = picture.frame.place.map(|side| side as usize);
+    // the face and a pixel around it
+    assert!(width as f32 >= 80.0 * pixels + 2.0 && height as f32 >= 50.0 * pixels + 2.0);
+    let texels = texels(&target, &picture.texture);
+    // the picture lies where the face's top is seen, as far off as the lean takes it
+    let leaned = (lean * (middle.z + high.z)).to_array();
+    let whole = flat_drawn(&target, &shown(leaned), scene.size);
+    for down in 0..height {
+      for across in 0..width {
+        let texel = &texels[(down * width + across) * 4..][..4];
+        let pixel = &whole[((top + down) * SIZE[0] as usize + left + across) * 4..][..4];
+        let apart = (texel.iter().zip(pixel)).map(|(one, other)| one.abs_diff(*other));
+        assert!(
+          apart.max() <= Some(1),
+          "{texel:?} and {pixel:?} at {across}, {down}, {pixels} to a point"
+        );
+      }
     }
   }
 }

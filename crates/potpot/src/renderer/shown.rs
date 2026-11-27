@@ -11,11 +11,11 @@ use crate::scene::Object;
 
 /// The format of a picture's texture.
 ///
-/// Colors are blended over one another in linear light, as a [`FlatRenderer`] blends them on a
-/// target that encodes sRGB, and the texture holds them times their cover.
+/// The texture holds colors as they are to look, times their cover, which is how a
+/// [`FlatRenderer`] blends them.
 ///
 /// [`FlatRenderer`]: super::FlatRenderer
-pub(super) const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+pub(super) const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// Where an object's picture lies on the scene's picture.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -165,14 +165,7 @@ impl Painter<'_> {
     shown.frame = frame;
     let shapes = layers.iter().flat_map(|layer| layer.shapes());
     let place = [0, 0, width, height];
-    (shown.drawing).set(
-      self.device,
-      self.queue,
-      self.pipeline,
-      shapes,
-      frame.mapping,
-      place,
-    );
+    (shown.drawing).set(self.device, self.queue, shapes, frame.mapping, place);
     let view = (shown.texture).create_view(&wgpu::TextureViewDescriptor::default());
     let encoder = encoder.get_or_insert_with(|| {
       (self.device).create_command_encoder(&wgpu::CommandEncoderDescriptor {

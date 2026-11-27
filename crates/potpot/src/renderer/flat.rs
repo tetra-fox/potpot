@@ -157,27 +157,19 @@ struct Options {
   ///
   /// They are in the target's pixels.
   origin: [f32; 2],
-  /// The target's encoding and the edges' roughness.
-  ///
-  /// The first is one when the target encodes sRGB itself, and the second one when edges are
-  /// left rough.
+  /// One as its first number when edges are left rough.
   options: [f32; 4],
 }
 
 impl Options {
-  fn new(mapping: Mapping, place: [u32; 4], target_encodes: bool) -> Self {
+  fn new(mapping: Mapping, place: [u32; 4]) -> Self {
     let [left, top, width, height] = place.map(|side| side as f32);
     let ([across, down], [x, y]) = (mapping.scale, mapping.shift);
     Self {
       mapping: [across, down, x, y],
       pixels: [width, height],
       origin: [left, top],
-      options: [
-        f32::from(u8::from(target_encodes)),
-        f32::from(u8::from(mapping.rough)),
-        0.0,
-        0.0,
-      ],
+      options: [f32::from(u8::from(mapping.rough)), 0.0, 0.0, 0.0],
     }
   }
 }
@@ -187,7 +179,6 @@ impl Options {
 pub(crate) struct Pipeline {
   pipeline: wgpu::RenderPipeline,
   layout: wgpu::BindGroupLayout,
-  target_encodes: bool,
 }
 
 /// What one list of shapes is drawn from: its corners and its options.
@@ -210,7 +201,16 @@ pub(crate) struct Drawing {
 
 impl Pipeline {
   /// Creates the pipeline for targets of `target`'s format.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `target` encodes sRGB.
   pub(crate) fn new(device: &wgpu::Device, target: wgpu::TextureFormat) -> Self {
+    // colors are blended as they are to look, which a target that encodes them itself undoes
+    assert!(
+      !target.is_srgb(),
+      "the target holds colors as they are to look"
+    );
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
       label: Some("potpot flat"),
       source: wgpu::ShaderSource::Wgsl(source().into()),
@@ -264,11 +264,7 @@ impl Pipeline {
       multiview: None,
       cache: None,
     });
-    Self {
-      pipeline,
-      layout,
-      target_encodes: target.is_srgb(),
-    }
+    Self { pipeline, layout }
   }
 
   /// Creates a drawing with no shapes, to be drawn by this pipeline.
@@ -297,11 +293,6 @@ impl Pipeline {
       held_options: Options::zeroed(),
       place: [0; 4],
     }
-  }
-
-  /// Returns the options a drawing is drawn with.
-  fn options(&self, mapping: Mapping, place: [u32; 4]) -> Options {
-    Options::new(mapping, place, self.target_encodes)
   }
 
   /// Draws a drawing onto its place on the target.
@@ -384,12 +375,11 @@ impl Drawing {
     &mut self,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    pipeline: &Pipeline,
     shapes: impl IntoIterator<Item = &'a Shape>,
     mapping: Mapping,
     place: [u32; 4],
   ) {
-    self.set_options(queue, pipeline.options(mapping, place), place);
+    self.set_options(queue, Options::new(mapping, place), place);
     self.set_shapes(device, queue, shapes);
   }
 }
@@ -397,7 +387,8 @@ impl Drawing {
 /// The GPU resources that drawing [`Flat`] shapes over a panel takes.
 ///
 /// The shapes are drawn with their edges smoothed, in colors blended over what the target
-/// shows. [`FlatRenderer::prepare`] takes the shapes and [`FlatRenderer::render`] draws them.
+/// shows as they are to look, as a browser blends them. [`FlatRenderer::prepare`] takes the
+/// shapes and [`FlatRenderer::render`] draws them.
 #[derive(Debug)]
 pub struct FlatRenderer {
   pipeline: Pipeline,
@@ -411,7 +402,13 @@ pub struct FlatRenderer {
 impl FlatRenderer {
   /// Creates a renderer for targets of one format.
   ///
-  /// `target` is the format of the textures [`FlatRenderer::render`] draws onto.
+  /// `target` is the format of the textures [`FlatRenderer::render`] draws onto. It holds colors
+  /// as they are to look, as `Bgra8Unorm` does, and the shapes are blended in those colors. A
+  /// texture of an sRGB format is drawn onto through a view of its format without the encoding.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `target` encodes sRGB.
   pub fn new(device: &wgpu::Device, target: wgpu::TextureFormat) -> Self {
     let pipeline = Pipeline::new(device, target);
     Self {
@@ -427,7 +424,7 @@ impl FlatRenderer {
   /// is given as `place` is. Together they hold every pixel that the shapes are drawn otherwise
   /// in than the ones last prepared, and there is none if they are drawn the same.
   pub fn differing(&self, flat: &Flat, size: Point, place: [u32; 4]) -> Vec<[u32; 4]> {
-    let options = self.pipeline.options(Mapping::over(size, place), place);
+    let options = Options::new(Mapping::over(size, place), place);
     if options == self.drawing.held_options {
       differing(self.held.shapes(), flat.shapes(), &options)
     } else {
@@ -447,7 +444,7 @@ impl FlatRenderer {
     size: Point,
     place: [u32; 4],
   ) {
-    let options = self.pipeline.options(Mapping::over(size, place), place);
+    let options = Options::new(Mapping::over(size, place), place);
     self.drawing.set_options(queue, options, place);
     if *flat != self.held {
       self.drawing.set_shapes(device, queue, flat.shapes());
@@ -578,7 +575,7 @@ mod tests {
   fn shapes_differ_in_a_rectangle_around_those_that_are_not_the_same() {
     // a panel of 100 by 50 points on 200 by 100 pixels, 10 and 20 into the target
     let place = [10, 20, 200, 100];
-    let options = Options::new(Mapping::over([100.0, 50.0], place), place, false);
+    let options = Options::new(Mapping::over([100.0, 50.0], place), place);
     let ink = [1.0; 4];
     let mut before = Flat::default();
     before.rect([0.0, 0.0], [100.0, 50.0], ink);
@@ -631,7 +628,7 @@ mod tests {
   #[test]
   fn shapes_that_differ_far_apart_differ_in_rectangles_of_their_own() {
     let place = [0, 0, 400, 200];
-    let options = Options::new(Mapping::over([400.0, 200.0], place), place, false);
+    let options = Options::new(Mapping::over([400.0, 200.0], place), place);
     let ink = [1.0; 4];
     // two values written far apart with a line between them, the first of them a stroke longer
     let written = |first: &[f32], second: f32| {

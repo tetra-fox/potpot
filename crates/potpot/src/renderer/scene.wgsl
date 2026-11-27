@@ -37,7 +37,7 @@ struct Lamp {
 @group(0) @binding(1) var<uniform> refine: vec4<u32>;
 // how many samples each pixel's mean holds so far, which is the index of the sample being drawn
 @group(3) @binding(0) var counted: texture_2d<f32>;
-// the picture the object being drawn shows, its color in linear light times its cover
+// the picture the object being drawn shows, its color as it is to look times its cover
 @group(2) @binding(0) var picture_map: texture_2d<f32>;
 @group(1) @binding(0) var shadow_map: texture_depth_2d;
 @group(1) @binding(1) var shadow_sampler: sampler_comparison;
@@ -332,11 +332,12 @@ fn picture_at(world: vec3<f32>, picture: vec4<f32>) -> vec4<f32> {
   return textureLoad(picture_map, vec2<i32>(texel), 0);
 }
 
-// the base color and emission of a surface with its picture over it: the color covered by
-// the picture's cover, and lit by itself as far as the picture covers
+// the base color in linear light and the emission of a surface with its picture over it: the
+// color covered by the picture's cover, blended as it is to look as the picture's own colors
+// are, and lit by itself as far as the picture covers
 fn pictured(lit: Lit) -> vec4<f32> {
   let shown = picture_at(lit.world, lit.picture);
-  let base = decode(lit.color.rgb) * (1.0 - shown.a) + shown.rgb;
+  let base = decode(lit.color.rgb * (1.0 - shown.a) + shown.rgb);
   return vec4<f32>(base, lit.color.a + (1.0 - lit.color.a) * shown.a);
 }
 

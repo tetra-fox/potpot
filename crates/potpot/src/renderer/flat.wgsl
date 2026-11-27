@@ -10,7 +10,7 @@ struct Flat {
   pixels: vec2<f32>,
   // the left and top of that place, in the target's pixels
   origin: vec2<f32>,
-  // x one when the target encodes srgb itself, y one when edges are left rough
+  // x one when edges are left rough
   options: vec4<f32>,
 }
 
@@ -83,12 +83,6 @@ fn vertex(
   return corner;
 }
 
-fn decode(encoded: vec3<f32>) -> vec3<f32> {
-  let low = encoded / 12.92;
-  let high = pow((encoded + 0.055) / 1.055, vec3<f32>(2.4));
-  return select(high, low, encoded <= vec3<f32>(0.04045));
-}
-
 // how much of a pixel is under the sloping edge of a span. `across` is how far under the
 // edge's line the pixel's middle is, and `past` how far under the edge's highest and lowest point
 fn under(across: f32, past: vec2<f32>) -> f32 {
@@ -105,10 +99,6 @@ fn past_cut(pixel: vec2<f32>, joint: vec2<f32>, way: vec2<f32>) -> f32 {
 @fragment
 fn fragment(corner: Corner) -> @location(0) vec4<f32> {
   var color = corner.color;
-  // colors are given as they are to look, which a target that encodes them itself wants undone
-  if flat.options.x > 0.5 {
-    color = vec4<f32>(decode(color.rgb), color.a);
-  }
   // how much of the pixel the shape covers
   var covered = 1.0;
   if corner.kind == SPAN {
@@ -129,7 +119,7 @@ fn fragment(corner: Corner) -> @location(0) vec4<f32> {
       covered = 0.0;
     }
   }
-  if flat.options.y > 0.5 {
+  if flat.options.x > 0.5 {
     covered = step(0.5, covered);
   }
   color.a *= covered;
