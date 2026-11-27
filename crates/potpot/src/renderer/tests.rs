@@ -51,6 +51,14 @@ impl Target {
     let adapter =
       pollster::block_on(INSTANCE.request_adapter(&wgpu::RequestAdapterOptions::default()))
         .expect("a graphics adapter is found");
+    // a test drawn on the cpu draws otherwise than on a graphics card, in ways the tests do not
+    // allow for, so it fails here and says why
+    let info = adapter.get_info();
+    assert!(
+      info.device_type != wgpu::DeviceType::Cpu,
+      "the tests draw on a graphics card, and the adapter is {}",
+      info.name
+    );
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
       required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
       ..Default::default()

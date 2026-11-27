@@ -220,12 +220,23 @@ fn adapter_of(instance: &wgpu::Instance) -> Result<wgpu::Adapter, wgpu::RequestA
 /// With the NVIDIA 595 Vulkan driver, `vkDestroyDevice` can join a driver thread that never
 /// exits while another device is in use, and every other thread then stops at the Vulkan
 /// loader's lock or at one of the driver's. So the tests' devices live one at a time.
+///
+/// # Panics
+///
+/// Panics if the adapter a device is opened on is the CPU's, which the tests do not draw on.
 // TODO: let the tests' devices live at once when the driver no longer deadlocks
 #[cfg(test)]
 pub(crate) fn alone() -> std::sync::MutexGuard<'static, ()> {
   static ONE_DEVICE: Mutex<()> = Mutex::new(());
   // a test that failed while it held the lock has let go of its devices all the same
-  ONE_DEVICE.lock().unwrap_or_else(PoisonError::into_inner)
+  let held = ONE_DEVICE.lock().unwrap_or_else(PoisonError::into_inner);
+  let info = adapter().expect("an adapter is found").get_info();
+  assert!(
+    info.device_type != wgpu::DeviceType::Cpu,
+    "the tests draw on a graphics card, and the adapter is {}",
+    info.name
+  );
+  held
 }
 
 #[cfg(test)]
@@ -280,6 +291,7 @@ mod tests {
   #[test]
   #[ignore = "needs a graphics device"]
   fn every_asking_for_an_adapter_gets_the_same_one() {
+    let _alone = alone();
     // more askings than the nvidia driver on linux lets go of instances with a graphics card
     let name = || adapter().expect("an adapter is found").get_info().name;
     let first = name();
