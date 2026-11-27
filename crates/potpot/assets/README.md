@@ -36,9 +36,9 @@ Haven, under CC0, chosen from its studio category. The 1k file is
 | Powder coat | [Metal027](https://ambientcg.com/view?id=Metal027) |
 
 - The ambientCG sets are under CC0, from their 1K JPG downloads
-- ambientCG has no hammertone, so the bake makes one: small shallow round dishes, most small
-  and a few large, that run larger in some places and meet in raised rims. The color is nearly
-  even, so the light on the dishes shows the finish, and `Material::hammertone` draws it as
-  metal, for the aluminium flake
+- ambientCG has no hammertone, so the bake makes one: a flat even base with low flat-topped
+  islands on it, a few percent greyer, of many sizes, clustered, with ragged edges that join.
+  The light shows each island only as a thin bright edge and a thin crease, and
+  `Material::hammertone` draws it as metal, for the aluminium flake
 - Metal010's color and roughness are divided by their mean over 24 texels around, which
   takes out its stains and keeps the brushing

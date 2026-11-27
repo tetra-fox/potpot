@@ -19,12 +19,12 @@ pub(super) const MIPS: u32 = 10;
 /// The mean of each set's color, in linear light.
 pub(super) const MEAN_COLOR: [[f32; 3]; 4] = [
   [0.05037755, 0.016580101, 0.004772253],
-  [0.9874925, 0.9874925, 0.9874925],
+  [0.9534217, 0.9534217, 0.9534217],
   [0.23380458, 0.26117778, 0.2894069],
   [0.027468812, 0.026291125, 0.03521369],
 ];
 /// The mean of each set's roughness.
-pub(super) const ROUGHNESS_MEAN: [f32; 4] = [0.48566517, 0.40442985, 0.4297225, 0.6491278];
+pub(super) const ROUGHNESS_MEAN: [f32; 4] = [0.48566517, 0.43837386, 0.4297225, 0.6491278];
 /// The color maps as [`wgpu::TextureFormat::Bc7RgbaUnormSrgb`].
 ///
 /// They are mip after mip, each mip's layers in turn, each layer in rows of blocks from the
