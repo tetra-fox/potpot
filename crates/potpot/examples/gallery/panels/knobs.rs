@@ -229,7 +229,8 @@ pub fn turn(index: usize) -> f32 {
 
 /// Returns the transform of a knob of the rows at a turn.
 ///
-/// The turn runs from zero to one. The parts that turn with the knob have it, and nothing else on the panel does.
+/// The turn runs from zero to one. The parts that turn with the knob have it, and nothing else
+/// on the panel does.
 pub fn turned(index: usize, turn: f32) -> Mat4 {
   let (x, y) = middle(index);
   parts::knob_transform(x, y, turn, parts::KNOB_SWEEP)

@@ -32,9 +32,9 @@ pub struct Material {
   pub emission: f32,
   /// The radius the emission fades over.
   ///
-  /// At it the emission has faded to about two thirds. The radius is measured from the object's own z axis, for something lit from inside by one
-  /// small light under its middle. Far past it the emission settles at about four tenths. Zero
-  /// glows evenly.
+  /// At it the emission has faded to about two thirds. The radius is measured from the
+  /// object's own z axis, for something lit from inside by one small light under its middle.
+  /// Far past it the emission settles at about four tenths. Zero glows evenly.
   pub emission_radius: f32,
   /// How rough the surface is with fine grain.
   ///
