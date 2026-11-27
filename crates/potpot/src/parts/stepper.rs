@@ -2,7 +2,9 @@
 
 use glam::{Mat4, Vec2, Vec3};
 
+use super::INK;
 use super::button::Button;
+use super::legend::{END, add_stroke};
 use super::panel::frame;
 use crate::mesh::Mesh;
 
@@ -99,10 +101,36 @@ impl Stepper {
     self.key.transform(at.x, at.y, f32::from(u8::from(held)))
   }
 
+  /// Returns the minus and the plus printed on the keys.
+  ///
+  /// They come in that order. Each is printed as lettering is, two fifths of a key wide, with
+  /// its middle at the origin.
+  pub fn signs(&self) -> [Mesh; 2] {
+    let reach = self.key.width.min(self.key.length) * 0.2;
+    let weight = reach * 0.45;
+    let mut minus = Mesh::default();
+    add_stroke(
+      &mut minus,
+      [Vec2::X * -reach, Vec2::X * reach],
+      weight,
+      INK,
+      END,
+    );
+    let mut plus = minus.clone();
+    add_stroke(
+      &mut plus,
+      [Vec2::Y * -reach, Vec2::Y * reach],
+      weight,
+      INK,
+      END,
+    );
+    [minus, plus]
+  }
+
   /// Returns the transform of the sign printed on a key.
   ///
-  /// The sign is lettering made as [`legend`](super::legend) makes it, a minus for the key that
-  /// moves the value back and a plus for the other, which goes on the key's top and in with it.
+  /// The sign is one of [`Stepper::signs`], the minus for the key that moves the value back and
+  /// the plus for the other, which goes on the key's top and in with it.
   pub fn sign(&self, x: f32, y: f32, arrow: Arrow, held: bool) -> Mat4 {
     self.transform(x, y, arrow, held) * Mat4::from_translation(Vec3::Z * self.key.top())
   }
@@ -132,5 +160,21 @@ mod tests {
     // a held key goes in, and its sign with it
     let held = stepper.sign(0.0, 0.0, Arrow::On, true).w_axis.z;
     assert!(held < stepper.key.top() && held > 0.0);
+  }
+
+  #[test]
+  fn each_sign_fills_between_a_third_and_a_half_of_its_key() {
+    let stepper = Stepper::new(60.0, 22.0, 7.0);
+    let [minus, plus] = stepper.signs();
+    let reach = |mesh: &Mesh, axis: usize| {
+      (mesh.vertices.iter())
+        .map(|vertex| vertex.position[axis].abs())
+        .fold(0.0, f32::max)
+    };
+    let share = reach(&plus, 0) * 2.0 / stepper.key.width;
+    assert!((1.0 / 3.0..=0.5).contains(&share), "{share}");
+    // the plus is as tall as it is wide, and the minus as wide as the plus
+    assert!((reach(&plus, 1) - reach(&plus, 0)).abs() < 1e-5);
+    assert_eq!(reach(&minus, 0), reach(&plus, 0));
   }
 }
