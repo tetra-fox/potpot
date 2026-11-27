@@ -181,6 +181,8 @@ fn stop(stopped: &mut bool, why: impl std::fmt::Display) {
 /// Everything a frame shows that can change between frames.
 #[derive(Clone, Debug)]
 struct Frame {
+  /// The page shown.
+  page: usize,
   /// The value of each parameter.
   values: Vec<f32>,
   /// The number in each slot of the feed.
@@ -200,11 +202,12 @@ struct Frame {
 impl Frame {
   /// Returns the first frame of a panel.
   ///
-  /// Nothing is typed, chosen or held in it. `values` is where each parameter stands. The feed
-  /// and the notes are looked at afresh. The window is `window` pixels, on a display with
-  /// `display_scale` of them to a point.
+  /// It shows the page the window opens on, and nothing is typed, chosen or held in it.
+  /// `values` is where each parameter stands. The feed and the notes are looked at afresh. The
+  /// window is `window` pixels, on a display with `display_scale` of them to a point.
   fn first(values: Vec<f32>, settings: &Settings, window: [u32; 2], display_scale: f64) -> Self {
     Self {
+      page: settings.page,
       values,
       feed: settings.feed.read(),
       window,
@@ -382,11 +385,20 @@ struct Rows {
 /// `now`, which is what the panel is like now.
 fn due(shown: Option<&Frame>, now: &Frame) -> bool {
   shown.is_none_or(|shown| {
-    (&shown.values, shown.window, shown.scale) != (&now.values, now.window, now.scale)
+    (shown.page, &shown.values, shown.window, shown.scale)
+      != (now.page, &now.values, now.window, now.scale)
       || !same(&shown.feed, &now.feed)
       || (&shown.edit, &shown.menu, shown.held) != (&now.edit, &now.menu, now.held)
       || shown.notes != now.notes
   })
+}
+
+/// Returns whether a frame may be put in the window in parts.
+///
+/// It may where the window holds `shown`, the frame before it, and that shows the same page as
+/// `now`. A frame of another page is drawn and put in the window whole.
+fn in_parts(shown: Option<&Frame>, now: &Frame) -> bool {
+  shown.is_some_and(|shown| shown.page == now.page)
 }
 
 /// Gathers the parts of a window where a frame is new.
@@ -493,6 +505,7 @@ fn laid_out<S: Skin>(
     format: FORMAT,
   };
   let seen = View {
+    page: now.page,
     controls: &interaction.readings(&now.values),
     values: &now.values,
     feed: &now.feed,
@@ -663,6 +676,7 @@ impl<S: Skin> State<S> {
   /// The parameters, the feed and the notes are looked at afresh.
   fn now(&mut self, hosts: &[Host], settings: &Settings) -> Frame {
     Frame {
+      page: self.interaction.page(),
       values: self.values(hosts),
       feed: settings.feed.read(),
       window: self.window,
@@ -728,7 +742,7 @@ impl<S: Skin> Window<S> {
         (param.dial, host)
       })
       .unzip();
-    let interaction = Interaction::new(dials, controls, settings.size, settings.scales);
+    let interaction = settings.interaction(dials, controls);
     let values: Vec<f32> = hosts.iter().map(|host| (host.value)()).collect();
     let first = Frame::first(values, &settings, window, size.scale_factor);
     // the editor opens only if the device can build all it is drawn with and lay out the panel
@@ -1032,9 +1046,9 @@ impl<S: Skin> Window<S> {
 
     let place = fitted(window, size);
     let over = laid_out(graphics, skin, interaction, settings, &now);
-    // the window holds the frame drawn before this one, unless it has had none since it was
-    // sized or shown. a skin that names where its own picture differs is read back there alone
-    let named = skin.changed().filter(|_| shown.is_some());
+    // a skin that names where its own picture differs is read back there alone, while the
+    // window holds the frame before this one
+    let named = skin.changed().filter(|_| in_parts(shown.as_ref(), &now));
     let patched = named.is_some_and(|named| {
       let lettered = flat.differing(&over, size, place);
       patches(parts, named, &lettered, place, window)
@@ -1425,6 +1439,7 @@ mod tests {
   /// Its window is of the panel's own size.
   fn frame(values: [f32; 3]) -> Frame {
     Frame {
+      page: 0,
       values: values.into(),
       feed: Vec::new(),
       window: [750, 375],
@@ -1504,6 +1519,24 @@ mod tests {
     assert!(due(Some(&fed(0.5)), &fed(0.75)));
     assert!(!due(Some(&fed(0.5)), &fed(0.5)));
     assert!(!due(Some(&fed(f32::NAN)), &fed(f32::NAN)));
+  }
+
+  #[test]
+  fn a_frame_of_another_page_is_drawn_and_put_in_the_window_whole() {
+    let shown = frame([0.5, 0.5, 1.0]);
+    let switched = Frame {
+      page: 1,
+      ..shown.clone()
+    };
+    // a switch is a frame to draw, though no value changed
+    assert!(due(Some(&shown), &switched));
+    assert!(!due(Some(&switched), &switched));
+    // the next frame of the same page goes in where it is new, and one of another page whole
+    assert!(in_parts(Some(&shown), &shown));
+    assert!(!in_parts(Some(&shown), &switched));
+    assert!(!in_parts(Some(&switched), &shown));
+    // as does any frame after the window was sized or shown
+    assert!(!in_parts(None, &shown));
   }
 
   #[test]

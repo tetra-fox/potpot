@@ -640,6 +640,8 @@ mod tests {
       title: String::new(),
       size: [200.0, 100.0],
       scales: [1.0, 2.0],
+      pages: 1,
+      page: 0,
       menu: MenuLook::default(),
       grip: GripLook::default(),
       feed: Feed::default(),

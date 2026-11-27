@@ -36,6 +36,10 @@ pub struct Gpu<'a> {
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub struct View<'a> {
+  /// The page shown, by its place among the panel's pages.
+  ///
+  /// A skin draws this page and the controls on it, and finds targets on it alone.
+  pub page: usize,
   /// The [`Reading`] each control shows, in the order of the panel's controls.
   pub controls: &'a [Reading],
   /// The value of each parameter, in the order of the panel's parameters.

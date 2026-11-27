@@ -11,7 +11,7 @@ use baseview::dpi::LogicalSize;
 use baseview::{HandlerError, WindowSettings, WindowWaker};
 use potpot_controls::Point;
 use potpot_controls::furniture::{GripLook, MenuLook};
-use potpot_controls::interaction::{Control, Dial, Key};
+use potpot_controls::interaction::{Control, Dial, Interaction, Key};
 use tracing::error;
 use wgpu::rwh::HasWindowHandle;
 
@@ -24,8 +24,8 @@ use crate::window::{Guarded, Window};
 /// The settings a panel's window opens with.
 ///
 /// They are what there is to say of the window before anything is drawn in it.
-/// [`Settings::new`] takes the title and the size. The scales, the looks of the menu and the
-/// grip, the feed and the notes are changed a field at a time.
+/// [`Settings::new`] takes the title and the size. The scales, the pages, the looks of the menu
+/// and the grip, the feed and the notes are changed a field at a time.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct Settings {
@@ -37,6 +37,15 @@ pub struct Settings {
   pub size: Point,
   /// The least and the most multiples of the panel's own size the window is.
   pub scales: [f32; 2],
+  /// The number of pages the panel has.
+  ///
+  /// One is shown at a time, and a [`Target::Page`](potpot_controls::interaction::Target::Page)
+  /// shows another.
+  pub pages: usize,
+  /// The page the window opens on.
+  ///
+  /// It is known by its place among the panel's pages.
+  pub page: usize,
   /// The look of a control's menu.
   pub menu: MenuLook,
   /// The look of the grip the window is pulled larger and smaller by.
@@ -50,18 +59,41 @@ pub struct Settings {
 impl Settings {
   /// Creates the settings of a window called `title` for a panel of `size`.
   ///
-  /// The window is pulled from half the panel's own size to three times it, the menu and the
-  /// grip look as they do by default, the feed has no slots, and nothing else has the notes.
+  /// The window is pulled from half the panel's own size to three times it, the panel has one
+  /// page, the menu and the grip look as they do by default, the feed has no slots, and nothing
+  /// else has the notes.
   pub fn new(title: impl Into<String>, size: Point) -> Self {
     Self {
       title: title.into(),
       size,
       scales: [0.5, 3.0],
+      pages: 1,
+      page: 0,
       menu: MenuLook::default(),
       grip: GripLook::default(),
       feed: Feed::default(),
       notes: Notes::new(),
     }
+  }
+
+  /// Returns the behaviour of the panel's controls.
+  ///
+  /// The panel has `controls` on the parameters `dials` describe.
+  ///
+  /// # Panics
+  ///
+  /// Panics if a control names a parameter that `dials` has none for, or names one twice.
+  ///
+  /// Panics if a control is on a page past the last, or the window opens on one.
+  pub(crate) fn interaction(&self, dials: Vec<Dial>, controls: Vec<Control>) -> Interaction {
+    Interaction::paged(
+      dials,
+      controls,
+      self.size,
+      self.scales,
+      self.pages,
+      self.page,
+    )
   }
 
   /// Returns the scale `remembered` holds, within the panel's scales.

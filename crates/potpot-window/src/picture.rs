@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use potpot_controls::interaction::{Control, Interaction};
+use potpot_controls::interaction::Control;
 
 use crate::graphics::Graphics;
 use crate::open::{Param, Settings, check_size};
@@ -46,9 +46,10 @@ impl fmt::Debug for Picture {
 /// `scale` is not held to [`Settings::scales`], which are the sizes a window is pulled to: a
 /// picture can be a thumbnail or larger than any window.
 ///
-/// The frame is a window's first. Each parameter stands where its [`Param::value`] has it, the
-/// [`Feed`](crate::Feed) holds what was last written to it, and the notes shown with
-/// [`Notes::show`](crate::Notes::show) are down. Nothing is typed, held or chosen from a menu.
+/// The frame is a window's first. It shows the page [`Settings::page`] names, each parameter
+/// stands where its [`Param::value`] has it, the [`Feed`](crate::Feed) holds what was last
+/// written to it, and the notes shown with [`Notes::show`](crate::Notes::show) are down.
+/// Nothing is typed, held or chosen from a menu.
 ///
 /// No display server is asked anything. The frame is drawn with a graphics device of its own,
 /// which is let go of before this returns.
@@ -69,6 +70,8 @@ impl fmt::Debug for Picture {
 /// # Panics
 ///
 /// Panics if a control names a parameter that `params` has none for, or names one twice.
+///
+/// Panics if a control is on a page past the last of `settings`, or `settings` opens on one.
 pub fn picture<S: Skin>(
   settings: &Settings,
   params: Vec<Param>,
@@ -83,7 +86,7 @@ pub fn picture<S: Skin>(
   let size = settings.size.map(|side| (side * scale).round() as u32);
   let values = params.iter().map(|param| (param.value)()).collect();
   let dials = params.into_iter().map(|param| param.dial).collect();
-  let interaction = Interaction::new(dials, controls, settings.size, settings.scales);
+  let interaction = settings.interaction(dials, controls);
   let pictured = pictured(&graphics, settings, &interaction, values, size, skin)?;
   Ok(Picture {
     size,
