@@ -105,7 +105,7 @@ pub enum Anisotropy {
 pub enum Textures {
   /// Walnut, as on the cheeks of a synthesizer.
   Walnut(f32),
-  /// Paint with a hammered, dimpled relief.
+  /// Metallic paint dried into plateaus split by fine crevices.
   Hammertone(f32),
   /// Aluminium brushed in straight lines along the panel's x.
   BrushedAluminium(f32),
@@ -249,10 +249,12 @@ impl Material {
 
   /// Creates hammered enamel.
   ///
-  /// The panels of a Neve or a Pultec are painted so.
+  /// The paint holds aluminium flake, so it is drawn as metal in `color`: the flake mirrors
+  /// with the paint's tint, softly. The panels of old test gear and radios are painted so.
   pub fn hammertone(color: Vec3) -> Self {
     Self {
-      roughness: 0.4,
+      metallic: 1.0,
+      roughness: 0.45,
       textures: Some(Textures::Hammertone(HAMMERTONE_TILE)),
       ..Self::matte(color)
     }

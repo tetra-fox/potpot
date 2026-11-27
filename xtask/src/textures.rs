@@ -42,7 +42,7 @@ enum Source {
   /// `even` takes out the variation wider than [`EVEN_REACH`], such as stains, from its color
   /// and roughness, and keeps the fine detail.
   Photo { id: &'static str, even: bool },
-  /// Hammered paint, made by the bake: soft dents over two tiling fields of cells.
+  /// Hammered paint, made by the bake: plateaus split by crevices over two tiling fields.
   Hammered,
 }
 
@@ -52,10 +52,16 @@ const SOURCE_SIDE: usize = 1024;
 ///
 /// A set's color and roughness are divided by their mean over this many texels around each.
 const EVEN_REACH: usize = 24;
-/// The cells across one tile of hammered paint, of the larger dents and the smaller.
-const DIMPLES: [usize; 2] = [67, 149];
-/// How steep the dents of hammered paint are, as the slope of a dent one cell wide.
-const DENT_DEPTH: f32 = 0.015;
+/// The cells across one tile of hammered paint, of its two fields.
+///
+/// The first is of the plateaus, and the second splits some of them.
+const CELLS: [usize; 2] = [70, 150];
+/// How far from a border a crevice of hammered paint reaches, as a share of a cell.
+const CREVICE: f32 = 0.06;
+/// The most a plateau of hammered paint is tilted, as the slope of its facet.
+const TILT: f32 = 0.035;
+/// How steep the crevices of hammered paint are, as the slope across one large cell.
+const CREVICE_DEPTH: f32 = 0.006;
 /// The folder the sources are in, each `<ID>_1K-JPG_<map>.jpg` as ambientCG names them.
 const SOURCES: &str = "crates/potpot/assets/source";
 /// The color maps of every set, as one array.
@@ -250,59 +256,90 @@ fn blurred(map: &Map, dx: usize, dy: usize) -> Map {
 
 /// Returns the color, the way the relief faces and the roughness of hammered paint.
 ///
-/// The relief is a soft round dent at each point of two tiling fields of points, one of larger
-/// dents and one of smaller, shallower ones. The paint is even but for a slight drift, and a
-/// little rougher deep in the dents, where it settles thicker.
+/// Hammered paint dries into flat plateaus, one around each point of a tiling field of cells,
+/// split by thin crevices where two cells meet. A finer field splits some plateaus again with
+/// fainter crevices. Each plateau is a facet tilted a little its own way and is a little
+/// lighter or darker than the next, and the crevices are rough and dark where the paint pools.
 fn hammered() -> (Map, Map, Map) {
   let side = SOURCE_SIDE;
-  let heights: Vec<f32> = (0..side * side)
+  // for each texel, how far down toward a crevice it is, from zero on a plateau to one at a
+  // crevice's floor, how dark the crevice is there, the tone of the plateau and its tilt. the
+  // dark of a crevice is as strong as its cell has it, so the crevices do not all join into
+  // one net, and the finer field splits only some plateaus
+  let texels: Vec<(f32, f32, f32, Vec2)> = (0..side * side)
     .map(|index| {
       let at = Vec2::new((index % side) as f32, (index / side) as f32) / side as f32;
-      -dents(at, DIMPLES[0], 1) - 0.2 * dents(at, DIMPLES[1], 2)
+      let (large, cell) = cells(at, CELLS[0], 1);
+      let (small, part) = cells(at, CELLS[1], 2);
+      let strength = 0.35 + 0.65 * scattered(cell[0], cell[1], 9);
+      let split = 0.6 * scattered(part[0], part[1], 11);
+      let down = |border: f32| 1.0 - smoothstep(0.0, CREVICE, border);
+      let deep = down(large).max(down(small) * split);
+      let dark = (down(large) * strength).max(down(small) * split);
+      let random = |seed| scattered(cell[0], cell[1], seed) * 2.0 - 1.0;
+      let tilt = Vec2::new(random(13), random(17)) * TILT;
+      (
+        deep,
+        dark,
+        0.92 + 0.16 * scattered(cell[0], cell[1], 5),
+        tilt,
+      )
     })
     .collect();
-  let height = |x: usize, y: usize| heights[(y % side) * side + x % side];
-  // the slopes are taken over two texels and given in heights a larger cell's width
-  let per_cell = (side / DIMPLES[0]) as f32 / 2.0;
+  let depth = |x: usize, y: usize| texels[(y % side) * side + x % side].0;
+  // the slopes over two texels, in depths a large cell's width
+  let per_cell = (side / CELLS[0]) as f32 / 2.0;
   let mut bent = Vec::with_capacity(side * side);
   let mut rough = Vec::with_capacity(side * side);
   let mut color = Vec::with_capacity(side * side);
-  for index in 0..side * side {
+  for (index, &(deep, dark, tone, tilt)) in texels.iter().enumerate() {
     let (x, y) = (index % side, index / side);
-    let across = (height(x + 1, y) - height(x + side - 1, y)) * per_cell * DENT_DEPTH;
-    // the picture's y runs up, its rows down
-    let up = (height(x, y + side - 1) - height(x, y + 1)) * per_cell * DENT_DEPTH;
-    bent.push(Vec3::new(-across, -up, 1.0).normalize());
-    let deep = (-height(x, y)).clamp(0.0, 1.0);
-    rough.push(Vec3::splat(0.45 + 0.08 * deep));
-    let drift = dents(Vec2::new(x as f32, y as f32) / side as f32, 5, 3);
-    color.push(Vec3::splat(0.6 * (0.98 + 0.02 * drift)));
+    // the surface goes down into a crevice, and the picture's y runs up, its rows down. each
+    // plateau is a facet tilted its own way, which a light catches on some and not others
+    let across = -(depth(x + 1, y) - depth(x + side - 1, y)) * per_cell * CREVICE_DEPTH;
+    let up = -(depth(x, y + side - 1) - depth(x, y + 1)) * per_cell * CREVICE_DEPTH;
+    let facet = tilt * (1.0 - deep);
+    bent.push(Vec3::new(facet.x - across, facet.y - up, 1.0).normalize());
+    rough.push(Vec3::splat(0.3 + 0.35 * dark));
+    color.push(Vec3::splat(tone * (1.0 - 0.6 * dark)));
   }
   let map = |texels| Map { side, texels };
   (map(color), map(bent), map(rough))
 }
 
-/// Returns how deep a tiling field of soft round dents is at a place on the unit square.
+/// Returns how far a place on the unit square is from the border of its cell, and the cell.
 ///
-/// The field has `cells` cells a side, each holding one dent placed at random by `seed`, half
-/// a cell wide. It wraps, so it is the same at opposite edges of the square. A dent is one deep
-/// at its middle.
-fn dents(at: Vec2, cells: usize, seed: u32) -> f32 {
+/// The cells are those of a tiling field of `cells` points a side, each placed at random by
+/// `seed`, and a place is in the cell of the point nearest it. The distance is the second
+/// nearest point's less the nearest's, as a share of a cell, which is zero on a border. The
+/// field wraps, so it is the same at opposite edges of the square.
+fn cells(at: Vec2, cells: usize, seed: u32) -> (f32, [u32; 2]) {
   let scaled = at * cells as f32;
   let (cx, cy) = (scaled.x.floor() as i64, scaled.y.floor() as i64);
   let wrap = |n: i64| n.rem_euclid(cells as i64) as u32;
-  let mut depth = 0.0;
+  let (mut nearest, mut next, mut cell) = (f32::MAX, f32::MAX, [0, 0]);
   for dy in -2..=2 {
     for dx in -2..=2 {
       let (x, y) = (cx + dx, cy + dy);
-      let middle = Vec2::new(
+      let point = Vec2::new(
         x as f32 + scattered(wrap(x), wrap(y), seed),
         y as f32 + scattered(wrap(x), wrap(y), seed + 7),
       );
-      depth += (-(middle.distance_squared(scaled)) / 0.25).exp();
+      let away = point.distance(scaled);
+      if away < nearest {
+        (next, nearest, cell) = (nearest, away, [wrap(x), wrap(y)]);
+      } else if away < next {
+        next = away;
+      }
     }
   }
-  depth
+  (next - nearest, cell)
+}
+
+/// Returns zero below `low`, one above `high`, and a smooth step between.
+fn smoothstep(low: f32, high: f32, at: f32) -> f32 {
+  let t = ((at - low) / (high - low)).clamp(0.0, 1.0);
+  t * t * (3.0 - 2.0 * t)
 }
 
 /// Returns a number from zero to one, the same every time for a cell and seed.
@@ -440,13 +477,13 @@ mod tests {
   use super::*;
 
   #[test]
-  fn the_dents_tile() {
-    for cells in DIMPLES {
+  fn the_cells_tile() {
+    for count in CELLS {
       for along in [0.0, 0.13, 0.5, 0.91] {
         let (left, right) = (Vec2::new(0.0, along), Vec2::new(1.0, along));
         let (top, foot) = (Vec2::new(along, 0.0), Vec2::new(along, 1.0));
-        assert!((dents(left, cells, 1) - dents(right, cells, 1)).abs() < 1e-4);
-        assert!((dents(top, cells, 1) - dents(foot, cells, 1)).abs() < 1e-4);
+        assert!((cells(left, count, 1).0 - cells(right, count, 1).0).abs() < 1e-4);
+        assert!((cells(top, count, 1).0 - cells(foot, count, 1).0).abs() < 1e-4);
       }
     }
   }

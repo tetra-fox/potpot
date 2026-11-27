@@ -36,8 +36,9 @@ Haven, under CC0, chosen from its studio category. The 1k file is
 | Powder coat | [Metal027](https://ambientcg.com/view?id=Metal027) |
 
 - The ambientCG sets are under CC0, from their 1K JPG downloads
-- ambientCG has no hammertone, so the bake makes one: a soft round dent at a random point in
-  each cell of two tiling fields of 67 and 149 cells a side, even paint with a slight drift,
-  and a little more roughness deep in the dents
+- ambientCG has no hammertone, so the bake makes one: flat plateaus around the points of two
+  tiling fields of 70 and 150 cells a side, split by thin dark crevices where cells meet. Each
+  plateau is a facet tilted its own way and a little lighter or darker than the next, and the
+  crevices are rougher. `Material::hammertone` draws it as metal, for the aluminium flake
 - Metal010's color and roughness are divided by their mean over 24 texels around, which
   takes out its stains and keeps the brushing

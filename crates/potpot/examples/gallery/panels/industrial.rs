@@ -62,7 +62,7 @@ impl Build {
 pub(super) fn industrial(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let mut build = Build::default();
-  let metal = Material::hammertone(GUNMETAL * 0.7);
+  let metal = Material::hammertone(GUNMETAL);
   build.put(parts::plate(width, height, 6.0), Mat4::IDENTITY, metal);
 
   // a rack ear at each side, with a handle between two screws
