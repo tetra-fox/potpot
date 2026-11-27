@@ -65,6 +65,8 @@ const WELL: Color = [0.05, 0.055, 0.065, 1.0];
 const LINE: Color = [0.42, 0.45, 0.5, 1.0];
 const INK: Color = [0.9, 0.91, 0.93, 1.0];
 const MARK: Color = [0.3, 0.75, 0.95, 1.0];
+/// The clear blue under the wave, which half covers the well.
+const WASH: Color = [0.26, 0.745, 0.96, 0.5];
 
 /// One knob: where it is and what it turns.
 struct Knob {
@@ -207,8 +209,7 @@ fn wave(over: &mut Flat, values: [f32; 4]) {
   };
   let line = [[min[0] + 8.0, middle], [max[0] - 8.0, middle]];
   over.dashed(&line, 1.0, dashes, LINE);
-  let [red, green, blue, _] = MARK;
-  over.area(&points, middle, [red, green, blue, 0.25]);
+  over.area(&points, middle, WASH);
   over.curve(&points, 2.0, MARK);
 }
 
