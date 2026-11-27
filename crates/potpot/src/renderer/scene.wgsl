@@ -104,8 +104,8 @@ struct Placed {
   // x how strongly it is brushed along x, y how strongly spun around its own z axis
   @location(9) anisotropy: vec2<f32>,
   // x the texture set's place among the sets plus one, or zero for none, y the points one tile
-  // of it covers
-  @location(10) textures: vec2<f32>,
+  // of it covers, z one when it wraps around the object's own z axis
+  @location(10) textures: vec3<f32>,
 }
 
 struct Lit {
@@ -119,7 +119,7 @@ struct Lit {
   @location(5) center: vec3<f32>,
   @location(6) axis: vec3<f32>,
   @location(7) anisotropy: vec2<f32>,
-  @location(9) textures: vec2<f32>,
+  @location(9) textures: vec3<f32>,
   // `world` taken where the triangle covers the pixel, which is a place on the triangle for a
   // pixel covered in part too. the bounce map is read at it
   @location(8) @interpolate(perspective, centroid) on_triangle: vec3<f32>,
@@ -489,25 +489,29 @@ fn photographed(lit: Lit, normal: vec3<f32>, moved: mat2x3<f32>) -> Photo {
   if normal.z > 0.7 {
     return laid(layer, tile, world, moved, normal, vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0));
   }
-  if lit.anisotropy.y > 0.0 {
-    // a tile every `tile` points of the way around at the spot's distance from the axis, and
-    // up it. the seam where the turn wraps faces away from the viewer, toward the panel's -y,
-    // and the mip follows the way around, which has no seam
+  if lit.textures.z > 0.0 {
+    // as many whole tiles around as come nearest to one every `tile` points at the spot's
+    // distance from the axis, so that the way around closes on itself, and a tile every `tile`
+    // points up it. the mip follows the way around, which has no seam
     let axis = normalize(lit.axis);
     let out = world - lit.center;
     let high = dot(out, axis);
     let aside = out - axis * high;
     let far = max(length(aside), 1e-4);
-    var back = vec3<f32>(0.0, 1.0, 0.0);
+    // the turn counts from the panel's y, or its x for an axis that lies along y
+    var start = vec3<f32>(0.0, 1.0, 0.0);
     if abs(axis.y) > 0.9 {
-      back = vec3<f32>(1.0, 0.0, 0.0);
+      start = vec3<f32>(1.0, 0.0, 0.0);
     }
-    let first = normalize(back - axis * dot(back, axis));
+    let first = normalize(start - axis * dot(start, axis));
     let turn = atan2(dot(aside, cross(axis, first)), dot(aside, first));
     let around = cross(axis, aside / far);
-    let at = vec2<f32>(turn * far, -high) / tile;
-    let ddx = vec2<f32>(dot(moved[0], around), -dot(moved[0], axis)) / tile;
-    let ddy = vec2<f32>(dot(moved[1], around), -dot(moved[1], axis)) / tile;
+    let tiles = max(round(TAU * far / tile), 1.0);
+    // tiles around for each point moved along the way around
+    let per_point = tiles / (TAU * far);
+    let at = vec2<f32>(turn / TAU * tiles, -high / tile);
+    let ddx = vec2<f32>(dot(moved[0], around) * per_point, -dot(moved[0], axis) / tile);
+    let ddy = vec2<f32>(dot(moved[1], around) * per_point, -dot(moved[1], axis) / tile);
     return sampled_set(layer, at, ddx, ddy, normal, around, axis);
   }
   var facing = normal * normal;

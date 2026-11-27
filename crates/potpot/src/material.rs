@@ -94,7 +94,7 @@ pub enum Anisotropy {
 pub enum Textures {
   /// Walnut, as on the cheeks of a synthesizer.
   Walnut(f32),
-  /// Paint with a hammered, mottled relief.
+  /// Paint with a hammered, dimpled relief.
   Hammertone(f32),
   /// Aluminium brushed in straight lines along the panel's x.
   BrushedAluminium(f32),

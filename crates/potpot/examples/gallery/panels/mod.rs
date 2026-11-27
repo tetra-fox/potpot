@@ -21,7 +21,7 @@ use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts;
 use potpot::{Lamp, Light, Look, Material, Mesh, Object, Scene};
 
-use self::shared::{ALUMINUM, BLACK, SEAT, lettering};
+use self::shared::{ALUMINUM, BLACK, SEAT, WALNUT, lettering};
 
 pub const SIZE: [u32; 2] = [1024, 640];
 /// The names of the panels, as a message lists them.

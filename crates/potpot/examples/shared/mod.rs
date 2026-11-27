@@ -24,6 +24,8 @@ pub mod window;
 pub const BLACK: Vec3 = Vec3::new(0.035, 0.035, 0.04);
 /// The color of aluminum turned on a lathe.
 pub const ALUMINUM: Vec3 = Vec3::new(0.78, 0.79, 0.81);
+/// The color of oiled walnut, laid under its texture set.
+pub const WALNUT: Vec3 = Vec3::new(0.42, 0.26, 0.15);
 /// The color of the dark gap around what is set into a panel.
 pub const SEAT: Vec3 = Vec3::splat(0.012);
 /// The color of a screen's face.

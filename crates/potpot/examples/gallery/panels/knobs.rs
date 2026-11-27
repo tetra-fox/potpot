@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec3};
 use potpot::parts::{self, Knob, Top};
-use potpot::{Look, Material, Object, Scene};
+use potpot::{Anisotropy, Look, Material, Object, Scene, Textures};
 
-use super::{ALUMINUM, BLACK, SIZE, framed, lettering, screws};
+use super::{ALUMINUM, BLACK, SIZE, WALNUT, framed, lettering, screws};
 
 /// The way a knob of the gallery is marked.
 #[derive(Clone, Copy)]
@@ -47,7 +47,12 @@ pub fn knobs(look: Look) -> Scene {
     shown(
       "ROUND",
       Knob::round(radius, tall),
-      Material::glossy(BLACK),
+      // turned walnut, whose grain wraps around the knob
+      Material {
+        anisotropy: Anisotropy::Spun(0.0),
+        textures: Some(Textures::Walnut(90.0)),
+        ..Material::satin(WALNUT)
+      },
       Marker::Line,
     ),
     shown(

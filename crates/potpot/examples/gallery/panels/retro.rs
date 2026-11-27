@@ -6,7 +6,7 @@ use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Button, Edge, Grip, Knob, Meter, Top};
 use potpot::{Light, Look, Material, Object, Scene, Textures};
 
-use super::{Build, SEAT, SIZE, framed};
+use super::{Build, SEAT, SIZE, WALNUT, framed};
 
 /// Returns a soft synth's front in the manner of the mid 2000s.
 ///
@@ -43,7 +43,7 @@ pub(super) fn retro(look: Look) -> Scene {
     at(width / 2.0, height / 2.0, 0.0),
     Material {
       textures: Some(Textures::Walnut(240.0)),
-      ..Material::satin(Vec3::new(0.42, 0.26, 0.15))
+      ..Material::satin(WALNUT)
     },
   );
 
