@@ -99,6 +99,8 @@ pub struct Lamp {
 #[derive(Clone, Copy, Debug)]
 pub struct Light {
   /// The direction from the panel toward the light.
+  ///
+  /// Its length does not matter, and it is not zero.
   pub toward: Vec3,
   /// The light's color and brightness, as linear light.
   pub color: Vec3,

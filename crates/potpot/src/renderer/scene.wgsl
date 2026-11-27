@@ -211,8 +211,26 @@ fn lit_share(world: vec3<f32>, facing: f32, jitter: vec2<f32>) -> f32 {
 fn height_over(at: vec2<f32>) -> f32 {
   let size = vec2<f32>(textureDimensions(height_map));
   let texel = clamp(at / globals.panel.xy * size, vec2<f32>(0.0), size - 1.0);
-  let depth = textureLoad(height_map, vec2<i32>(texel), 0);
+  return height_of(vec2<i32>(texel));
+}
+
+// how high the highest thing over a texel of the height map is
+fn height_of(texel: vec2<i32>) -> f32 {
+  let last = vec2<i32>(textureDimensions(height_map)) - 1;
+  let depth = textureLoad(height_map, clamp(texel, vec2<i32>(0), last), 0);
   return globals.panel.w - depth * (globals.panel.w - globals.panel.z);
+}
+
+// how high things over a point of the panel are, mixed from the four texels of the height map
+// around it, so that a lookup moving across the map moves smoothly from texel to texel
+fn height_between(at: vec2<f32>) -> f32 {
+  let size = vec2<f32>(textureDimensions(height_map));
+  let place = at / globals.panel.xy * size - 0.5;
+  let low = vec2<i32>(floor(place));
+  let part = fract(place);
+  let top = mix(height_of(low), height_of(low + vec2<i32>(1, 0)), part.x);
+  let foot = mix(height_of(low + vec2<i32>(0, 1)), height_of(low + vec2<i32>(1, 1)), part.x);
+  return mix(top, foot, part.y);
 }
 
 // how much of the light all around reaches a point: less for everything near that stands
@@ -225,7 +243,7 @@ fn open_share(world: vec3<f32>, jitter: f32) -> f32 {
     for (var step = 0; step < OPEN_STEPS; step++) {
       // each ring turned against the last, so that their points do not line up
       let turn = (f32(step) + f32(ring) * 0.37 + jitter - 0.5) * OPEN_TURN;
-      let over = height_over(world.xy + vec2<f32>(cos(turn), sin(turn)) * reach);
+      let over = height_between(world.xy + vec2<f32>(cos(turn), sin(turn)) * reach);
       let rise = over - world.z - OPEN_CLEAR;
       let near = 1.0 / (1.0 + reach * 0.12);
       closed += clamp(rise / reach, 0.0, 1.0) * near;
@@ -254,7 +272,7 @@ fn lamp_share(world: vec3<f32>, lamp: Lamp, jitter: f32) -> f32 {
   for (var step = 0; step < LAMP_STEPS; step++) {
     let along = mix(start, end, (f32(step) + shift) / f32(LAMP_STEPS));
     let line = world.z + toward.z * along / away;
-    let over = height_over(world.xy + toward.xy / away * along);
+    let over = height_between(world.xy + toward.xy / away * along);
     // what stands in the way has a softer edge the further it is from the point and the
     // wider the lamp
     let soft = 1.0 + lamp.color.w * along / (away - along);

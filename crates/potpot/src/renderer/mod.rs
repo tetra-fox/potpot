@@ -524,6 +524,10 @@ impl Renderer {
   /// A scene that is in every part the one prepared last has its picture already, and costs no
   /// drawing. One that differs from it in the places and materials of some objects and in some
   /// lamps costs the drawing of the part of the picture those show in.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the scene's [`Light::toward`](crate::Light::toward) is zero.
   pub fn prepare(
     &mut self,
     device: &wgpu::Device,
@@ -588,7 +592,9 @@ impl Renderer {
         if !few {
           continue;
         }
-        let moved = !same_mesh || placed.model != held.model;
+        // by bytes, as the places are sent to the GPU, so that a NaN is equal to itself
+        let moved =
+          !same_mesh || bytemuck::bytes_of(&placed.model) != bytemuck::bytes_of(&held.model);
         if moved || placed != held {
           alike = false;
           let change = match (moved, placed.shadowless(), held.shadowless()) {

@@ -5,6 +5,7 @@
 use std::mem::size_of;
 
 use bytemuck::{Pod, Zeroable};
+use glam::Vec3;
 
 use super::SHADOW_SIZE;
 use super::damage::Spread;
@@ -13,7 +14,7 @@ use crate::material::{Anisotropy, Textures};
 use crate::scene::{LAMPS, Light, Look, Object, Scene};
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub(super) struct Globals {
   pub(super) view: [[f32; 4]; 4],
   pub(super) light_view: [[f32; 4]; 4],
@@ -35,6 +36,21 @@ pub(super) struct Globals {
   /// Each lamp's place with its reach, and then its color with its radius.
   pub(super) lamps: [[[f32; 4]; 2]; LAMPS],
 }
+
+// each is equal to another of the same bytes, as the GPU is sent them, so that a value holding
+// a NaN is equal to itself and a scene that holds one settles
+macro_rules! equal_by_bytes {
+  ($($sent:ty),*) => {
+    $(
+      impl PartialEq for $sent {
+        fn eq(&self, other: &Self) -> bool {
+          bytemuck::bytes_of(self) == bytemuck::bytes_of(other)
+        }
+      }
+    )*
+  };
+}
+equal_by_bytes!(Globals, Placed, Present);
 
 impl Globals {
   /// Returns whether light comes off surfaces onto their neighbors at all.
@@ -58,6 +74,7 @@ impl Globals {
 
   pub(super) fn of(scene: &Scene) -> Self {
     let light = scene.light;
+    assert!(light.toward != Vec3::ZERO, "the light comes from some way");
     Self {
       view: scene.view().to_cols_array_2d(),
       light_view: scene.light_view().to_cols_array_2d(),
@@ -91,7 +108,7 @@ impl Globals {
 
 /// One object's place and material, read once per instance.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub(super) struct Placed {
   pub(super) model: [[f32; 4]; 4],
   /// The base color and the emission.
@@ -183,7 +200,7 @@ impl Placed {
 
 /// The way the picture is degraded on its way to the target.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub(super) struct Present {
   /// The options of the present pass, one in each component.
   ///

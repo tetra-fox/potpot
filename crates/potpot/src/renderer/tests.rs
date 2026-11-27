@@ -3,6 +3,8 @@
 //! Most of these draw with a graphics device, so a plain test run leaves them out. `just
 //! gpu-test` runs them.
 
+use std::time::Duration;
+
 use glam::{Mat4, Vec2, Vec3};
 
 use super::*;
@@ -98,7 +100,7 @@ impl Target {
     (self.read.slice(..)).map_async(wgpu::MapMode::Read, |mapped| {
       mapped.expect("the pixels map")
     });
-    (self.device.poll(wgpu::PollType::wait_indefinitely())).expect("the device finishes");
+    finish(&self.device, "the pixels drawn on the target");
     let pixels = self.read.slice(..).get_mapped_range().to_vec();
     self.read.unmap();
     pixels
@@ -145,7 +147,7 @@ impl Target {
     (read.slice(..)).map_async(wgpu::MapMode::Read, |mapped| {
       mapped.expect("the picture maps")
     });
-    (self.device.poll(wgpu::PollType::wait_indefinitely())).expect("the device finishes");
+    finish(&self.device, "the picture's mean read back");
     let texels = read.slice(..).get_mapped_range();
     (texels.as_chunks::<2>().0.iter())
       .map(|bits| f32::from(half::f16::from_le_bytes(*bits)))
@@ -201,6 +203,24 @@ impl Target {
       );
     }
     *shown = in_part;
+  }
+}
+
+/// The longest a test waits on the device, which a frame of these scenes takes a small part of.
+const LONGEST_WAIT: Duration = Duration::from_secs(30);
+
+/// Waits for the device to finish what it was given, `what` naming the wait.
+///
+/// A wait that runs out fails the test with its name. This is to tell where a run that stalls
+/// stalls: one run of these tests once hung in a wait on the device, and it has not happened
+/// again or been explained.
+fn finish(device: &wgpu::Device, what: &str) {
+  let waited = device.poll(wgpu::PollType::Wait {
+    submission_index: None,
+    timeout: Some(LONGEST_WAIT),
+  });
+  if let Err(error) = waited {
+    panic!("the device did not finish {what} within {LONGEST_WAIT:?}: {error}");
   }
 }
 
@@ -385,6 +405,25 @@ fn a_picture_settles_at_its_sixty_fourth_sample_and_any_change_unsettles_it() {
     assert!(!renderer.settled(), "after change {change}");
     target.settle(&mut renderer, &scene);
   }
+}
+
+#[test]
+#[ignore = "needs a graphics device"]
+fn a_scene_that_holds_a_nan_settles() {
+  let target = Target::new();
+  let shapes = [Arc::new(Mesh::cuboid(
+    Vec3::new(-14.0, -8.0, 0.0),
+    Vec3::new(14.0, 8.0, 9.0),
+  ))];
+  let mut number = numbers(9);
+  let mut scene = panel(&mut number, &shapes);
+  scene.objects[1].material.roughness = f32::NAN;
+  scene.lamps[0].at.z = f32::NAN;
+  let mut renderer = Renderer::new(&target.device, FORMAT);
+  for _ in 0..SETTLED {
+    target.drawn(&mut renderer, &scene);
+  }
+  assert!(renderer.settled());
 }
 
 #[test]
@@ -1042,7 +1081,7 @@ fn computed(source: &str, of_value: &str, inputs: &[[f32; 4]]) -> Vec<[f32; 4]> 
   (read.slice(..)).map_async(wgpu::MapMode::Read, |mapped| {
     mapped.expect("the values map")
   });
-  (device.poll(wgpu::PollType::wait_indefinitely())).expect("the device finishes");
+  finish(device, "the values a compute shader wrote");
   let mapped = read.slice(..).get_mapped_range();
   bytemuck::cast_slice(&mapped).to_vec()
 }
