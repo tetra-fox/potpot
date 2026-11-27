@@ -1,4 +1,4 @@
-//! Screens that show an equalizer, a scope and an envelope.
+//! Screens that show an equalizer, a scope, an envelope and a spectrum.
 
 use std::f32::consts::TAU;
 use std::sync::Arc;
@@ -159,19 +159,62 @@ fn envelope(flat: &mut Flat, plot: Plot) {
   }
 }
 
-/// Returns three screens on a dark panel.
+/// Adds a spectrum with a range of its frequencies washed amber.
 ///
-/// The first shows an equalizer's curve, the second a scope's trace and the third an envelope.
-/// The light is dimmed so that what the screens show stands out.
+/// A clear amber rectangle over the range tints the lines and the spectrum's fill under it, and
+/// a dashed amber line stands at each end of the range.
+fn spectrum(flat: &mut Flat, plot: Plot) {
+  let hertz = Axis::log([20.0, 20000.0]);
+  for frequency in [50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0] {
+    let x = hertz.turn(frequency);
+    flat.line(plot.at([x, 0.0]), plot.at([x, 1.0]), 1.0, GRID);
+  }
+  for row in 0..=4_u8 {
+    let y = f32::from(row) / 4.0;
+    flat.line(plot.at([0.0, y]), plot.at([1.0, y]), 1.0, GRID);
+  }
+
+  // what the sound might be: louder in the bass and falling away, with a few peaks
+  let heard: Vec<[f32; 2]> = (0..=96)
+    .map(|bin| {
+      let across = f32::from(bin as u8) / 96.0;
+      let peaks = (across * 37.0).sin() * (across * 71.0).cos() * 0.08;
+      plot.at([across, 0.72 - across * 0.45 + peaks])
+    })
+    .collect();
+  flat.area(&heard, plot.max.y, [0.04, 0.2, 0.24, 1.0]);
+
+  let [low, high] = [300.0, 3000.0].map(|frequency| hertz.turn(frequency));
+  flat.rect(
+    plot.at([low, 1.0]),
+    plot.at([high, 0.0]),
+    [1.0, 0.62, 0.12, 0.06],
+  );
+  let dashes = Dashes {
+    length: 4.0,
+    gap: 3.0,
+  };
+  for x in [low, high] {
+    let line = [plot.at([x, 0.0]), plot.at([x, 1.0])];
+    flat.dashed(&line, 1.0, dashes, [0.8, 0.53, 0.11, 1.0]);
+  }
+  flat.curve(&heard, 1.5, [0.45, 0.95, 1.0, 1.0]);
+}
+
+/// Returns four screens on a dark panel.
+///
+/// They show an equalizer's curve, a scope's trace, an envelope, and a spectrum with a range
+/// washed amber. The light is dimmed so that what the screens show stands out.
 pub(super) fn screens(look: Look) -> Scene {
-  let mut catalog = Catalog::dark("SCREENS", [3, 1], 240.0);
+  let mut catalog = Catalog::dark("SCREENS", [2, 2], 220.0);
   let cells = catalog.cells.clone();
   let screen = Screen::new(280.0, 200.0);
   type Picture = fn(&mut Flat, Plot);
-  let shown: [(&str, Vec3, Picture); 3] = [
+  let shown: [(&str, Vec3, Picture); 4] = [
     ("EQUALIZER", Vec3::new(0.3, 0.9, 1.0), equalizer),
     ("SCOPE", Vec3::new(0.3, 1.0, 0.45), scope),
     ("ENVELOPE", Vec3::new(1.0, 0.65, 0.15), envelope),
+    ("SPECTRUM", Vec3::new(0.3, 0.9, 1.0), spectrum),
   ];
   for ((name, color, picture), cell) in shown.into_iter().zip(&cells) {
     let middle = cell.middle;
