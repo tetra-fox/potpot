@@ -285,7 +285,8 @@ fn the_baked_studio_holds_every_mip() {
   let texels: u32 = (0..environment::MIPS)
     .map(|mip| (environment::SIDE >> mip).pow(2) * 6)
     .sum();
-  assert_eq!(environment::SPECULAR.len(), texels as usize * 4);
+  assert_eq!(environment::STUDIO.len(), texels as usize * 4);
+  assert_eq!(environment::SOFTBOX.len(), texels as usize * 4);
 }
 
 #[test]

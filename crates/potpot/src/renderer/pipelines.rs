@@ -98,8 +98,9 @@ pub(super) struct Layouts {
   /// Every map the scene pass reads.
   ///
   /// The shadow map comes with its sampler, then the height map, then the bounce map with its
-  /// sampler, then the DFG table, which takes the bounce map's sampler, then the studio's
-  /// specular map with its sampler.
+  /// sampler, then the DFG table, which takes the bounce map's sampler, then the specular map
+  /// of the studio without its softbox with its sampler, then that of the softbox, which takes
+  /// the same sampler.
   pub(super) maps: wgpu::BindGroupLayout,
   /// The picture's samples, for the pass that resolves them.
   pub(super) resolve: wgpu::BindGroupLayout,
@@ -145,6 +146,16 @@ impl Layouts {
       ty: wgpu::BindingType::Sampler(kind),
       count: None,
     };
+    let cube = wgpu::BindGroupLayoutEntry {
+      binding: 6,
+      visibility: wgpu::ShaderStages::FRAGMENT,
+      ty: wgpu::BindingType::Texture {
+        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+        view_dimension: wgpu::TextureViewDimension::Cube,
+        multisampled: false,
+      },
+      count: None,
+    };
     Self {
       globals: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("potpot globals"),
@@ -166,17 +177,9 @@ impl Layouts {
           texture(3, wgpu::TextureSampleType::Float { filterable: true }),
           sampler(4, wgpu::SamplerBindingType::Filtering),
           texture(5, wgpu::TextureSampleType::Float { filterable: true }),
-          wgpu::BindGroupLayoutEntry {
-            binding: 6,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-              sample_type: wgpu::TextureSampleType::Float { filterable: true },
-              view_dimension: wgpu::TextureViewDimension::Cube,
-              multisampled: false,
-            },
-            count: None,
-          },
+          cube,
           sampler(7, wgpu::SamplerBindingType::Filtering),
+          wgpu::BindGroupLayoutEntry { binding: 8, ..cube },
         ],
       }),
       resolve: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

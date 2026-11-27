@@ -15,9 +15,11 @@ use crate::hdr::{self, Picture};
 
 /// The studio, as a latitude-longitude picture.
 const SOURCE: &str = "crates/potpot/assets/source/wooden_studio_16_1k.hdr";
-/// The mips of the specular cube map.
-const SPECULAR: &str = "crates/potpot/assets/specular.bin";
-/// The Rust source that holds the diffuse light and names the specular map.
+/// The mips of the specular cube map of the studio without its softbox.
+const REST: &str = "crates/potpot/assets/studio.bin";
+/// The mips of the specular cube map of the softbox alone.
+const SOFTBOX: &str = "crates/potpot/assets/softbox.bin";
+/// The Rust source that holds the diffuse light and names the specular maps.
 const GENERATED: &str = "crates/potpot/src/renderer/environment.rs";
 /// The width of the specular cube map's first mip, in texels.
 const SIDE: usize = 128;
@@ -31,6 +33,17 @@ const SAMPLES: u32 = 1024;
 const PATCH_EDGE: f32 = 0.08;
 /// The side of the cells the picture is averaged over to find the key light's patch.
 const CELL: usize = 4;
+/// What a face seen square on mirrors, as a share of what a white surface gives back under the
+/// key light.
+///
+/// It is well under one, so that glass over a display keeps the display's contrast.
+const FACE_LIGHT: f32 = 0.5;
+/// How far from a face seen square on the studio is averaged for [`FACE_LIGHT`], in degrees.
+const FACE_CONE: f32 = 20.0;
+/// How far a turn may miss [`FACE_LIGHT`] and still be taken.
+const FACE_SLACK: f32 = 0.05;
+/// How far from straight into the floor the floor is averaged, in degrees.
+const FLOOR_CONE: f32 = 40.0;
 
 /// Bakes the studio under the workspace at `root` into the renderer's assets.
 pub fn bake(root: &Path) -> Result<(), String> {
@@ -40,18 +53,22 @@ pub fn bake(root: &Path) -> Result<(), String> {
   let patch = key_patch(&picture);
   let studio = Studio::new(&picture, &patch);
 
-  let cube = Cube::new(Level::from_fn(SOURCE_SIDE, |out| studio.light(out)));
-  let mut texels = Vec::new();
-  for mip in 0..MIPS {
-    let level = cube.prefiltered(SIDE >> mip, mip as f32 / (MIPS - 1) as f32, SAMPLES);
-    let encoded = level
-      .texels
-      .iter()
-      .map(|&light| shared_exponent::encoded(light));
-    texels.extend(encoded.flat_map(u32::to_le_bytes));
+  // the softbox and the rest of the studio apart, so that the key light's shadow can take the
+  // softbox out of what a shadowed surface mirrors and leave the rest
+  for (part, path) in [(Part::Rest, REST), (Part::Softbox, SOFTBOX)] {
+    let cube = Cube::new(Level::from_fn(SOURCE_SIDE, |out| studio.light(out, part)));
+    let mut texels = Vec::new();
+    for mip in 0..MIPS {
+      let level = cube.prefiltered(SIDE >> mip, mip as f32 / (MIPS - 1) as f32, SAMPLES);
+      let encoded = level
+        .texels
+        .iter()
+        .map(|&light| shared_exponent::encoded(light));
+      texels.extend(encoded.flat_map(u32::to_le_bytes));
+    }
+    let path = root.join(path);
+    std::fs::write(&path, texels).map_err(|error| format!("{}: {error}", path.display()))?;
   }
-  let specular = root.join(SPECULAR);
-  std::fs::write(&specular, texels).map_err(|error| format!("{}: {error}", specular.display()))?;
 
   // the key light's patch is left out of the diffuse light, which the key light gives itself
   let samples = latitude_longitude(picture.width, picture.height)
@@ -89,10 +106,20 @@ struct Patch {
   irradiance: Vec3,
 }
 
+/// A part of the studio.
+#[derive(Clone, Copy, Debug)]
+enum Part {
+  /// Everything but the key light's patch.
+  Rest,
+  /// The key light's patch alone.
+  Softbox,
+}
+
 /// The studio turned and scaled to light a panel.
 #[derive(Debug)]
 struct Studio<'a> {
   picture: &'a Picture,
+  patch: &'a Patch,
   /// The turn from the picture's space to the panel's.
   turn: Mat3,
   /// What the picture's light is multiplied by, in each channel.
@@ -100,13 +127,16 @@ struct Studio<'a> {
 }
 
 impl<'a> Studio<'a> {
-  /// Creates the studio turned so that the key light's patch lies where the panel's key light
-  /// comes from, and scaled so that the patch throws as much light as the key light and in its
-  /// color, as a camera balanced to the key light sees it.
+  /// Creates the studio turned onto the key light and scaled to its light.
   ///
-  /// The panel lies on the studio's floor face up, as for a shot from above: the studio's up
-  /// is the panel's +z, so that flat faces mirror its ceiling and the sides of things its floor.
-  fn new(picture: &'a Picture, patch: &Patch) -> Self {
+  /// The key light's patch lies where the panel's key light comes from. It throws as much light
+  /// as the key light and in its color, as a camera balanced to the key light sees it.
+  ///
+  /// The panel starts on the studio's floor face up, with the studio's up its +z, and is then
+  /// turned around the way to the key light until a face seen square on mirrors
+  /// [`FACE_LIGHT`]. Of the turns that do, the one with the darkest floor is taken, since the
+  /// sides of things mirror the floor.
+  fn new(picture: &'a Picture, patch: &'a Patch) -> Self {
     let key = potpot::Light::default();
     let toward = key.toward.normalize();
     let lying = Mat3::from_cols(Vec3::X, Vec3::Z, Vec3::NEG_Y);
@@ -115,18 +145,54 @@ impl<'a> Studio<'a> {
     // the least way onto it
     let around = (toward.y.atan2(toward.x)) - (middle.y.atan2(middle.x));
     let spun = Mat3::from_rotation_z(around) * lying;
-    let tip = Quat::from_rotation_arc(spun * patch.middle, toward);
+    let tipped = Mat3::from_quat(Quat::from_rotation_arc(spun * patch.middle, toward)) * spun;
+    // the renderer's light colors are irradiance over pi, as a white surface gives it back
+    let scale = key.color * PI / patch.irradiance;
+    let luminance = |light: Vec3| light.dot(Vec3::new(0.2126, 0.7152, 0.0722));
+    // every fourth pixel each way is enough to judge a turn by
+    let pixels: Vec<(Vec3, f32, f32)> = latitude_longitude(picture.width, picture.height)
+      .filter(|&(index, _, _)| {
+        let (x, y) = (index % picture.width, index / picture.width);
+        x.is_multiple_of(CELL) && y.is_multiple_of(CELL)
+      })
+      .map(|(index, out, angle)| (out, luminance(picture.pixels[index] * scale), angle))
+      .collect();
+    let mean_around = |turn: Mat3, middle: Vec3, degrees: f32| {
+      let within = degrees.to_radians().cos();
+      let (mut light, mut angles) = (0.0, 0.0);
+      for &(out, seen, angle) in &pixels {
+        if (turn * out).dot(middle) > within {
+          light += seen * angle;
+          angles += angle;
+        }
+      }
+      light / angles
+    };
+    let turns = (0..360).map(|degrees| {
+      let turn = Mat3::from_axis_angle(toward, (degrees as f32).to_radians()) * tipped;
+      let face = mean_around(turn, Vec3::Z, FACE_CONE);
+      let floor = mean_around(turn, Vec3::NEG_Z, FLOOR_CONE);
+      (turn, face, floor)
+    });
+    let (turn, _, _) = turns
+      .filter(|&(_, face, _)| (face - FACE_LIGHT).abs() <= FACE_SLACK)
+      .min_by(|a, b| a.2.total_cmp(&b.2))
+      .expect("some turn of the studio gives a face seen square on its light");
     Self {
       picture,
-      turn: Mat3::from_quat(tip) * spun,
-      // the renderer's light colors are irradiance over pi, as a white surface gives it back
-      scale: key.color * PI / patch.irradiance,
+      patch,
+      turn,
+      scale,
     }
   }
 
-  /// Returns the light from a way out of the panel's space.
-  fn light(&self, out: Vec3) -> Vec3 {
-    sampled(self.picture, self.turn.transpose() * out) * self.scale
+  /// Returns the light of a part of the studio from a way out of the panel's space.
+  fn light(&self, out: Vec3, part: Part) -> Vec3 {
+    let kept = |index: usize| match part {
+      Part::Rest => !self.patch.inside[index],
+      Part::Softbox => self.patch.inside[index],
+    };
+    sampled(self.picture, self.turn.transpose() * out, kept) * self.scale
   }
 }
 
@@ -198,10 +264,9 @@ fn key_patch(picture: &Picture) -> Patch {
   }
 }
 
-/// Returns each pixel of a latitude-longitude picture with the way out through its middle and
-/// the solid angle it covers.
+/// Returns each pixel of a latitude-longitude picture, its way out and its solid angle.
 ///
-/// The picture's top row looks straight up (+y), and its middle column along +z.
+/// The way out is through the pixel's middle. The picture's top row looks straight up (+y), and its middle column along +z.
 fn latitude_longitude(width: usize, height: usize) -> impl Iterator<Item = (usize, Vec3, f32)> {
   (0..width * height).map(move |index| {
     let (x, y) = (index % width, index / width);
@@ -219,9 +284,10 @@ fn latitude_longitude(width: usize, height: usize) -> impl Iterator<Item = (usiz
   })
 }
 
-/// Returns the light of a latitude-longitude picture along a way out, mixed from the four
-/// nearest pixels.
-fn sampled(picture: &Picture, out: Vec3) -> Vec3 {
+/// Returns the light of a latitude-longitude picture along a way out.
+///
+/// It is mixed from the four nearest pixels, of which those `kept` leaves out are dark.
+fn sampled(picture: &Picture, out: Vec3, kept: impl Fn(usize) -> bool) -> Vec3 {
   let out = out.normalize();
   let longitude = out.x.atan2(out.z);
   let latitude = out.y.clamp(-1.0, 1.0).asin();
@@ -232,7 +298,14 @@ fn sampled(picture: &Picture, out: Vec3) -> Vec3 {
   let (fx, fy) = (x - x0, y - y0);
   let wrap = |x: f32| (x as isize).rem_euclid(picture.width as isize) as usize;
   let row = |y: f32| (y as usize).min(picture.height - 1) * picture.width;
-  let pixel = |x: f32, y: f32| picture.pixels[row(y) + wrap(x)];
+  let pixel = |x: f32, y: f32| {
+    let index = row(y) + wrap(x);
+    if kept(index) {
+      picture.pixels[index]
+    } else {
+      Vec3::ZERO
+    }
+  };
   let top = pixel(x0, y0).lerp(pixel(x0 + 1.0, y0), fx);
   let foot = pixel(x0, y0 + 1.0).lerp(pixel(x0 + 1.0, y0 + 1.0), fx);
   top.lerp(foot, fy)
@@ -246,20 +319,25 @@ fn generated_source(diffuse: &[Vec3; 9]) -> String {
     writeln!(harmonics, "  [{r:?}, {g:?}, {b:?}],").expect("a string takes any write");
   }
   format!(
-    "//! The studio the panel is lit by, as `cargo xtask env` bakes it from\n\
-     //! `{SOURCE}`. The file is written by the bake.\n\
+    "//! The studio the panel is lit by, as `cargo xtask env` bakes it.\n\
+     //!\n\
+     //! The bake writes this file from `{SOURCE}`.\n\
      \n\
-     /// The width and height of each face of the specular map's first mip, in texels.\n\
+     /// The width and height of each face of a specular map's first mip, in texels.\n\
      pub(super) const SIDE: u32 = {SIDE};\n\
-     /// The mips of the specular map, for roughness from zero to one in fifths.\n\
+     /// The mips of each specular map, for roughness from zero to one in fifths.\n\
      pub(super) const MIPS: u32 = {MIPS};\n\
      /// The light a white Lambert surface gives back, as nine spherical harmonics.\n\
      ///\n\
      /// Each is linear rgb, in the order and basis of `scene.wgsl`'s `all_around`. The key\n\
      /// light's patch of the studio is left out, since the key light gives that light itself.\n\
      pub(super) const HARMONICS: [[f32; 3]; 9] = [\n{harmonics}];\n\
-     /// The specular map's texels as `Rgb9e5Ufloat`, mip after mip, each mip's {FACES} faces in\n\
-     /// turn, each face in rows from the top.\n\
-     pub(super) const SPECULAR: &[u8] = include_bytes!(\"../../assets/specular.bin\");\n"
+     /// The specular map of the studio without its softbox.\n\
+     ///\n\
+     /// Its texels are `Rgb9e5Ufloat`, mip after mip, each mip's {FACES} faces in turn, each\n\
+     /// face in rows from the top.\n\
+     pub(super) const STUDIO: &[u8] = include_bytes!(\"../../assets/studio.bin\");\n\
+     /// The specular map of the softbox alone, laid out as [`STUDIO`] is.\n\
+     pub(super) const SOFTBOX: &[u8] = include_bytes!(\"../../assets/softbox.bin\");\n"
   )
 }

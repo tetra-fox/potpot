@@ -41,9 +41,12 @@ struct Lamp {
 @group(1) @binding(4) var bounce_sampler: sampler;
 // the scale and bias on f0 of the split-sum highlight, across by n.v and down by roughness
 @group(1) @binding(5) var dfg_table: texture_2d<f32>;
-// the studio as a mirror of each roughness shows it, a mip for each 1 / STUDIO_LAST of roughness
+// the studio without its softbox as a mirror of each roughness shows it, a mip for each
+// 1 / STUDIO_LAST of roughness
 @group(1) @binding(6) var studio_map: texture_cube<f32>;
 @group(1) @binding(7) var studio_sampler: sampler;
+// the softbox alone, as studio_map holds the rest
+@group(1) @binding(8) var softbox_map: texture_cube<f32>;
 
 const TAU: f32 = 6.2831853;
 const PI: f32 = 3.14159265;
@@ -414,9 +417,12 @@ fn all_around(normal: vec3<f32>) -> vec3<f32> {
   return max(light, vec3<f32>(0.0));
 }
 
-// the studio as a mirror of a perceptual roughness shows it along `leaving`
-fn mirrored_studio(leaving: vec3<f32>, roughness: f32) -> vec3<f32> {
-  return textureSampleLevel(studio_map, studio_sampler, leaving, roughness * STUDIO_LAST).rgb;
+// the studio as a mirror of a perceptual roughness shows it along `leaving`, with its softbox
+// times `lit`, the share of the key light that reaches the mirror
+fn mirrored_studio(leaving: vec3<f32>, roughness: f32, lit: f32) -> vec3<f32> {
+  let lod = roughness * STUDIO_LAST;
+  let rest = textureSampleLevel(studio_map, studio_sampler, leaving, lod).rgb;
+  return rest + textureSampleLevel(softbox_map, studio_sampler, leaving, lod).rgb * lit;
 }
 
 // a point of a surface as the shading model takes it
@@ -638,8 +644,8 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
     highlights += given.rgb * reached;
   }
 
-  // the studio: its light all around, kept out of corners, and what it shows in a mirror,
-  // shadowed as the key light is
+  // the studio: its light all around, kept out of corners, and what it shows in a mirror, whose
+  // softbox the key light's shadow hides as it hides the key light
   let studio = globals.toward_viewer.w;
   var all_around_light = all_around(surface.normal) * studio * open;
   if globals.light_color.w > 0.0 {
@@ -656,12 +662,12 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
     mirror_normal = normalize(mix(surface.normal, bent, bend));
   }
   let leaving = reflect(-toward_viewer, mirror_normal);
-  var mirrored = held * surface.energy * mirrored_studio(leaving, roughness);
+  var mirrored = held * surface.energy * mirrored_studio(leaving, roughness, share);
   if surface.coat > 0.0 {
     let coat_leaving = reflect(-toward_viewer, flat_normal);
-    mirrored = mirrored * (1.0 - coat_kept) + coat_kept * mirrored_studio(coat_leaving, coat_roughness);
+    mirrored = mirrored * (1.0 - coat_kept) + coat_kept * mirrored_studio(coat_leaving, coat_roughness, share);
   }
-  highlights += mirrored * studio * share;
+  highlights += mirrored * studio;
 
   // the light the surface gives off itself, which takes the place of the diffuse light it
   // would have under the scene's

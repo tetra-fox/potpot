@@ -105,9 +105,11 @@ pub struct Renderer {
   dfg_table: wgpu::Texture,
   /// The DFG table's texels, until the table holds them.
   dfg_texels: Option<wgpu::Buffer>,
-  /// The studio as mirrors of each roughness show it, a cube map.
+  /// The studio without its softbox as mirrors of each roughness show it, a cube map.
   studio_map: wgpu::Texture,
-  /// Whether the studio map is yet to be given its texels.
+  /// The softbox alone, as [`Renderer::studio_map`] holds the rest.
+  softbox_map: wgpu::Texture,
+  /// Whether the two maps of the studio are yet to be given their texels.
   studio_unfilled: bool,
   layouts: Layouts,
   present_options: wgpu::Buffer,
@@ -334,24 +336,30 @@ impl Renderer {
       usage: wgpu::BufferUsages::COPY_SRC,
     });
     let dfg_view = dfg_table.create_view(&wgpu::TextureViewDescriptor::default());
-    let studio_map = device.create_texture(&wgpu::TextureDescriptor {
-      label: Some("potpot studio"),
-      size: wgpu::Extent3d {
-        width: environment::SIDE,
-        height: environment::SIDE,
-        depth_or_array_layers: 6,
-      },
-      mip_level_count: environment::MIPS,
-      sample_count: 1,
-      dimension: wgpu::TextureDimension::D2,
-      format: STUDIO,
-      usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-      view_formats: &[],
-    });
-    let studio_view = studio_map.create_view(&wgpu::TextureViewDescriptor {
-      dimension: Some(wgpu::TextureViewDimension::Cube),
-      ..Default::default()
-    });
+    let cube = |label| {
+      device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+          width: environment::SIDE,
+          height: environment::SIDE,
+          depth_or_array_layers: 6,
+        },
+        mip_level_count: environment::MIPS,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: STUDIO,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+      })
+    };
+    let (studio_map, softbox_map) = (cube("potpot studio"), cube("potpot softbox"));
+    let cube_view = |map: &wgpu::Texture| {
+      map.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::Cube),
+        ..Default::default()
+      })
+    };
+    let (studio_view, softbox_view) = (cube_view(&studio_map), cube_view(&softbox_map));
     let studio_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
       label: Some("potpot studio"),
       mag_filter: wgpu::FilterMode::Linear,
@@ -384,6 +392,7 @@ impl Renderer {
         view(5, &dfg_view),
         view(6, &studio_view),
         sampler(7, &studio_sampler),
+        view(8, &softbox_view),
       ],
     });
 
@@ -401,6 +410,7 @@ impl Renderer {
       dfg_table,
       dfg_texels: Some(dfg_texels),
       studio_map,
+      softbox_map,
       studio_unfilled: true,
       present_options: uniform("potpot present", size_of::<Present>()),
       target_encodes: target.is_srgb(),
@@ -678,40 +688,12 @@ impl Renderer {
       queue.submit([encoder.finish()]);
     }
     if self.studio_unfilled {
-      self.fill_studio(queue);
+      fill_cube(queue, &self.studio_map, environment::STUDIO);
+      fill_cube(queue, &self.softbox_map, environment::SOFTBOX);
       self.studio_unfilled = false;
     }
     self.draw_picture(device, queue, &picture, shapes, light, redrawn, reblur);
     self.picture = Some(picture);
-  }
-
-  /// Writes the baked texels into the studio map, mip after mip.
-  fn fill_studio(&self, queue: &wgpu::Queue) {
-    let mut texels = environment::SPECULAR;
-    for mip in 0..environment::MIPS {
-      let side = environment::SIDE >> mip;
-      let (level, rest) = texels.split_at((side * side * 6 * 4) as usize);
-      texels = rest;
-      queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-          texture: &self.studio_map,
-          mip_level: mip,
-          origin: wgpu::Origin3d::ZERO,
-          aspect: wgpu::TextureAspect::All,
-        },
-        level,
-        wgpu::TexelCopyBufferLayout {
-          offset: 0,
-          bytes_per_row: Some(side * 4),
-          rows_per_image: Some(side),
-        },
-        wgpu::Extent3d {
-          width: side,
-          height: side,
-          depth_or_array_layers: 6,
-        },
-      );
-    }
   }
 
   /// Returns the parts of the target where the picture is new.
@@ -1245,6 +1227,34 @@ fn placed_buffer(device: &wgpu::Device, room: usize) -> wgpu::Buffer {
     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
     mapped_at_creation: false,
   })
+}
+
+/// Writes baked texels into a cube map of the studio, mip after mip.
+fn fill_cube(queue: &wgpu::Queue, map: &wgpu::Texture, mut texels: &[u8]) {
+  for mip in 0..environment::MIPS {
+    let side = environment::SIDE >> mip;
+    let (level, rest) = texels.split_at((side * side * 6 * 4) as usize);
+    texels = rest;
+    queue.write_texture(
+      wgpu::TexelCopyTextureInfo {
+        texture: map,
+        mip_level: mip,
+        origin: wgpu::Origin3d::ZERO,
+        aspect: wgpu::TextureAspect::All,
+      },
+      level,
+      wgpu::TexelCopyBufferLayout {
+        offset: 0,
+        bytes_per_row: Some(side * 4),
+        rows_per_image: Some(side),
+      },
+      wgpu::Extent3d {
+        width: side,
+        height: side,
+        depth_or_array_layers: 6,
+      },
+    );
+  }
 }
 
 #[cfg(test)]

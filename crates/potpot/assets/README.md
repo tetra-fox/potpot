@@ -5,7 +5,8 @@
 | File | Description |
 |---|---|
 | `source/wooden_studio_16_1k.hdr` | The studio, as a 1k latitude-longitude HDRI |
-| `specular.bin` | The studio's specular cube map, baked |
+| `studio.bin` | The specular cube map of the studio without its softbox, baked |
+| `softbox.bin` | The specular cube map of the softbox alone, baked |
 
 The diffuse light of the studio is baked into `src/renderer/environment.rs`.
 
