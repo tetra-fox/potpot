@@ -3,15 +3,14 @@
 use super::{Action, Interaction, Target};
 
 impl Interaction {
-  /// Returns the page shown, by its place among the panel's pages.
+  /// Returns the place of the page shown.
   pub fn page(&self) -> usize {
     self.page
   }
 
-  /// Returns a target, unless it is a control's on a page not shown.
+  /// Returns a target unless it is on a hidden page.
   ///
-  /// A target is found in the picture last drawn, which until the next frame is of the page
-  /// shown before a switch.
+  /// A control takes input only while its page is shown, whoever finds the targets.
   pub(super) fn reachable(&self, over: Option<Target>) -> Option<Target> {
     over.filter(|over| match *over {
       Target::Control(control) | Target::Readout(control) => {

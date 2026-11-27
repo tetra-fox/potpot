@@ -141,6 +141,8 @@ struct State<S> {
   /// The renderer of what is over the skin's picture.
   flat: FlatRenderer,
   interaction: Interaction,
+  /// The page the skin last laid out.
+  laid: usize,
   /// The values set from here that have yet to reach the parameters.
   sent: Sent,
   /// The last place of the pointer, in the panel's points.
@@ -702,8 +704,16 @@ impl<S: Skin> State<S> {
           .holds(at, settings.size, self.scale(settings.size))
           .then_some(Target::Grip)
       })
-      .or_else(|| self.skin.target_at(at))
+      .or_else(|| skin_target(&self.skin, self.laid, self.interaction.page(), at))
   }
+}
+
+/// Returns the [`Target`] the skin has at a point.
+///
+/// The skin finds it in the page it last laid out, `laid`. While that is not the page `shown`,
+/// as between a switch and the frame that draws the new page, it has nothing there.
+fn skin_target<S: Skin>(skin: &S, laid: usize, shown: usize, at: Point) -> Option<Target> {
+  (laid == shown).then(|| skin.target_at(at)).flatten()
 }
 
 impl<S: Skin> Window<S> {
@@ -774,6 +784,7 @@ impl<S: Skin> Window<S> {
         skin,
         flat,
         interaction,
+        laid: first.page,
         sent: Sent::new(&first.values),
         pointer: [0.0; 2],
         on_window: [0.0; 2],
@@ -1027,6 +1038,7 @@ impl<S: Skin> Window<S> {
       skin,
       flat,
       interaction,
+      laid,
       shown,
       parts,
       fed,
@@ -1046,6 +1058,7 @@ impl<S: Skin> Window<S> {
 
     let place = fitted(window, size);
     let over = laid_out(graphics, skin, interaction, settings, &now);
+    *laid = now.page;
     // a skin that names where its own picture differs is read back there alone, while the
     // window holds the frame before this one
     let named = skin.changed().filter(|_| in_parts(shown.as_ref(), &now));
@@ -1537,6 +1550,94 @@ mod tests {
     assert!(!in_parts(Some(&switched), &shown));
     // as does any frame after the window was sized or shown
     assert!(!in_parts(None, &shown));
+  }
+
+  /// The first of two pages, as a skin laid it out.
+  ///
+  /// The tab of the second page is along the top, a knob on the first page's own parameter is at
+  /// the left, and a key at the right.
+  struct FirstPage;
+
+  impl Skin for FirstPage {
+    fn prepare(&mut self, _: &Gpu, _: &View, _: &mut Flat) {}
+    fn draw(&self, _: &mut wgpu::CommandEncoder, _: &wgpu::TextureView, _: [u32; 4]) {}
+    fn target_at(&self, at: Point) -> Option<Target> {
+      Some(match at {
+        [_, ..20.0] => Target::Page(1),
+        [..100.0, _] => Target::Control(0),
+        _ => Target::Key {
+          note: 60,
+          velocity: 100,
+        },
+      })
+    }
+  }
+
+  #[test]
+  fn nothing_of_a_page_takes_input_once_another_is_shown() {
+    use potpot_controls::interaction::{Dial, Readout};
+
+    // a knob on each page, the second's on the second page
+    let dial = || Dial::linear([0.0, 1.0], 0.5, None, 2, "");
+    let mut second = Control::new(1, Readout::new(4));
+    second.page = 1;
+    let controls = vec![Control::new(0, Readout::new(4)), second];
+    let mut panel = Interaction::paged(
+      vec![dial(), dial()],
+      controls,
+      [200.0, 100.0],
+      [1.0, 1.0],
+      2,
+      0,
+    );
+    let values = [0.5, 0.5];
+    let moment = Moment {
+      now: Instant::now(),
+      values: &values,
+      scale: 1.0,
+    };
+    let (knob, key) = ([50.0, 60.0], [150.0, 60.0]);
+    let laid = 0;
+    let found = |panel: &Interaction, at| skin_target(&FirstPage, laid, panel.page(), at);
+    let press = |over| Event::Press {
+      button: Button::Left,
+      at: key,
+      window: key,
+      over,
+      reset: false,
+    };
+    // the first page's key plays while it is shown
+    let played = panel.handle(press(found(&panel, key)), moment);
+    assert!(matches!(played[..], [Action::NoteOn { note: 60, .. }]));
+    panel.handle(Event::Release(Button::Left), moment);
+    // its tab shows the second page, which the skin has yet to lay out
+    let tab = panel.handle(press(found(&panel, [10.0, 10.0])), moment);
+    assert_eq!(tab, [Action::Redraw]);
+    panel.handle(Event::Release(Button::Left), moment);
+    // in the frame after the switch, the first page's knob and key take no press, drag or wheel
+    for at in [knob, key] {
+      assert_eq!(found(&panel, at), None);
+      assert_eq!(panel.handle(press(found(&panel, at)), moment), []);
+      let moved = Event::Move {
+        at: [at[0], at[1] - 40.0],
+        window: at,
+        over: found(&panel, at),
+        fine: false,
+      };
+      assert_eq!(panel.handle(moved, moment), []);
+      assert_eq!(panel.handle(Event::Release(Button::Left), moment), []);
+      let wheel = Event::Wheel {
+        over: found(&panel, at),
+        lines: 2.0,
+        fine: false,
+      };
+      assert_eq!(panel.handle(wheel, moment), []);
+    }
+    // and the picture of the second page, once laid out, is what takes input
+    assert_eq!(
+      skin_target(&FirstPage, 1, panel.page(), knob),
+      Some(Target::Control(0))
+    );
   }
 
   #[test]
