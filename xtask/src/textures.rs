@@ -48,8 +48,9 @@ enum Source {
 
 /// The width of the sources, in texels.
 const SOURCE_SIDE: usize = 1024;
-/// How far a set's color and roughness are averaged around a texel to make it even, in texels
-/// of the source.
+/// The width of the mean that evens out a set, in texels of the source.
+///
+/// A set's color and roughness are divided by their mean over this many texels around each.
 const EVEN_REACH: usize = 24;
 /// The cells across one tile of hammered paint, of the larger dents and the smaller.
 const DIMPLES: [usize; 2] = [19, 43];

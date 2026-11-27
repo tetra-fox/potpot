@@ -168,7 +168,9 @@ pub struct LedStops {
 }
 
 impl LedStops {
-  /// Creates a light `diameter` wide at each of `stops` stops over [`KNOB_SWEEP`], with their
+  /// Creates a row of lights at stops over a knob's sweep.
+  ///
+  /// A light `diameter` wide stands at each of `stops` stops over [`KNOB_SWEEP`], with their
   /// middles `radius` from the origin.
   pub fn new(stops: u32, radius: f32, diameter: f32) -> Self {
     Self {
@@ -188,8 +190,9 @@ impl LedStops {
     }
   }
 
-  /// Returns how far the lights and their seats reach up from the origin, toward negative y,
-  /// and how far down.
+  /// Returns how far the lights and their seats reach up and down from the origin.
+  ///
+  /// Up is toward negative y. The reach up comes first.
   pub fn reach(&self) -> [f32; 2] {
     let seat = led_seat_radius(self.diameter);
     let ys = (0..self.stops).map(|stop| self.place(0.0, 0.0, stop).w_axis.y);
