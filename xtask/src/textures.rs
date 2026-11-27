@@ -3,17 +3,58 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use intel_tex_2::{bc4, bc5, bc7};
 
-/// The sets in the order the renderer indexes them, each as its name in the generated source
-/// and its ambientCG ID.
-const SETS: [(&str, &str); 4] = [
-  ("WALNUT", "Wood027"),
-  ("HAMMERTONE", "Metal044B"),
-  ("BRUSHED_ALUMINIUM", "Metal010"),
-  ("POWDER_COAT", "Metal027"),
+/// The sets in the order the renderer indexes them.
+///
+/// Each is its name in the generated source and where it comes from.
+const SETS: [(&str, Source); 4] = [
+  (
+    "WALNUT",
+    Source::Photo {
+      id: "Wood027",
+      even: false,
+    },
+  ),
+  ("HAMMERTONE", Source::Hammered),
+  (
+    "BRUSHED_ALUMINIUM",
+    Source::Photo {
+      id: "Metal010",
+      even: true,
+    },
+  ),
+  (
+    "POWDER_COAT",
+    Source::Photo {
+      id: "Metal027",
+      even: false,
+    },
+  ),
 ];
+
+/// Where a set's maps come from.
+#[derive(Clone, Copy, Debug)]
+enum Source {
+  /// Photographs from ambientCG, by ID.
+  ///
+  /// `even` takes out the variation wider than [`EVEN_REACH`], such as stains, from its color
+  /// and roughness, and keeps the fine detail.
+  Photo { id: &'static str, even: bool },
+  /// Hammered paint, made by the bake: soft dents over two tiling fields of cells.
+  Hammered,
+}
+
+/// The width of the sources, in texels.
+const SOURCE_SIDE: usize = 1024;
+/// How far a set's color and roughness are averaged around a texel to make it even, in texels
+/// of the source.
+const EVEN_REACH: usize = 24;
+/// The cells across one tile of hammered paint, of the larger dents and the smaller.
+const DIMPLES: [usize; 2] = [19, 43];
+/// How steep the dents of hammered paint are, as the slope of a dent one cell wide.
+const DENT_DEPTH: f32 = 0.015;
 /// The folder the sources are in, each `<ID>_1K-JPG_<map>.jpg` as ambientCG names them.
 const SOURCES: &str = "crates/potpot/assets/source";
 /// The color maps of every set, as one array.
@@ -36,11 +77,25 @@ pub fn bake(root: &Path) -> Result<(), String> {
   let mut roughness = Vec::new();
   let mut mean_color = Vec::new();
   let mut rough_mean = Vec::new();
-  for (_, id) in SETS {
-    let source = |map: &str| root.join(SOURCES).join(format!("{id}_1K-JPG_{map}.jpg"));
-    let color = halved(&read(&source("Color"))?.map(decode));
-    let bent = halved(&read(&source("NormalGL"))?.map(|channel| channel * 2.0 - 1.0));
-    let rough = halved(&read(&source("Roughness"))?);
+  for (_, source) in SETS {
+    let (color, bent, rough) = match source {
+      Source::Photo { id, even } => {
+        let path = |map: &str| root.join(SOURCES).join(format!("{id}_1K-JPG_{map}.jpg"));
+        let mut color = read(&path("Color"))?.map(decode);
+        let mut rough = read(&path("Roughness"))?;
+        if even {
+          color = evened(&color);
+          rough = evened(&rough);
+        }
+        (
+          color,
+          read(&path("NormalGL"))?.map(|channel| channel * 2.0 - 1.0),
+          rough,
+        )
+      }
+      Source::Hammered => hammered(),
+    };
+    let (color, bent, rough) = (halved(&color), halved(&bent), halved(&rough));
     mean_color.push(color.texels.iter().sum::<Vec3>() / color.texels.len() as f32);
     rough_mean
       .push(rough.texels.iter().map(|texel| texel.x).sum::<f32>() / rough.texels.len() as f32);
@@ -153,6 +208,112 @@ fn read(path: &Path) -> Result<Map, String> {
   })
 }
 
+/// Returns a map with its variation wider than [`EVEN_REACH`] taken out.
+///
+/// Each texel is divided by the mean around it, wrapped as the map tiles, and multiplied by
+/// the mean of the whole map.
+fn evened(map: &Map) -> Map {
+  let mut wide = map.clone();
+  // three box blurs each way come close to a Gaussian
+  for _ in 0..3 {
+    wide = blurred(&blurred(&wide, 1, 0), 0, 1);
+  }
+  let mean = map.texels.iter().sum::<Vec3>() / map.texels.len() as f32;
+  let texels = (map.texels.iter().zip(&wide.texels))
+    .map(|(texel, around)| *texel / around.max(Vec3::splat(1e-4)) * mean)
+    .collect();
+  Map {
+    side: map.side,
+    texels,
+  }
+}
+
+/// Returns a map averaged over [`EVEN_REACH`] texels along one axis, wrapped.
+fn blurred(map: &Map, dx: usize, dy: usize) -> Map {
+  let side = map.side;
+  let reach = EVEN_REACH / 2;
+  let count = (2 * reach + 1) as f32;
+  let texels = (0..side * side)
+    .map(|index| {
+      let (x, y) = (index % side, index / side);
+      let mut sum = Vec3::ZERO;
+      for step in 0..=2 * reach {
+        let along = step + side - reach;
+        sum += map.texels[(y + along * dy) % side * side + (x + along * dx) % side];
+      }
+      sum / count
+    })
+    .collect();
+  Map { side, texels }
+}
+
+/// Returns the color, the way the relief faces and the roughness of hammered paint.
+///
+/// The relief is a soft round dent at each point of two tiling fields of points, one of larger
+/// dents and one of smaller, shallower ones. The paint is even but for a slight drift, and a
+/// little rougher deep in the dents, where it settles thicker.
+fn hammered() -> (Map, Map, Map) {
+  let side = SOURCE_SIDE;
+  let heights: Vec<f32> = (0..side * side)
+    .map(|index| {
+      let at = Vec2::new((index % side) as f32, (index / side) as f32) / side as f32;
+      -dents(at, DIMPLES[0], 1) - 0.2 * dents(at, DIMPLES[1], 2)
+    })
+    .collect();
+  let height = |x: usize, y: usize| heights[(y % side) * side + x % side];
+  // the slopes are taken over two texels and given in heights a larger cell's width
+  let per_cell = (side / DIMPLES[0]) as f32 / 2.0;
+  let mut bent = Vec::with_capacity(side * side);
+  let mut rough = Vec::with_capacity(side * side);
+  let mut color = Vec::with_capacity(side * side);
+  for index in 0..side * side {
+    let (x, y) = (index % side, index / side);
+    let across = (height(x + 1, y) - height(x + side - 1, y)) * per_cell * DENT_DEPTH;
+    // the picture's y runs up, its rows down
+    let up = (height(x, y + side - 1) - height(x, y + 1)) * per_cell * DENT_DEPTH;
+    bent.push(Vec3::new(-across, -up, 1.0).normalize());
+    let deep = (-height(x, y)).clamp(0.0, 1.0);
+    rough.push(Vec3::splat(0.45 + 0.08 * deep));
+    let drift = dents(Vec2::new(x as f32, y as f32) / side as f32, 5, 3);
+    color.push(Vec3::splat(0.6 * (0.98 + 0.02 * drift)));
+  }
+  let map = |texels| Map { side, texels };
+  (map(color), map(bent), map(rough))
+}
+
+/// Returns how deep a tiling field of soft round dents is at a place on the unit square.
+///
+/// The field has `cells` cells a side, each holding one dent placed at random by `seed`, half
+/// a cell wide. It wraps, so it is the same at opposite edges of the square. A dent is one deep
+/// at its middle.
+fn dents(at: Vec2, cells: usize, seed: u32) -> f32 {
+  let scaled = at * cells as f32;
+  let (cx, cy) = (scaled.x.floor() as i64, scaled.y.floor() as i64);
+  let wrap = |n: i64| n.rem_euclid(cells as i64) as u32;
+  let mut depth = 0.0;
+  for dy in -2..=2 {
+    for dx in -2..=2 {
+      let (x, y) = (cx + dx, cy + dy);
+      let middle = Vec2::new(
+        x as f32 + scattered(wrap(x), wrap(y), seed),
+        y as f32 + scattered(wrap(x), wrap(y), seed + 7),
+      );
+      depth += (-(middle.distance_squared(scaled)) / 0.25).exp();
+    }
+  }
+  depth
+}
+
+/// Returns a number from zero to one, the same every time for a cell and seed.
+fn scattered(x: u32, y: u32, seed: u32) -> f32 {
+  // the pcg hash
+  let state = (x.wrapping_mul(1973) ^ y.wrapping_mul(9277) ^ seed.wrapping_mul(26699))
+    .wrapping_mul(747_796_405)
+    .wrapping_add(2_891_336_453);
+  let word = ((state >> ((state >> 28) + 4)) ^ state).wrapping_mul(277_803_737);
+  ((word >> 22) ^ word) as f32 / 4_294_967_296.0
+}
+
 /// Returns the map half as wide, each texel the mean of the four under it.
 ///
 /// A map one texel wide stays as it is.
@@ -224,9 +385,12 @@ fn encode(linear: f32) -> f32 {
 /// Returns the Rust source that names the maps and holds the sets' means.
 fn generated_source(mips: usize, color: &[Vec3], roughness: &[f32]) -> String {
   let mut sets = String::new();
-  for (index, (name, id)) in SETS.iter().enumerate() {
-    writeln!(sets, "/// The place of ambientCG's {id} among the sets.")
-      .expect("a string takes any write");
+  for (index, (name, source)) in SETS.iter().enumerate() {
+    let made = match source {
+      Source::Photo { id, .. } => format!("ambientCG's {id}"),
+      Source::Hammered => "the bake's hammered paint".to_string(),
+    };
+    writeln!(sets, "/// The place of {made} among the sets.").expect("a string takes any write");
     writeln!(sets, "pub(super) const {name}: u32 = {index};").expect("a string takes any write");
   }
   let listed = |numbers: &[f32]| {
@@ -273,6 +437,37 @@ fn generated_source(mips: usize, color: &[Vec3], roughness: &[f32]) -> String {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn the_dents_tile() {
+    for cells in DIMPLES {
+      for along in [0.0, 0.13, 0.5, 0.91] {
+        let (left, right) = (Vec2::new(0.0, along), Vec2::new(1.0, along));
+        let (top, foot) = (Vec2::new(along, 0.0), Vec2::new(along, 1.0));
+        assert!((dents(left, cells, 1) - dents(right, cells, 1)).abs() < 1e-4);
+        assert!((dents(top, cells, 1) - dents(foot, cells, 1)).abs() < 1e-4);
+      }
+    }
+  }
+
+  #[test]
+  fn evening_keeps_fine_detail_and_takes_out_wide_patches() {
+    let side = 128;
+    // stripes one texel apart, over a patch twice as bright on the left half
+    let texels = (0..side * side)
+      .map(|index| {
+        let (x, y) = (index % side, index / side);
+        let stripe = if y % 2 == 0 { 1.1 } else { 0.9 };
+        Vec3::splat(stripe * if x < side / 2 { 2.0 } else { 1.0 })
+      })
+      .collect();
+    let even = evened(&Map { side, texels });
+    let at = |x: usize, y: usize| even.texels[y * side + x].x;
+    // the middles of the two halves come out alike, and the stripes stay
+    let (left, right) = (at(side / 4, 10), at(3 * side / 4, 10));
+    assert!((left - right).abs() < 0.02 * left, "{left} against {right}");
+    assert!(at(side / 4, 11) < 0.9 * left);
+  }
 
   #[test]
   fn a_map_halves_to_the_means_of_its_quarters() {
