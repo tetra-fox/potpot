@@ -5,8 +5,8 @@ use std::mem::size_of;
 use super::damage::{
   BOUNCE_REACHES, HAZE_CELL, OPEN_CLEAR, OPEN_REACHES, SHADOW_BIAS, SHADOW_SPREAD,
 };
-use super::environment;
 use super::uniforms::Placed;
+use super::{environment, textures};
 use crate::mesh::Vertex;
 use crate::scene::LAMPS;
 
@@ -45,7 +45,8 @@ pub(super) const RESOLVE_SOURCE: &str = include_str!("resolve.wgsl");
 /// Returns `scene.wgsl` with what it is given ahead of it.
 ///
 /// That is [`LAMPS`], the length of its array of lamps, how far around a point it looks things
-/// up, the studio's diffuse light and its last mip, and the sRGB curve.
+/// up, the studio's diffuse light and its last mip, the texture sets' means, and the sRGB
+/// curve.
 pub(super) fn scene_source() -> String {
   // a row of numbers as the shader language writes it
   let listed = |numbers: &[f32]| {
@@ -66,6 +67,8 @@ pub(super) fn scene_source() -> String {
      const BOUNCE_REACHES = array<f32, {}>({});\n\
      const HARMONICS = array<vec3<f32>, 9>({});\n\
      const STUDIO_LAST: f32 = {:?};\n\
+     const MEAN_COLOR = array<vec3<f32>, {}>({});\n\
+     const ROUGHNESS_MEAN = array<f32, {}>({});\n\
      {SRGB_SOURCE}{}",
     OPEN_REACHES.len(),
     OPEN_REACHES.len(),
@@ -75,6 +78,13 @@ pub(super) fn scene_source() -> String {
     listed(&BOUNCE_REACHES),
     harmonics.join(", "),
     (environment::MIPS - 1) as f32,
+    textures::MEAN_COLOR.len(),
+    (textures::MEAN_COLOR.iter())
+      .map(|rgb| format!("vec3<f32>({})", listed(rgb)))
+      .collect::<Vec<_>>()
+      .join(", "),
+    textures::ROUGHNESS_MEAN.len(),
+    listed(&textures::ROUGHNESS_MEAN),
     include_str!("scene.wgsl")
   )
 }
@@ -100,7 +110,8 @@ pub(super) struct Layouts {
   /// The shadow map comes with its sampler, then the height map, then the bounce map with its
   /// sampler, then the DFG table, which takes the bounce map's sampler, then the specular map
   /// of the studio without its softbox with its sampler, then that of the softbox, which takes
-  /// the same sampler.
+  /// the same sampler, then the color, normal and roughness arrays of the texture sets with
+  /// their sampler.
   pub(super) maps: wgpu::BindGroupLayout,
   /// The picture's samples, for the pass that resolves them.
   pub(super) resolve: wgpu::BindGroupLayout,
@@ -156,6 +167,16 @@ impl Layouts {
       },
       count: None,
     };
+    let array = |binding| wgpu::BindGroupLayoutEntry {
+      binding,
+      visibility: wgpu::ShaderStages::FRAGMENT,
+      ty: wgpu::BindingType::Texture {
+        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+        view_dimension: wgpu::TextureViewDimension::D2Array,
+        multisampled: false,
+      },
+      count: None,
+    };
     Self {
       globals: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("potpot globals"),
@@ -180,6 +201,10 @@ impl Layouts {
           cube,
           sampler(7, wgpu::SamplerBindingType::Filtering),
           wgpu::BindGroupLayoutEntry { binding: 8, ..cube },
+          array(9),
+          array(10),
+          array(11),
+          sampler(12, wgpu::SamplerBindingType::Filtering),
         ],
       }),
       resolve: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

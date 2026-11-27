@@ -32,7 +32,7 @@ fn main() {
       .expect("a graphics adapter is found");
   eprintln!("timing on {}", adapter.get_info().name);
   let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-    required_features: wgpu::Features::TIMESTAMP_QUERY,
+    required_features: wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TEXTURE_COMPRESSION_BC,
     ..Default::default()
   }))
   .expect("the adapter opens a device with timestamp queries");

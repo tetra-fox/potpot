@@ -69,8 +69,10 @@ impl Graphics {
       );
     }
     // no more is asked of the adapter than every one has, apart from textures as large as
-    // this one has, for a window's own size
+    // this one has, for a window's own size, and the compressed textures the renderer's
+    // texture sets are in
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+      required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
       required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
       ..Default::default()
     }))?;

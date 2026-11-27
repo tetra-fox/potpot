@@ -8,7 +8,8 @@ use bytemuck::{Pod, Zeroable};
 
 use super::SHADOW_SIZE;
 use super::damage::Spread;
-use crate::material::Anisotropy;
+use super::textures;
+use crate::material::{Anisotropy, Textures};
 use crate::scene::{LAMPS, Light, Look, Object, Scene};
 
 #[repr(C)]
@@ -104,15 +105,18 @@ pub(super) struct Placed {
   texture: [f32; 4],
   /// How strongly it is brushed and how strongly spun.
   anisotropy: [f32; 2],
+  /// Its texture set's place among the sets plus one, or zero for none, and the points one
+  /// tile of the set covers.
+  textures: [f32; 2],
 }
 
 impl Placed {
-  /// The four columns of the model and then the four parts of the material.
+  /// The four columns of the model and then the five parts of the material.
   ///
   /// They come after the two locations a vertex takes.
-  const ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
+  const ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
     2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4,
-    6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x2
+    6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x2, 10 => Float32x2
   ];
 
   pub(super) fn of(object: &Object) -> Self {
@@ -138,6 +142,15 @@ impl Placed {
         f32::from(u8::from(material.shadowless)),
       ],
       anisotropy,
+      textures: material.textures.map_or([0.0; 2], |set| {
+        let (index, tile) = match set {
+          Textures::Walnut(tile) => (textures::WALNUT, tile),
+          Textures::Hammertone(tile) => (textures::HAMMERTONE, tile),
+          Textures::BrushedAluminium(tile) => (textures::BRUSHED_ALUMINIUM, tile),
+          Textures::PowderCoat(tile) => (textures::POWDER_COAT, tile),
+        };
+        [index as f32 + 1.0, tile]
+      }),
     }
   }
 
@@ -320,7 +333,7 @@ mod tests {
     let last = VERTEX_ATTRIBUTES[1];
     assert_eq!(last.offset + last.format.size(), size_of::<Vertex>() as u64);
     assert_takes(&module, "Placed", &Placed::ATTRIBUTES);
-    let last = Placed::ATTRIBUTES[7];
+    let last = Placed::ATTRIBUTES[Placed::ATTRIBUTES.len() - 1];
     assert_eq!(last.offset + last.format.size(), size_of::<Placed>() as u64);
   }
 

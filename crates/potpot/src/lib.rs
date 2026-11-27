@@ -41,7 +41,7 @@ mod renderer;
 mod scene;
 
 pub use glam;
-pub use material::{Anisotropy, Material};
+pub use material::{Anisotropy, Material, Textures};
 pub use mesh::{Mesh, Vertex};
 pub use renderer::{Place, Renderer};
 pub use scene::{LAMPS, Lamp, Light, Look, Object, Scene};

@@ -10,6 +10,7 @@ mod dfg;
 mod environment;
 mod picture;
 mod pipelines;
+mod textures;
 mod uniforms;
 
 use std::mem::size_of;
@@ -109,8 +110,10 @@ pub struct Renderer {
   studio_map: wgpu::Texture,
   /// The softbox alone, as [`Renderer::studio_map`] holds the rest.
   softbox_map: wgpu::Texture,
-  /// Whether the two maps of the studio are yet to be given their texels.
-  studio_unfilled: bool,
+  /// The color, normal and roughness maps of the texture sets, each an array of the sets.
+  texture_maps: [wgpu::Texture; 3],
+  /// Whether the maps of the studio and the texture sets are yet to be given their texels.
+  unfilled: bool,
   layouts: Layouts,
   present_options: wgpu::Buffer,
   /// Whether the target encodes sRGB itself.
@@ -259,8 +262,19 @@ struct Loaded {
 impl Renderer {
   /// Creates a renderer for targets of one format.
   ///
-  /// `target` is the format of the textures [`Renderer::render`] draws onto.
+  /// `target` is the format of the textures [`Renderer::render`] draws onto. The device needs
+  /// [`wgpu::Features::TEXTURE_COMPRESSION_BC`], which the texture sets are stored in.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the device was made without [`wgpu::Features::TEXTURE_COMPRESSION_BC`].
   pub fn new(device: &wgpu::Device, target: wgpu::TextureFormat) -> Self {
+    assert!(
+      device
+        .features()
+        .contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
+      "the device has bc texture compression"
+    );
     let layouts = Layouts::new(device);
     let pipelines = Pipelines::new(device, &layouts, target);
 
@@ -360,6 +374,39 @@ impl Renderer {
       })
     };
     let (studio_view, softbox_view) = (cube_view(&studio_map), cube_view(&softbox_map));
+    let texture_maps = TEXTURE_FORMATS.map(|(label, format)| {
+      device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+          width: textures::SIDE,
+          height: textures::SIDE,
+          depth_or_array_layers: textures::SETS,
+        },
+        mip_level_count: textures::MIPS,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+      })
+    });
+    let texture_views = texture_maps.each_ref().map(|map| {
+      map.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+      })
+    });
+    // the sets tile, and are seen at a glancing angle on the sides of things
+    let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+      label: Some("potpot textures"),
+      address_mode_u: wgpu::AddressMode::Repeat,
+      address_mode_v: wgpu::AddressMode::Repeat,
+      mag_filter: wgpu::FilterMode::Linear,
+      min_filter: wgpu::FilterMode::Linear,
+      mipmap_filter: wgpu::FilterMode::Linear,
+      anisotropy_clamp: 8,
+      ..Default::default()
+    });
     let studio_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
       label: Some("potpot studio"),
       mag_filter: wgpu::FilterMode::Linear,
@@ -393,6 +440,10 @@ impl Renderer {
         view(6, &studio_view),
         sampler(7, &studio_sampler),
         view(8, &softbox_view),
+        view(9, &texture_views[0]),
+        view(10, &texture_views[1]),
+        view(11, &texture_views[2]),
+        sampler(12, &texture_sampler),
       ],
     });
 
@@ -411,7 +462,8 @@ impl Renderer {
       dfg_texels: Some(dfg_texels),
       studio_map,
       softbox_map,
-      studio_unfilled: true,
+      texture_maps,
+      unfilled: true,
       present_options: uniform("potpot present", size_of::<Present>()),
       target_encodes: target.is_srgb(),
       max_side: device.limits().max_texture_dimension_2d,
@@ -687,10 +739,14 @@ impl Renderer {
       );
       queue.submit([encoder.finish()]);
     }
-    if self.studio_unfilled {
+    if self.unfilled {
       fill_cube(queue, &self.studio_map, environment::STUDIO);
       fill_cube(queue, &self.softbox_map, environment::SOFTBOX);
-      self.studio_unfilled = false;
+      let baked = [textures::ALBEDO, textures::NORMAL, textures::ROUGHNESS];
+      for ((map, texels), (_, format)) in self.texture_maps.iter().zip(baked).zip(TEXTURE_FORMATS) {
+        fill_sets(queue, map, format, texels);
+      }
+      self.unfilled = false;
     }
     self.draw_picture(device, queue, &picture, shapes, light, redrawn, reblur);
     self.picture = Some(picture);
@@ -1227,6 +1283,52 @@ fn placed_buffer(device: &wgpu::Device, room: usize) -> wgpu::Buffer {
     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
     mapped_at_creation: false,
   })
+}
+
+/// The label and format of the color, normal and roughness maps of the texture sets.
+const TEXTURE_FORMATS: [(&str, wgpu::TextureFormat); 3] = [
+  ("potpot albedo", wgpu::TextureFormat::Bc7RgbaUnormSrgb),
+  ("potpot normal", wgpu::TextureFormat::Bc5RgUnorm),
+  ("potpot roughness", wgpu::TextureFormat::Bc4RUnorm),
+];
+
+/// Writes baked blocks into an array of the texture sets, mip after mip.
+///
+/// A mip narrower than a block takes one whole block, as the bake stores it.
+fn fill_sets(
+  queue: &wgpu::Queue,
+  map: &wgpu::Texture,
+  format: wgpu::TextureFormat,
+  mut blocks: &[u8],
+) {
+  let block = format
+    .block_copy_size(None)
+    .expect("a compressed format has a block size");
+  for mip in 0..textures::MIPS {
+    let across = (textures::SIDE >> mip).div_ceil(4);
+    let layer = (across * across * block) as usize;
+    let (level, rest) = blocks.split_at(layer * textures::SETS as usize);
+    blocks = rest;
+    queue.write_texture(
+      wgpu::TexelCopyTextureInfo {
+        texture: map,
+        mip_level: mip,
+        origin: wgpu::Origin3d::ZERO,
+        aspect: wgpu::TextureAspect::All,
+      },
+      level,
+      wgpu::TexelCopyBufferLayout {
+        offset: 0,
+        bytes_per_row: Some(across * block),
+        rows_per_image: Some(across),
+      },
+      wgpu::Extent3d {
+        width: across * 4,
+        height: across * 4,
+        depth_or_array_layers: textures::SETS,
+      },
+    );
+  }
 }
 
 /// Writes baked texels into a cube map of the studio, mip after mip.

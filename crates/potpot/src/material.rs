@@ -2,6 +2,11 @@
 
 use glam::Vec3;
 
+/// The points one tile of brushed aluminium covers in [`Material::brushed`].
+const BRUSHED_TILE: f32 = 256.0;
+/// The points one tile of powder coat covers in [`Material::textured`].
+const POWDER_TILE: f32 = 96.0;
+
 /// A surface, as its color and how it takes the light.
 ///
 /// The shading follows Filament's standard model: a GGX highlight over Lambert diffuse, in the
@@ -36,6 +41,12 @@ pub struct Material {
   /// object's own z axis, for something lit from inside by one small light under its middle.
   /// Far past it the emission settles at about four tenths. Zero glows evenly.
   pub emission_radius: f32,
+  /// The photographed surface it is drawn with, if any.
+  ///
+  /// The set's color is multiplied into [`Material::color`], scaled so that its mean is white,
+  /// so the color still says the surface's color on the whole. Its roughness is scaled the same
+  /// way into [`Material::roughness`], and its relief bends the light.
+  pub textures: Option<Textures>,
   /// How rough the surface is with fine grain.
   ///
   /// Cast metal, powder coat and rubber have such a grain. It is made up on the spot and bends
@@ -73,6 +84,24 @@ pub enum Anisotropy {
   Spun(f32),
 }
 
+/// A set of photographed textures, from ambientCG.
+///
+/// Each kind holds the size of one tile of the set on the panel, in points. A face turned up
+/// takes the set as seen from above, the sides of something [`Anisotropy::Spun`] take it
+/// wrapped around the object's own z axis, and everything else takes it from the three axes,
+/// mixed by how squarely it faces each.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Textures {
+  /// Walnut, as on the cheeks of a synthesizer.
+  Walnut(f32),
+  /// Paint with a hammered, mottled relief.
+  Hammertone(f32),
+  /// Aluminium brushed in straight lines along the panel's x.
+  BrushedAluminium(f32),
+  /// Powder coat with a fine orange-peel relief.
+  PowderCoat(f32),
+}
+
 impl Material {
   /// Creates paint, print or anything else without a shine.
   pub fn matte(color: Vec3) -> Self {
@@ -85,6 +114,7 @@ impl Material {
       clearcoat_roughness: 0.0,
       emission: 0.0,
       emission_radius: 0.0,
+      textures: None,
       grain: 0.0,
       wear: 0.0,
       shadowless: false,
@@ -165,6 +195,7 @@ impl Material {
       metallic: 1.0,
       roughness: 0.4,
       anisotropy: Anisotropy::Brushed(0.6),
+      textures: Some(Textures::BrushedAluminium(BRUSHED_TILE)),
       ..Self::matte(color)
     }
   }
@@ -175,7 +206,8 @@ impl Material {
   pub fn textured(color: Vec3) -> Self {
     Self {
       roughness: 0.6,
-      grain: 1.0,
+      textures: Some(Textures::PowderCoat(POWDER_TILE)),
+      grain: 0.3,
       ..Self::matte(color)
     }
   }

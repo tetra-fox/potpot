@@ -47,6 +47,13 @@ struct Lamp {
 @group(1) @binding(7) var studio_sampler: sampler;
 // the softbox alone, as studio_map holds the rest
 @group(1) @binding(8) var softbox_map: texture_cube<f32>;
+// the texture sets' color, the x and y of the way their relief faces, and their roughness,
+// each an array of the sets
+@group(1) @binding(9) var albedo_map: texture_2d_array<f32>;
+@group(1) @binding(10) var normal_map: texture_2d_array<f32>;
+@group(1) @binding(11) var roughness_map: texture_2d_array<f32>;
+// tiling, for the three above
+@group(1) @binding(12) var texture_sampler: sampler;
 
 const TAU: f32 = 6.2831853;
 const PI: f32 = 3.14159265;
@@ -64,8 +71,8 @@ const CORE: f32 = 0.8;
 const HEAT: f32 = 20.0;
 // the most a half float holds, with room to spare
 const BRIGHTEST: f32 = 60000.0;
-// SHADOW_SPREAD, SHADOW_BIAS, OPEN_REACHES, OPEN_CLEAR, BOUNCE_REACHES, HARMONICS and
-// STUDIO_LAST are put ahead of this source when it is loaded
+// SHADOW_SPREAD, SHADOW_BIAS, OPEN_REACHES, OPEN_CLEAR, BOUNCE_REACHES, HARMONICS,
+// STUDIO_LAST, MEAN_COLOR and ROUGHNESS_MEAN are put ahead of this source when it is loaded
 // how many places are in each ring around a point that is looked at for what stands over it.
 // OPEN_REACHES is how far off each ring is
 const OPEN_STEPS: i32 = 10;
@@ -96,6 +103,9 @@ struct Placed {
   @location(8) texture: vec4<f32>,
   // x how strongly it is brushed along x, y how strongly spun around its own z axis
   @location(9) anisotropy: vec2<f32>,
+  // x the texture set's place among the sets plus one, or zero for none, y the points one tile
+  // of it covers
+  @location(10) textures: vec2<f32>,
 }
 
 struct Lit {
@@ -109,6 +119,7 @@ struct Lit {
   @location(5) center: vec3<f32>,
   @location(6) axis: vec3<f32>,
   @location(7) anisotropy: vec2<f32>,
+  @location(9) textures: vec2<f32>,
   // `world` taken where the triangle covers the pixel, which is a place on the triangle for a
   // pixel covered in part too. the bounce map is read at it
   @location(8) @interpolate(perspective, centroid) on_triangle: vec3<f32>,
@@ -149,6 +160,7 @@ fn seen_through(view: mat4x4<f32>, corner: Corner, placed: Placed) -> Lit {
   lit.center = placed.model_3.xyz;
   lit.axis = placed.model_2.xyz;
   lit.anisotropy = placed.anisotropy;
+  lit.textures = placed.textures;
   return lit;
 }
 
@@ -354,7 +366,7 @@ fn grain_on(at: vec2<f32>) -> vec3<f32> {
 
 // the way a surface faces once its texture has bent it, and in w how much lighter or
 // darker the texture makes that spot. the texture is made from where the spot is on the panel
-fn textured(normal: vec3<f32>, world: vec3<f32>, grain: f32, brushed: f32, wear: f32) -> vec4<f32> {
+fn textured(normal: vec3<f32>, world: vec3<f32>, grain: f32, wear: f32) -> vec4<f32> {
   var bent = normal;
   var shade = 0.0;
   if grain > 0.0 {
@@ -368,13 +380,6 @@ fn textured(normal: vec3<f32>, world: vec3<f32>, grain: f32, brushed: f32, wear:
     let up = grain_on(world.xy) * facing.z;
     bent += vec3<f32>(along.x + up.x, across.x + up.y, across.y + along.y) * grain;
     shade += (across.z + along.z + up.z) * grain;
-  }
-  if brushed > 0.0 {
-    // brushing in long streaks along x that only tilt the surface across themselves
-    let streak = rolling(vec2<f32>(world.x * 0.01, world.y * 3.1)) - 0.5;
-    let hair = rolling(vec2<f32>(world.x * 0.04 + 9.0, world.y * 7.3)) - 0.5;
-    bent.y += (streak * 0.14 + hair * 0.1) * brushed;
-    shade += (streak * 0.3 + hair * 0.22) * brushed;
   }
   if wear > 0.0 {
     // slow blotches of grime, and here and there a patch of fine scratches running one of
@@ -423,6 +428,113 @@ fn mirrored_studio(leaving: vec3<f32>, roughness: f32, lit: f32) -> vec3<f32> {
   let lod = roughness * STUDIO_LAST;
   let rest = textureSampleLevel(studio_map, studio_sampler, leaving, lod).rgb;
   return rest + textureSampleLevel(softbox_map, studio_sampler, leaving, lod).rgb * lit;
+}
+
+// a texture layer as a surface shows it at a spot
+struct Photo {
+  // the way the surface faces once the set's relief has bent it
+  normal: vec3<f32>,
+  // the set's color, in linear light
+  color: vec3<f32>,
+  roughness: f32,
+}
+
+// a texture layer at `at`, in tiles, on a surface facing `normal`. `across` and `up` are the ways
+// the set's x and y run on the surface, and `ddx` and `ddy` how far `at` moves across and down
+// a pixel, for the mip
+fn sampled_set(
+  layer: i32,
+  at: vec2<f32>,
+  ddx: vec2<f32>,
+  ddy: vec2<f32>,
+  normal: vec3<f32>,
+  across: vec3<f32>,
+  up: vec3<f32>,
+) -> Photo {
+  let toward = textureSampleGrad(normal_map, texture_sampler, at, layer, ddx, ddy).rg * 2.0 - 1.0;
+  let t = normalize(across - normal * dot(normal, across));
+  let b = normalize(up - normal * dot(normal, up) - t * dot(t, up));
+  let rise = sqrt(max(1.0 - dot(toward, toward), 0.0));
+  var photo: Photo;
+  photo.normal = t * toward.x + b * toward.y + normal * rise;
+  photo.color = textureSampleGrad(albedo_map, texture_sampler, at, layer, ddx, ddy).rgb;
+  photo.roughness = textureSampleGrad(roughness_map, texture_sampler, at, layer, ddx, ddy).r;
+  return photo;
+}
+
+// a texture layer laid flat on the plane through the spot spanned by `across` and `down`, a
+// tile every `tile` points. `moved` is how far the spot moves across and down a pixel
+fn laid(
+  layer: i32,
+  tile: f32,
+  world: vec3<f32>,
+  moved: mat2x3<f32>,
+  normal: vec3<f32>,
+  across: vec3<f32>,
+  down: vec3<f32>,
+) -> Photo {
+  let at = vec2<f32>(dot(world, across), dot(world, down)) / tile;
+  let ddx = vec2<f32>(dot(moved[0], across), dot(moved[0], down)) / tile;
+  let ddy = vec2<f32>(dot(moved[1], across), dot(moved[1], down)) / tile;
+  return sampled_set(layer, at, ddx, ddy, normal, across, -down);
+}
+
+// a texture layer as an object shows it: from above on a face turned up, wrapped around the
+// object's own z axis on the sides of what is spun, and from the three axes on the rest, mixed
+// by how squarely the surface faces each
+fn photographed(lit: Lit, normal: vec3<f32>, moved: mat2x3<f32>) -> Photo {
+  let layer = i32(lit.textures.x) - 1;
+  let tile = lit.textures.y;
+  let world = lit.world;
+  if normal.z > 0.7 {
+    return laid(layer, tile, world, moved, normal, vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0));
+  }
+  if lit.anisotropy.y > 0.0 {
+    // a tile every `tile` points of the way around at the spot's distance from the axis, and
+    // up it. the seam where the turn wraps faces away from the viewer, toward the panel's -y,
+    // and the mip follows the way around, which has no seam
+    let axis = normalize(lit.axis);
+    let out = world - lit.center;
+    let high = dot(out, axis);
+    let aside = out - axis * high;
+    let far = max(length(aside), 1e-4);
+    var back = vec3<f32>(0.0, 1.0, 0.0);
+    if abs(axis.y) > 0.9 {
+      back = vec3<f32>(1.0, 0.0, 0.0);
+    }
+    let first = normalize(back - axis * dot(back, axis));
+    let turn = atan2(dot(aside, cross(axis, first)), dot(aside, first));
+    let around = cross(axis, aside / far);
+    let at = vec2<f32>(turn * far, -high) / tile;
+    let ddx = vec2<f32>(dot(moved[0], around), -dot(moved[0], axis)) / tile;
+    let ddy = vec2<f32>(dot(moved[1], around), -dot(moved[1], axis)) / tile;
+    return sampled_set(layer, at, ddx, ddy, normal, around, axis);
+  }
+  var facing = normal * normal;
+  facing *= facing;
+  facing /= facing.x + facing.y + facing.z;
+  var mixed: Photo;
+  mixed.normal = vec3<f32>(0.0);
+  mixed.color = vec3<f32>(0.0);
+  mixed.roughness = 0.0;
+  // the walls take the layer upright, its y running down the panel's z
+  let planes = array<mat2x3<f32>, 3>(
+    mat2x3<f32>(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 0.0, -1.0)),
+    mat2x3<f32>(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, -1.0)),
+    mat2x3<f32>(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0)),
+  );
+  for (var axis = 0; axis < 3; axis++) {
+    let weight = facing[axis];
+    if weight < 0.01 {
+      continue;
+    }
+    let photo = laid(layer, tile, world, moved, normal, planes[axis][0], planes[axis][1]);
+    mixed.normal += photo.normal * weight;
+    mixed.color += photo.color * weight;
+    mixed.roughness += photo.roughness * weight;
+  }
+  mixed.normal = normalize(mixed.normal);
+  return mixed;
 }
 
 // a point of a surface as the shading model takes it
@@ -573,13 +685,26 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
   let on_face = grooves - flat_normal * dot(flat_normal, grooves);
   let lying = length(on_face) / max(length(grooves), 1e-6);
   drawn_out *= smoothstep(0.2, 0.6, lying);
-  let brushed = select(0.0, drawn_out, lit.anisotropy.x > 0.0);
-  let rough = textured(flat_normal, lit.world, lit.texture.x, brushed, lit.texture.y);
-  let base = decode(lit.color.rgb) * (1.0 + rough.w);
+  // the texture layer, whose color and roughness are scaled to a mean of one, so that the
+  // material's own say how light and how rough the surface is
+  var relief = flat_normal;
+  var tinted = decode(lit.color.rgb);
+  var given_roughness = lit.finish.y;
+  let moved = mat2x3<f32>(dpdx(lit.world), dpdy(lit.world));
+  if lit.textures.x > 0.0 {
+    let layer = i32(lit.textures.x) - 1;
+    let photo = photographed(lit, flat_normal, moved);
+    relief = photo.normal;
+    tinted *= photo.color / MEAN_COLOR[layer];
+    given_roughness *= photo.roughness / ROUGHNESS_MEAN[layer];
+  }
+  let rough = textured(relief, lit.world, lit.texture.x, lit.texture.y);
+  let base = tinted * (1.0 + rough.w);
   let emission = lit.color.a;
   let metallic = lit.finish.x;
-  // the grain bends the normal from pixel to pixel too, which widens the highlight the same way
-  let roughness = filtered(clamp(lit.finish.y, LEAST_ROUGHNESS, 1.0), rough.xyz);
+  // the relief and grain bend the normal from pixel to pixel too, which widens the highlight
+  // the same way
+  let roughness = filtered(clamp(given_roughness, LEAST_ROUGHNESS, 1.0), rough.xyz);
   let toward_light = globals.toward_light.xyz;
   let toward_viewer = globals.toward_viewer.xyz;
 

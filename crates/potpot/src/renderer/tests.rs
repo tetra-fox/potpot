@@ -29,9 +29,11 @@ impl Target {
     let adapter =
       pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
         .expect("a graphics adapter is found");
-    let (device, queue) =
-      pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-        .expect("the adapter opens a device");
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+      required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
+      ..Default::default()
+    }))
+    .expect("the adapter opens a device");
     let texture = device.create_texture(&wgpu::TextureDescriptor {
       label: None,
       size: wgpu::Extent3d {

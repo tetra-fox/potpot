@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Button, Edge, Grip, Knob, Meter, Top};
-use potpot::{Light, Look, Material, Object, Scene};
+use potpot::{Light, Look, Material, Object, Scene, Textures};
 
 use super::{Build, SEAT, SIZE, framed};
 
@@ -32,7 +32,7 @@ pub(super) fn retro(look: Look) -> Scene {
   let dark_ink = Material::ink(Vec3::new(0.04, 0.07, 0.16));
   let hole = Material::matte(SEAT);
 
-  // the panel and the rim around it
+  // the panel and a walnut rim around it
   build.put(
     parts::plate(width, height, 6.0),
     Mat4::IDENTITY,
@@ -41,7 +41,10 @@ pub(super) fn retro(look: Look) -> Scene {
   build.put(
     parts::frame(width, height, 9.0, 9.0, 16.0),
     at(width / 2.0, height / 2.0, 0.0),
-    Material::glossy(blue * 0.42),
+    Material {
+      textures: Some(Textures::Walnut(240.0)),
+      ..Material::satin(Vec3::new(0.42, 0.26, 0.15))
+    },
   );
 
   // the sections, each with a white banner carrying its name and slanted bars after it

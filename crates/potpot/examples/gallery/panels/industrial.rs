@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Handle, Knob, LedArc, LedRing, LedStops, PushSwitch, Vent};
-use potpot::{Anisotropy, Light, Look, Material, Scene};
+use potpot::{Light, Look, Material, Scene, Textures};
 use potpot_controls::interaction::Push;
 
 use super::{BLACK, Build, SEAT, SIZE, framed};
@@ -63,9 +63,8 @@ pub(super) fn industrial(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let mut build = Build::default();
   let metal = Material {
-    anisotropy: Anisotropy::Brushed(0.35),
-    grain: 0.3,
-    ..Material::brushed(GUNMETAL)
+    textures: Some(Textures::Hammertone(200.0)),
+    ..Material::satin(GUNMETAL * 0.7)
   };
   build.put(parts::plate(width, height, 6.0), Mat4::IDENTITY, metal);
 
