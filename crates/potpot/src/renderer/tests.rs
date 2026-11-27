@@ -3,7 +3,7 @@
 //! Most of these draw with a graphics device, so a plain test run leaves them out. `just
 //! gpu-test` runs them.
 
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use glam::{Mat4, Vec2, Vec3};
@@ -26,6 +26,14 @@ const SIZE: [u32; 2] = [448, 256];
 // TODO: let the tests' devices live at once when the driver no longer deadlocks
 static ONE_DEVICE: Mutex<()> = Mutex::new(());
 
+/// The instance every test's device is opened from.
+///
+/// It is kept for as long as the process lives, as potpot-window's `graphics::FIRST` is, for the
+/// same reason: the NVIDIA driver hands a process no graphics card once it has let go of 17
+/// Vulkan instances, and the adapter of a later one is the CPU's.
+// TODO: make an instance for each test again if a driver stops doing this
+static INSTANCE: LazyLock<wgpu::Instance> = LazyLock::new(wgpu::Instance::default);
+
 /// A target that scenes are drawn on and read back from.
 struct Target {
   device: wgpu::Device,
@@ -40,9 +48,8 @@ impl Target {
   fn new() -> Self {
     // a test that failed while it held the lock has let go of its device all the same
     let alone = ONE_DEVICE.lock().unwrap_or_else(PoisonError::into_inner);
-    let instance = wgpu::Instance::default();
     let adapter =
-      pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+      pollster::block_on(INSTANCE.request_adapter(&wgpu::RequestAdapterOptions::default()))
         .expect("a graphics adapter is found");
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
       required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
