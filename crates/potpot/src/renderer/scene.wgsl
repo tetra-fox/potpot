@@ -546,20 +546,26 @@ fn photographed(lit: Lit, normal: vec3<f32>, moved: mat2x3<f32>) -> Photo {
   return mixed;
 }
 
+// the share of a pixel `wide` cells across, about `at` in cells, that a row of cells' lit
+// squares covers. it is the pixel's mean, so a gap thinner than a pixel shows by how much of the
+// pixel it takes wherever it falls, the same across and down
+fn lit_share_of_cells(at: f32, wide: f32) -> f32 {
+  return (lit_up_to(at + wide * 0.5) - lit_up_to(at - wide * 0.5)) / wide;
+}
+
+// the length of lit square from zero up to `at`, in cells. each cell's square is centered in it
+fn lit_up_to(at: f32) -> f32 {
+  let gap = (1.0 - CELL_FILL) * 0.5;
+  return floor(at) * CELL_FILL + clamp(fract(at) - gap, 0.0, CELL_FILL);
+}
+
 // how much of a display's light shows at a place: all of it in each square cell `pitch`
-// apart, and little in the gaps between. where the cells are finer than a pixel they fade to
-// their mean, which keeps them from shimmering
+// apart, and GAP_LIGHT of it in the gaps between, taken over the pixel
 fn cells(at: vec2<f32>, pitch: f32) -> f32 {
   let across = at / pitch;
-  let blur = max(fwidth(across), vec2<f32>(1e-4));
-  // a cell's lit square is CELL_FILL of its width, and the gap shows GAP_LIGHT of the light
-  let edge = CELL_FILL * 0.5;
-  let off = abs(fract(across) - 0.5);
-  let inside = smoothstep(vec2<f32>(edge) + blur * 0.5, vec2<f32>(edge) - blur * 0.5, off);
-  let sharp = inside.x * inside.y;
-  let mean = CELL_FILL * CELL_FILL;
-  let fine = smoothstep(0.35, 0.7, max(blur.x, blur.y));
-  return mix(GAP_LIGHT, 1.0, mix(sharp, mean, fine));
+  let wide = max(fwidth(across), vec2<f32>(1e-4));
+  let lit = lit_share_of_cells(across.x, wide.x) * lit_share_of_cells(across.y, wide.y);
+  return mix(GAP_LIGHT, 1.0, lit);
 }
 
 // a point of a surface as the shading model takes it

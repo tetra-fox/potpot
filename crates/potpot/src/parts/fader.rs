@@ -94,7 +94,9 @@ impl Fader {
     }
   }
 
-  /// Creates a low cap with a fin, like a synthesizer's sliders.
+  /// Creates a low cap with a fin.
+  ///
+  /// A synthesizer's sliders have such caps.
   pub fn fin(width: f32, length: f32, height: f32) -> Self {
     Self {
       cap: Cap::Fin,

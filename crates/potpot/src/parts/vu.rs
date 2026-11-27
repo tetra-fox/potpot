@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use glam::{Mat4, Vec3};
 
-use super::{INK, dashes, frame, legend, ticks};
+use super::scale::ticks_of;
+use super::{INK, dashes, frame, legend};
 use crate::material::Material;
 use crate::mesh::Mesh;
 use crate::scene::Object;
@@ -51,8 +52,16 @@ impl Vu {
     let reach = height * 0.72;
     // the scale lies over the face and turns on the pivot
     let at_pivot = Mat4::from_translation(Vec3::new(0.0, pivot, FACE_UP));
-    let mut scale = ticks(MARKS, SWEEP, reach, reach + height * 0.05, 2);
-    let label_reach = reach + height * 0.15;
+    // hairline marks, the long ones as wide as the needle
+    let mut scale = ticks_of(
+      MARKS,
+      SWEEP,
+      reach,
+      reach + height * 0.05,
+      2,
+      height * 0.006,
+    );
+    let label_reach = reach + height * 0.16;
     for (index, label) in LABELS.iter().enumerate() {
       let turn = index as f32 / (LABELS.len() - 1) as f32;
       let angle = (turn - 0.5) * SWEEP;

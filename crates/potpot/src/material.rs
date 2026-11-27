@@ -54,8 +54,8 @@ pub struct Material {
   /// The pitch of the cells a display draws its picture in, in points, or zero for none.
   ///
   /// The light the surface gives off shows through a grid of cells this far apart, with a dark
-  /// gap between each, as a VFD's mesh or an LCD's pixels show it. Where the cells are finer
-  /// than a pixel the grid evens out to its mean.
+  /// gap between each, as a VFD's mesh or an LCD's pixels show it. Each pixel shows the mean of
+  /// the grid over it, so cells finer than a pixel even out.
   pub pitch: f32,
   /// How rough the surface is with fine grain.
   ///
@@ -132,7 +132,9 @@ impl Material {
     }
   }
 
-  /// Creates polished plastic, like a moulded cap.
+  /// Creates polished plastic.
+  ///
+  /// A moulded cap has such a finish.
   pub fn glossy(color: Vec3) -> Self {
     Self {
       roughness: 0.2,
@@ -140,7 +142,9 @@ impl Material {
     }
   }
 
-  /// Creates plastic with a soft sheen, like a rubbery coating.
+  /// Creates plastic with a soft sheen.
+  ///
+  /// A rubbery coating has such a sheen.
   pub fn satin(color: Vec3) -> Self {
     Self {
       roughness: 0.5,
@@ -148,7 +152,9 @@ impl Material {
     }
   }
 
-  /// Creates polished metal, which is mostly what it mirrors.
+  /// Creates polished metal.
+  ///
+  /// It is mostly what it mirrors.
   pub fn chrome(color: Vec3) -> Self {
     Self {
       metallic: 1.0,
@@ -157,7 +163,9 @@ impl Material {
     }
   }
 
-  /// Creates metal turned on a lathe, like the aluminium face of a knob.
+  /// Creates metal turned on a lathe.
+  ///
+  /// The aluminium face of a knob is turned so.
   pub fn spun(color: Vec3) -> Self {
     Self {
       metallic: 1.0,
@@ -213,7 +221,9 @@ impl Material {
     }
   }
 
-  /// Creates powder coat, a paint with a fine orange-peel relief, like a Nord's panel.
+  /// Creates powder coat.
+  ///
+  /// The paint has a fine orange-peel relief, as a Nord's panel has.
   pub fn powder_coat(color: Vec3) -> Self {
     Self {
       roughness: 0.6,
@@ -223,10 +233,10 @@ impl Material {
     }
   }
 
-  /// Creates aluminium dyed in its oxide, like an Elektron's panel.
+  /// Creates anodized aluminium.
   ///
-  /// The metal is bead-blasted before it is dyed, which leaves an even fine matte sheen in the
-  /// dye's color.
+  /// The metal is dyed in its oxide, as an Elektron's panel is. It is bead-blasted before it is
+  /// dyed, which leaves an even fine matte sheen in the dye's color.
   pub fn anodized(color: Vec3) -> Self {
     Self {
       metallic: 1.0,
@@ -236,7 +246,9 @@ impl Material {
     }
   }
 
-  /// Creates hammered enamel, like the panels of a Neve or a Pultec.
+  /// Creates hammered enamel.
+  ///
+  /// The panels of a Neve or a Pultec are painted so.
   pub fn hammertone(color: Vec3) -> Self {
     Self {
       roughness: 0.4,
@@ -245,7 +257,9 @@ impl Material {
     }
   }
 
-  /// Creates rubbery soft-touch paint, like the knobs of a Virus.
+  /// Creates rubbery soft-touch paint.
+  ///
+  /// The knobs of a Virus are painted so.
   pub fn soft_touch(color: Vec3) -> Self {
     Self {
       roughness: 0.82,
@@ -254,7 +268,9 @@ impl Material {
     }
   }
 
-  /// Creates moulded phenolic, like the chicken-head knobs of a 1176 or a Pultec.
+  /// Creates moulded phenolic.
+  ///
+  /// The chicken-head knobs of a 1176 or a Pultec are moulded so.
   ///
   /// Its moulded skin is a hard glossy coat over a slightly duller body.
   pub fn bakelite(color: Vec3) -> Self {
@@ -267,7 +283,9 @@ impl Material {
     }
   }
 
-  /// Creates oiled walnut, like a synthesizer's cheeks.
+  /// Creates oiled walnut.
+  ///
+  /// A synthesizer's cheeks are often of it.
   pub fn walnut() -> Self {
     Self {
       roughness: 0.5,
@@ -278,7 +296,9 @@ impl Material {
     }
   }
 
-  /// Creates the cream paper face of a VU meter, like an LA-2A's.
+  /// Creates the cream paper face of a VU meter.
+  ///
+  /// An LA-2A's meter has such a face.
   pub fn vu_face() -> Self {
     Self {
       roughness: 0.85,
@@ -287,7 +307,9 @@ impl Material {
     }
   }
 
-  /// Creates soft cloudy rubber, like a controller's pads.
+  /// Creates soft cloudy rubber.
+  ///
+  /// A controller's pads are of it.
   pub fn silicone(color: Vec3) -> Self {
     Self {
       roughness: 0.6,
@@ -296,7 +318,9 @@ impl Material {
     }
   }
 
-  /// Creates ink, for lettering and the marks of a scale.
+  /// Creates ink.
+  ///
+  /// It is for lettering and the marks of a scale.
   ///
   /// The ink is a little glossier than powder coat.
   pub fn ink(color: Vec3) -> Self {

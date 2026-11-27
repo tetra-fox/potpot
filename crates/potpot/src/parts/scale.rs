@@ -5,14 +5,18 @@ use glam::{Mat4, Vec3};
 use super::INK;
 use crate::mesh::Mesh;
 
+/// The half width of a long mark of a knob's or a fader's scale, in points.
+const KNOB_MARK: f32 = 1.0;
+
 /// Returns the reach and the half width of one mark of a scale.
 ///
-/// Every `long_every`th mark is half as long again as the others, and wider.
-fn mark(index: u32, long_every: u32, inner: f32, outer: f32) -> (f32, f32) {
+/// Every `long_every`th mark is half as long again as the others, and `long` wide each side,
+/// where the others are six tenths of that.
+fn mark(index: u32, long_every: u32, inner: f32, outer: f32, long: f32) -> (f32, f32) {
   if long_every > 0 && index.is_multiple_of(long_every) {
-    (outer + (outer - inner) * 0.5, 1.0)
+    (outer + (outer - inner) * 0.5, long)
   } else {
-    (outer, 0.6)
+    (outer, long * 0.6)
   }
 }
 
@@ -22,6 +26,18 @@ fn mark(index: u32, long_every: u32, inner: f32, outer: f32) -> (f32, f32) {
 /// [`knob_transform`](super::knob_transform) turns, from `inner` to `outer` away from the center.
 /// Every `long_every`th mark is half as long again.
 pub fn ticks(count: u32, sweep: f32, inner: f32, outer: f32, long_every: u32) -> Mesh {
+  ticks_of(count, sweep, inner, outer, long_every, KNOB_MARK)
+}
+
+/// Returns a scale as [`ticks`] makes it, its long marks `long` wide each side.
+pub(super) fn ticks_of(
+  count: u32,
+  sweep: f32,
+  inner: f32,
+  outer: f32,
+  long_every: u32,
+  long: f32,
+) -> Mesh {
   let mut ticks = Mesh::default();
   for tick in 0..count {
     let turn = if count > 1 {
@@ -29,7 +45,7 @@ pub fn ticks(count: u32, sweep: f32, inner: f32, outer: f32, long_every: u32) ->
     } else {
       0.5
     };
-    let (reach, half_width) = mark(tick, long_every, inner, outer);
+    let (reach, half_width) = mark(tick, long_every, inner, outer, long);
     let mark = Mesh::cuboid(
       Vec3::new(-half_width, -reach, 0.0),
       Vec3::new(half_width, -inner, INK),
@@ -52,7 +68,7 @@ pub fn fader_ticks(count: u32, travel: f32, inner: f32, outer: f32, long_every: 
     } else {
       0.0
     };
-    let (reach, half) = mark(tick, long_every, inner, outer);
+    let (reach, half) = mark(tick, long_every, inner, outer, KNOB_MARK);
     let y = along * travel;
     for side in [-1.0_f32, 1.0] {
       let (from, to) = (side * inner, side * reach);
