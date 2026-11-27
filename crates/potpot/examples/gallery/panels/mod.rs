@@ -27,7 +27,7 @@ use potpot::parts::{self, Tabs};
 use potpot::{Lamp, Light, Look, Material, Mesh, Object, Scene};
 use potpot_controls::interaction::Target;
 
-use self::shared::{ALUMINUM, BLACK, SEAT, lettering};
+use self::shared::{ALUMINUM, BLACK, SEAT, key, key_ink, lettering};
 
 /// The width and height of a page, under the tabs.
 const PAGE: Vec2 = Vec2::new(1024.0, 640.0);
@@ -243,21 +243,8 @@ fn dim() -> Light {
 /// The height of the lettering on a key.
 const KEY_LETTERS: f32 = 6.5;
 
-/// Returns the rubber of a key that is lit while it is chosen.
-///
-/// It is lit evenly and low, so that no hot middle or page's bloom covers the ink on it.
-fn key(chosen: bool) -> Material {
-  let amber = Vec3::new(1.0, 0.66, 0.14);
-  Material::silicone(Vec3::splat(0.62)).lit(amber, if chosen { 0.35 } else { 0.0 }, 0.0)
-}
-
-/// Returns the ink lettering on a key is printed in.
-fn key_ink() -> Material {
-  Material::ink(Vec3::splat(0.06))
-}
-
 /// Returns the pale rubber of buttons and pucks.
-fn rubber() -> Material {
+fn button_rubber() -> Material {
   Material::silicone(Vec3::new(0.62, 0.62, 0.60))
 }
 

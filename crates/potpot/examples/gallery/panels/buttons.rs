@@ -7,7 +7,7 @@ use potpot::parts::{Button, PushSwitch};
 use potpot::{Look, Material, Scene};
 use potpot_controls::interaction::Push;
 
-use super::{Catalog, SEAT, dim, rubber};
+use super::{Catalog, SEAT, button_rubber, dim};
 
 /// The space between the middles of a cell's three specimens.
 ///
@@ -50,7 +50,7 @@ pub(super) fn buttons(look: Look) -> Scene {
         Material::matte(SEAT),
       );
       let level = f32::from(u8::from(on));
-      let lit = rubber().lit(color, level, shape.emission_radius());
+      let lit = button_rubber().lit(color, level, shape.emission_radius());
       build.place(
         &body,
         shape.transform(at.x, at.y, f32::from(u8::from(held))),
@@ -99,7 +99,7 @@ pub(super) fn buttons(look: Look) -> Scene {
       let (material, color) = match plunger {
         Plunger::Rubber(color) => {
           let radius = switch.plunger.emission_radius();
-          (rubber().lit(color, level, radius), Some(color))
+          (button_rubber().lit(color, level, radius), Some(color))
         }
         Plunger::Backlit(color) => (switch.backlight(color, level), Some(color)),
         Plunger::Black => (Material::glossy(Vec3::new(0.05, 0.05, 0.055)), None),

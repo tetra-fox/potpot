@@ -6,7 +6,7 @@ use potpot::glam::{Mat4, Vec3};
 use potpot::parts::{Arrow, Selector, Stepper};
 use potpot::{Look, Material, Scene};
 
-use super::{BLACK, Catalog, KEY_LETTERS, SEAT, at, dim, key, key_ink, lettering, rubber};
+use super::{BLACK, Catalog, KEY_LETTERS, SEAT, at, button_rubber, dim, key, key_ink, lettering};
 
 /// Returns selectors and steppers on a dark panel.
 ///
@@ -36,7 +36,7 @@ pub(super) fn selectors(look: Look) -> Scene {
     for (choice, written) in choices.iter().enumerate() {
       let chosen = choice == chosen;
       let material = if chosen && !lit {
-        rubber()
+        button_rubber()
       } else {
         key(chosen)
       };
@@ -67,13 +67,17 @@ pub(super) fn selectors(look: Look) -> Scene {
     let shown = Mat4::from_translation(Vec3::new(x, y, 0.4));
     build.put(lettering(value, 10.0), shown, Material::lamp(amber));
     let (body, seat) = (Arc::new(stepper.body()), Arc::new(stepper.seat(2.0)));
-    for (arrow, sign) in [(Arrow::Back, "-"), (Arrow::On, "+")] {
+    let signs = stepper.signs().map(Arc::new);
+    for (arrow, sign) in [Arrow::Back, Arrow::On].into_iter().zip(&signs) {
       let pressed = held == Some(arrow);
       let middle = cell.middle + stepper.middle(arrow);
       build.place(&seat, at(middle), Material::matte(SEAT));
-      build.place(&body, stepper.transform(x, y, arrow, pressed), rubber());
-      let sign_at = stepper.sign(x, y, arrow, pressed);
-      build.put(lettering(sign, 9.0), sign_at, key_ink());
+      build.place(
+        &body,
+        stepper.transform(x, y, arrow, pressed),
+        button_rubber(),
+      );
+      build.place(sign, stepper.sign(x, y, arrow, pressed), key_ink());
     }
     catalog.label(*cell, name);
   }

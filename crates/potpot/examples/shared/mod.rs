@@ -178,6 +178,24 @@ impl Drawn {
   }
 }
 
+/// Returns the pale rubber of keys and buttons.
+pub fn rubber() -> Material {
+  Material::silicone(Vec3::splat(0.62))
+}
+
+/// Returns a key's rubber, lit in amber while it is chosen.
+///
+/// It is lit evenly and low, so that no hot middle or bloom covers the ink on it.
+pub fn key(chosen: bool) -> Material {
+  let amber = Vec3::new(1.0, 0.66, 0.14);
+  rubber().lit(amber, if chosen { 0.35 } else { 0.0 }, 0.0)
+}
+
+/// Returns the ink that lettering on a key is printed in.
+pub fn key_ink() -> Material {
+  Material::ink(Vec3::splat(0.06))
+}
+
 /// Returns the materials of a fader's cap and of its stripe.
 ///
 /// The cap is black and the stripe white.

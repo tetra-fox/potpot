@@ -6,7 +6,7 @@ use potpot::glam::{Mat4, Vec3};
 use potpot::parts::Pad;
 use potpot::{Look, Material, Object, Scene};
 
-use super::{Catalog, dim, rubber};
+use super::{Catalog, button_rubber, dim};
 
 /// Returns a wide pad and a square one on a dark panel.
 ///
@@ -39,7 +39,7 @@ pub(super) fn pads(look: Look) -> Scene {
       Object {
         mesh: Arc::new(pad.puck()),
         transform: on_pad,
-        material: rubber().lit(blue, level, pad.puck.emission_radius()),
+        material: button_rubber().lit(blue, level, pad.puck.emission_radius()),
       },
     ]);
     if level > 0.0 {
