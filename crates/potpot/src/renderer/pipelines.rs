@@ -37,6 +37,8 @@ pub(super) const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
 
 /// The sRGB curve, which goes ahead of each shader that uses it.
 const SRGB_SOURCE: &str = include_str!("srgb.wgsl");
+/// The cells of a display's face, which go ahead of the scene shader.
+pub(super) const CELLS_SOURCE: &str = include_str!("cells.wgsl");
 /// The tone map, which goes ahead of the present shader.
 pub(super) const TONEMAP_SOURCE: &str = include_str!("tonemap.wgsl");
 /// The shader that resolves the picture's samples.
@@ -45,8 +47,8 @@ pub(super) const RESOLVE_SOURCE: &str = include_str!("resolve.wgsl");
 /// Returns `scene.wgsl` with what it is given ahead of it.
 ///
 /// That is [`LAMPS`], the length of its array of lamps, how far around a point it looks things
-/// up, the studio's diffuse light and its last mip, the texture sets' means, and the sRGB
-/// curve.
+/// up, the studio's diffuse light and its last mip, the texture sets' means, the sRGB curve,
+/// and the cells of a display's face.
 pub(super) fn scene_source() -> String {
   // a row of numbers as the shader language writes it
   let listed = |numbers: &[f32]| {
@@ -69,7 +71,7 @@ pub(super) fn scene_source() -> String {
      const STUDIO_LAST: f32 = {:?};\n\
      const MEAN_COLOR = array<vec3<f32>, {}>({});\n\
      const ROUGHNESS_MEAN = array<f32, {}>({});\n\
-     {SRGB_SOURCE}{}",
+     {SRGB_SOURCE}{CELLS_SOURCE}{}",
     OPEN_REACHES.len(),
     OPEN_REACHES.len(),
     listed(&OPEN_REACHES),

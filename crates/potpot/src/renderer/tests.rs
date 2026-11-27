@@ -867,6 +867,128 @@ fn light_off_what_changes_color_shows_on_a_sliver_where_the_sliver_is() {
   }
 }
 
+/// Returns what a function of WGSL makes of each of `inputs`, run in a compute shader.
+///
+/// `source` goes ahead of the shader, and `of_value` is an expression of `value`, one of the
+/// inputs, that comes to a `vec4<f32>`.
+fn computed(source: &str, of_value: &str, inputs: &[[f32; 4]]) -> Vec<[f32; 4]> {
+  let target = Target::new();
+  let device = &target.device;
+  let source = format!(
+    "{source}
+     @group(0) @binding(0) var<storage, read_write> values: array<vec4<f32>>;
+     @compute @workgroup_size(1)
+     fn main(@builtin(global_invocation_id) at: vec3<u32>) {{
+       let value = values[at.x];
+       values[at.x] = {of_value};
+     }}"
+  );
+  let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    label: None,
+    source: wgpu::ShaderSource::Wgsl(source.into()),
+  });
+  let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+    label: None,
+    layout: None,
+    module: &module,
+    entry_point: Some("main"),
+    compilation_options: wgpu::PipelineCompilationOptions::default(),
+    cache: None,
+  });
+  let values = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    label: None,
+    contents: bytemuck::cast_slice(inputs),
+    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+  });
+  let read = device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
+    size: values.size(),
+    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+    mapped_at_creation: false,
+  });
+  let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    label: None,
+    layout: &pipeline.get_bind_group_layout(0),
+    entries: &[wgpu::BindGroupEntry {
+      binding: 0,
+      resource: values.as_entire_binding(),
+    }],
+  });
+  let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+  {
+    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+    pass.set_pipeline(&pipeline);
+    pass.set_bind_group(0, &group, &[]);
+    pass.dispatch_workgroups(inputs.len() as u32, 1, 1);
+  }
+  encoder.copy_buffer_to_buffer(&values, 0, &read, 0, values.size());
+  target.queue.submit([encoder.finish()]);
+  (read.slice(..)).map_async(wgpu::MapMode::Read, |mapped| {
+    mapped.expect("the values map")
+  });
+  (device.poll(wgpu::PollType::wait_indefinitely())).expect("the device finishes");
+  let mapped = read.slice(..).get_mapped_range();
+  bytemuck::cast_slice(&mapped).to_vec()
+}
+
+#[test]
+#[ignore = "needs a graphics device"]
+fn a_display_shows_the_mean_of_its_cells_over_each_pixel() {
+  // the lit square takes 0.78 of a cell each way, and the gap shows 0.3 of the light
+  let mean = 0.3 + 0.7 * 0.78 * 0.78;
+  let shown = |inputs: &[[f32; 4]]| {
+    let source = pipelines::CELLS_SOURCE;
+    let out = computed(source, "vec4<f32>(cells_over(value.xy, value.zw))", inputs);
+    out.into_iter().map(|value| value[0]).collect::<Vec<f32>>()
+  };
+
+  // a pixel over a great many cells shows their mean, wherever it is
+  let wide = [[0.0, 0.0], [0.31, 7.9], [12.5, 3.25]].map(|[x, y]| [x, y, 1000.5, 1000.5]);
+  for (input, got) in wide.iter().zip(shown(&wide)) {
+    assert!(
+      (got - mean).abs() < 1e-3,
+      "{input:?} shows {got}, not {mean}"
+    );
+  }
+
+  // pixels a third of a cell wide, whose gap is narrower than a pixel: over the nine places a
+  // pixel can stand in a cell they show the mean, from any start and either way round
+  let third = 1.0 / 3.0;
+  for start in [0.0, 0.1, 0.37, 0.71] {
+    let places: Vec<[f32; 4]> = (0..9)
+      .map(|place| {
+        let (across, down) = ((place % 3) as f32, (place / 3) as f32);
+        [start + across * third, 0.2 + down * third, third, third]
+      })
+      .collect();
+    let flipped: Vec<[f32; 4]> = (places.iter()).map(|&[x, y, w, h]| [y, x, h, w]).collect();
+    for inputs in [places, flipped] {
+      let got = shown(&inputs).iter().sum::<f32>() / 9.0;
+      assert!(
+        (got - mean).abs() < 1e-4,
+        "from {start} the pixels show {got}, not {mean}"
+      );
+    }
+  }
+
+  // a pixel far finer than the gap shows all the light in the lit square and 0.3 in the gap,
+  // which is at a cell's edges
+  let fine = [
+    [0.5, 0.5, 1e-3, 1e-3],
+    [3.4, 7.6, 1e-3, 1e-3],
+    [0.0, 0.5, 1e-3, 1e-3],
+    [0.5, 0.02, 1e-3, 1e-3],
+    [2.97, 4.03, 1e-3, 1e-3],
+  ];
+  let wanted = [1.0, 1.0, 0.3, 0.3, 0.3];
+  for ((input, got), wanted) in fine.iter().zip(shown(&fine)).zip(wanted) {
+    assert!(
+      (got - wanted).abs() < 1e-3,
+      "{input:?} shows {got}, not {wanted}"
+    );
+  }
+}
+
 #[test]
 #[ignore = "needs a graphics device"]
 fn the_tone_map_meets_the_khronos_reference_points() {
@@ -883,66 +1005,14 @@ fn the_tone_map_meets_the_khronos_reference_points() {
     ([4.0, 2.0, 0.5], [0.983256, 0.639951, 0.382473]),
     ([0.02, 0.3, 0.9], [0.007559, 0.272777, 0.841103]),
   ];
-  let target = Target::new();
-  let device = &target.device;
-  let source = format!(
-    "{}
-     @group(0) @binding(0) var<storage, read_write> light: array<vec4<f32>>;
-     @compute @workgroup_size(1)
-     fn main(@builtin(global_invocation_id) at: vec3<u32>) {{
-       light[at.x] = vec4<f32>(tonemap(light[at.x].rgb), 1.0);
-     }}",
-    pipelines::TONEMAP_SOURCE
-  );
-  let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-    label: None,
-    source: wgpu::ShaderSource::Wgsl(source.into()),
-  });
-  let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-    label: None,
-    layout: None,
-    module: &module,
-    entry_point: Some("main"),
-    compilation_options: wgpu::PipelineCompilationOptions::default(),
-    cache: None,
-  });
   let inputs: Vec<[f32; 4]> = (points.iter())
     .map(|([red, green, blue], _)| [*red, *green, *blue, 1.0])
     .collect();
-  let light = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-    label: None,
-    contents: bytemuck::cast_slice(&inputs),
-    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-  });
-  let read = device.create_buffer(&wgpu::BufferDescriptor {
-    label: None,
-    size: light.size(),
-    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-    mapped_at_creation: false,
-  });
-  let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-    label: None,
-    layout: &pipeline.get_bind_group_layout(0),
-    entries: &[wgpu::BindGroupEntry {
-      binding: 0,
-      resource: light.as_entire_binding(),
-    }],
-  });
-  let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
-  {
-    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
-    pass.set_pipeline(&pipeline);
-    pass.set_bind_group(0, &group, &[]);
-    pass.dispatch_workgroups(points.len() as u32, 1, 1);
-  }
-  encoder.copy_buffer_to_buffer(&light, 0, &read, 0, light.size());
-  target.queue.submit([encoder.finish()]);
-  (read.slice(..)).map_async(wgpu::MapMode::Read, |mapped| {
-    mapped.expect("the light maps")
-  });
-  (device.poll(wgpu::PollType::wait_indefinitely())).expect("the device finishes");
-  let mapped = read.slice(..).get_mapped_range();
-  let mapped: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
+  let mapped = computed(
+    pipelines::TONEMAP_SOURCE,
+    "vec4<f32>(tonemap(value.rgb), 1.0)",
+    &inputs,
+  );
   for ((input, wanted), got) in points.iter().zip(mapped) {
     for (wanted, got) in wanted.iter().zip(got) {
       assert!(

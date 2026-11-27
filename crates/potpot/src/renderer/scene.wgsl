@@ -69,14 +69,11 @@ const CORE: f32 = 0.8;
 // how far past its color the middle of something lit from inside is driven, which fills its
 // weaker channels toward white
 const HEAT: f32 = 20.0;
-// the share of a display's cell its lit square takes across
-const CELL_FILL: f32 = 0.78;
-// the share of a display's light that shows in the gaps between its cells
-const GAP_LIGHT: f32 = 0.3;
 // the most a half float holds, with room to spare
 const BRIGHTEST: f32 = 60000.0;
 // SHADOW_SPREAD, SHADOW_BIAS, OPEN_REACHES, OPEN_CLEAR, BOUNCE_REACHES, HARMONICS,
-// STUDIO_LAST, MEAN_COLOR and ROUGHNESS_MEAN are put ahead of this source when it is loaded
+// STUDIO_LAST, MEAN_COLOR and ROUGHNESS_MEAN are put ahead of this source when it is loaded, and
+// so is cells.wgsl
 // how many places are in each ring around a point that is looked at for what stands over it.
 // OPEN_REACHES is how far off each ring is
 const OPEN_STEPS: i32 = 10;
@@ -546,26 +543,11 @@ fn photographed(lit: Lit, normal: vec3<f32>, moved: mat2x3<f32>) -> Photo {
   return mixed;
 }
 
-// the share of a pixel `wide` cells across, about `at` in cells, that a row of cells' lit
-// squares covers. it is the pixel's mean, so a gap thinner than a pixel shows by how much of the
-// pixel it takes wherever it falls, the same across and down
-fn lit_share_of_cells(at: f32, wide: f32) -> f32 {
-  return (lit_up_to(at + wide * 0.5) - lit_up_to(at - wide * 0.5)) / wide;
-}
-
-// the length of lit square from zero up to `at`, in cells. each cell's square is centered in it
-fn lit_up_to(at: f32) -> f32 {
-  let gap = (1.0 - CELL_FILL) * 0.5;
-  return floor(at) * CELL_FILL + clamp(fract(at) - gap, 0.0, CELL_FILL);
-}
-
 // how much of a display's light shows at a place: all of it in each square cell `pitch`
 // apart, and GAP_LIGHT of it in the gaps between, taken over the pixel
 fn cells(at: vec2<f32>, pitch: f32) -> f32 {
   let across = at / pitch;
-  let wide = max(fwidth(across), vec2<f32>(1e-4));
-  let lit = lit_share_of_cells(across.x, wide.x) * lit_share_of_cells(across.y, wide.y);
-  return mix(GAP_LIGHT, 1.0, lit);
+  return cells_over(across, fwidth(across));
 }
 
 // a point of a surface as the shading model takes it
