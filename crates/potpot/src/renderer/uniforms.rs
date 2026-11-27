@@ -105,11 +105,12 @@ pub(super) struct Placed {
   texture: [f32; 4],
   /// How strongly it is brushed and how strongly spun.
   anisotropy: [f32; 2],
-  /// Its texture set and how the set is laid on it.
+  /// Its texture set, how the set is laid on it, and its display's cells.
   ///
   /// The set is its place among the sets plus one, or zero for none. Then come the points one
-  /// tile covers, and one when the set wraps around the object's own z axis.
-  textures: [f32; 3],
+  /// tile covers, one when the set wraps around the object's own z axis, and the pitch of the
+  /// cells of a display.
+  textures: [f32; 4],
 }
 
 impl Placed {
@@ -118,7 +119,7 @@ impl Placed {
   /// They come after the two locations a vertex takes.
   const ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
     2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4,
-    6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x2, 10 => Float32x3
+    6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x2, 10 => Float32x4
   ];
 
   pub(super) fn of(object: &Object) -> Self {
@@ -144,16 +145,23 @@ impl Placed {
         f32::from(u8::from(material.shadowless)),
       ],
       anisotropy,
-      textures: material.textures.map_or([0.0; 3], |set| {
-        let (index, tile) = match set {
-          Textures::Walnut(tile) => (textures::WALNUT, tile),
-          Textures::Hammertone(tile) => (textures::HAMMERTONE, tile),
-          Textures::BrushedAluminium(tile) => (textures::BRUSHED_ALUMINIUM, tile),
-          Textures::PowderCoat(tile) => (textures::POWDER_COAT, tile),
-        };
-        let wraps = matches!(material.anisotropy, Anisotropy::Spun(_));
-        [index as f32 + 1.0, tile, f32::from(u8::from(wraps))]
-      }),
+      textures: material
+        .textures
+        .map_or([0.0, 0.0, 0.0, material.pitch], |set| {
+          let (index, tile) = match set {
+            Textures::Walnut(tile) => (textures::WALNUT, tile),
+            Textures::Hammertone(tile) => (textures::HAMMERTONE, tile),
+            Textures::BrushedAluminium(tile) => (textures::BRUSHED_ALUMINIUM, tile),
+            Textures::PowderCoat(tile) => (textures::POWDER_COAT, tile),
+          };
+          let wraps = matches!(material.anisotropy, Anisotropy::Spun(_));
+          [
+            index as f32 + 1.0,
+            tile,
+            f32::from(u8::from(wraps)),
+            material.pitch,
+          ]
+        }),
     }
   }
 

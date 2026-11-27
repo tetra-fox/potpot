@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Button, Edge, Grip, Knob, Meter, Top};
-use potpot::{Light, Look, Material, Object, Scene, Textures};
+use potpot::{Light, Look, Material, Object, Scene};
 
-use super::{Build, SEAT, SIZE, WALNUT, framed};
+use super::{Build, SEAT, SIZE, framed};
 
 /// Returns a soft synth's front in the manner of the mid 2000s.
 ///
@@ -41,10 +41,7 @@ pub(super) fn retro(look: Look) -> Scene {
   build.put(
     parts::frame(width, height, 9.0, 9.0, 16.0),
     at(width / 2.0, height / 2.0, 0.0),
-    Material {
-      textures: Some(Textures::Walnut(240.0)),
-      ..Material::satin(WALNUT)
-    },
+    Material::walnut(),
   );
 
   // the sections, each with a white banner carrying its name and slanted bars after it
@@ -113,8 +110,8 @@ pub(super) fn retro(look: Look) -> Scene {
   let dial = |build: &mut Build, x: f32, y: f32, turn: f32, name: &str| {
     let turned = at(0.0, 0.0, UP) * parts::knob_transform(x, y, turn, parts::KNOB_SWEEP);
     build.place(&ring, at(x, y, UP), ink);
-    build.place(&body, turned, Material::satin(Vec3::splat(0.2)));
-    build.place(&face, turned, Material::satin(Vec3::splat(0.36)));
+    build.place(&body, turned, Material::soft_touch(Vec3::splat(0.12)));
+    build.place(&face, turned, Material::soft_touch(Vec3::splat(0.3)));
     build.place(&line, turned, ink);
     build.letters(name, Vec3::new(x, y + 36.0, UP), 6.5, ink);
   };
@@ -169,7 +166,11 @@ pub(super) fn retro(look: Look) -> Scene {
   ];
   for (x, y, lit, name) in switches {
     build.place(&key_seat, at(x, y, UP), hole);
-    build.place(&key_body, at(x, y, UP), Material::satin(Vec3::splat(0.22)));
+    build.place(
+      &key_body,
+      at(x, y, UP),
+      Material::soft_touch(Vec3::splat(0.2)),
+    );
     build.letters(name, Vec3::new(x, y + 30.0, UP), 6.5, ink);
     let level = if lit { 1.0 } else { 0.0 };
     build.place(&light_seat, at(x, y - 31.0, UP), hole);
@@ -224,7 +225,8 @@ pub(super) fn retro(look: Look) -> Scene {
   build.put(
     potpot::Mesh::cuboid(Vec3::new(-138.0, -106.0, 0.0), Vec3::new(138.0, 106.0, 1.0)),
     at(middle, top + 26.0, 5.0),
-    Material::pane(glass).lit(Vec3::new(0.1, 0.26, 0.56), 0.16, 0.0),
+    // an LCD, its cells a point and a half apart
+    Material::display_glass(glass, 1.5).lit(Vec3::new(0.1, 0.26, 0.56), 0.16, 0.0),
   );
   let glow = Material::matte(shown).lit(shown, 0.6, 0.0);
   let dim = Material::matte(shown * 0.5).lit(shown * 0.6, 0.3, 0.0);

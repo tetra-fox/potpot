@@ -4,8 +4,12 @@ use glam::Vec3;
 
 /// The points one tile of brushed aluminium covers in [`Material::brushed`].
 const BRUSHED_TILE: f32 = 256.0;
-/// The points one tile of powder coat covers in [`Material::textured`].
+/// The points one tile of powder coat covers in [`Material::powder_coat`].
 const POWDER_TILE: f32 = 96.0;
+/// The points one tile of hammertone covers in [`Material::hammertone`].
+const HAMMERTONE_TILE: f32 = 200.0;
+/// The points one tile of walnut covers in [`Material::walnut`].
+const WALNUT_TILE: f32 = 240.0;
 
 /// A surface, as its color and how it takes the light.
 ///
@@ -47,6 +51,12 @@ pub struct Material {
   /// so the color still says the surface's color on the whole. Its roughness is scaled the same
   /// way into [`Material::roughness`], and its relief bends the light.
   pub textures: Option<Textures>,
+  /// The pitch of the cells a display draws its picture in, in points, or zero for none.
+  ///
+  /// The light the surface gives off shows through a grid of cells this far apart, with a dark
+  /// gap between each, as a VFD's mesh or an LCD's pixels show it. Where the cells are finer
+  /// than a pixel the grid evens out to its mean.
+  pub pitch: f32,
   /// How rough the surface is with fine grain.
   ///
   /// Cast metal, powder coat and rubber have such a grain. It is made up on the spot and bends
@@ -115,13 +125,14 @@ impl Material {
       emission: 0.0,
       emission_radius: 0.0,
       textures: None,
+      pitch: 0.0,
       grain: 0.0,
       wear: 0.0,
       shadowless: false,
     }
   }
 
-  /// Creates polished plastic, like Bakelite.
+  /// Creates polished plastic, like a moulded cap.
   pub fn glossy(color: Vec3) -> Self {
     Self {
       roughness: 0.2,
@@ -166,14 +177,16 @@ impl Material {
     }
   }
 
-  /// Creates the lit face of a screen behind glass.
+  /// Creates the face of a VFD, LCD or LED display behind glass.
   ///
   /// The face lights itself in `color`, its black, so that the scene's light and shadows leave
-  /// it even. The glass is a dimmer mirror than [`Material::pane`].
-  pub fn screen(color: Vec3) -> Self {
+  /// it even. What is lit on it shows through cells `size` points apart, as
+  /// [`Material::pitch`] draws them. The glass is a dimmer mirror than [`Material::pane`].
+  pub fn display_glass(color: Vec3, size: f32) -> Self {
     Self {
       emission: 1.0,
       clearcoat: 0.5,
+      pitch: size,
       ..Self::pane(color)
     }
   }
@@ -200,15 +213,77 @@ impl Material {
     }
   }
 
-  /// Creates paint with a fine rough texture.
-  ///
-  /// A powder coat and a wrinkle finish have such a texture.
-  pub fn textured(color: Vec3) -> Self {
+  /// Creates powder coat, a paint with a fine orange-peel relief, like a Nord's panel.
+  pub fn powder_coat(color: Vec3) -> Self {
     Self {
       roughness: 0.6,
       textures: Some(Textures::PowderCoat(POWDER_TILE)),
       grain: 0.3,
       ..Self::matte(color)
+    }
+  }
+
+  /// Creates aluminium dyed in its oxide, like an Elektron's panel.
+  ///
+  /// The metal is bead-blasted before it is dyed, which leaves an even fine matte sheen in the
+  /// dye's color.
+  pub fn anodized(color: Vec3) -> Self {
+    Self {
+      metallic: 1.0,
+      roughness: 0.42,
+      grain: 0.25,
+      ..Self::matte(color)
+    }
+  }
+
+  /// Creates hammered enamel, like the panels of a Neve or a Pultec.
+  pub fn hammertone(color: Vec3) -> Self {
+    Self {
+      roughness: 0.4,
+      textures: Some(Textures::Hammertone(HAMMERTONE_TILE)),
+      ..Self::matte(color)
+    }
+  }
+
+  /// Creates rubbery soft-touch paint, like the knobs of a Virus.
+  pub fn soft_touch(color: Vec3) -> Self {
+    Self {
+      roughness: 0.82,
+      grain: 0.12,
+      ..Self::matte(color)
+    }
+  }
+
+  /// Creates moulded phenolic, like the chicken-head knobs of a 1176 or a Pultec.
+  ///
+  /// Its moulded skin is a hard glossy coat over a slightly duller body.
+  pub fn bakelite(color: Vec3) -> Self {
+    Self {
+      roughness: 0.3,
+      clearcoat: 0.7,
+      clearcoat_roughness: 0.12,
+      grain: 0.04,
+      ..Self::matte(color)
+    }
+  }
+
+  /// Creates oiled walnut, like a synthesizer's cheeks.
+  pub fn walnut() -> Self {
+    Self {
+      roughness: 0.5,
+      clearcoat: 0.25,
+      clearcoat_roughness: 0.3,
+      textures: Some(Textures::Walnut(WALNUT_TILE)),
+      ..Self::matte(Vec3::new(0.42, 0.26, 0.15))
+    }
+  }
+
+  /// Creates the cream paper face of a VU meter, like an LA-2A's.
+  pub fn vu_face() -> Self {
+    Self {
+      roughness: 0.85,
+      grain: 0.08,
+      ..Self::matte(Vec3::new(0.86, 0.8, 0.62))
     }
   }
 

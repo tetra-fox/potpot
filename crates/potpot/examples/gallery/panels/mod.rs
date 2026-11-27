@@ -9,6 +9,7 @@ mod industrial;
 pub mod knobs;
 mod lamp;
 mod lights;
+mod materials;
 mod retro;
 mod rings;
 mod screens;
@@ -21,11 +22,12 @@ use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts;
 use potpot::{Lamp, Light, Look, Material, Mesh, Object, Scene};
 
-use self::shared::{ALUMINUM, BLACK, SEAT, WALNUT, lettering};
+use self::shared::{ALUMINUM, BLACK, SEAT, lettering};
 
 pub const SIZE: [u32; 2] = [1024, 640];
 /// The names of the panels, as a message lists them.
-pub const PANELS: &str = "knobs, faders, lights, lamp, rings, screens, retro, industrial";
+pub const PANELS: &str =
+  "knobs, faders, lights, lamp, rings, screens, retro, industrial, materials";
 
 /// Returns a screw for each corner, each turned its own way.
 fn screws() -> [Object; 4] {
@@ -101,6 +103,7 @@ pub fn scene(name: &str) -> Option<fn(Look) -> Scene> {
     "screens" => screens::screens,
     "retro" => retro::retro,
     "industrial" => industrial::industrial,
+    "materials" => materials::materials,
     _ => return None,
   })
 }

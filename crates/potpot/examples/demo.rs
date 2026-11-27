@@ -25,7 +25,7 @@ use std::sync::atomic::AtomicU32;
 use std::time::Duration;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
-use potpot::parts::{self, Button, Fader, Knob, Meter, Pad, PushSwitch};
+use potpot::parts::{self, Button, Fader, Knob, Meter, Pad, PushSwitch, Vu};
 use potpot::{Light, Look, Material, Mesh, Renderer, Scene};
 use potpot_window::controls::flat::Flat;
 use potpot_window::controls::interaction::{Control, Dial, Drag, Push, Readout, Target, Touch};
@@ -115,6 +115,9 @@ const LIGHT_COLORS: [Vec3; 4] = [
   Vec3::new(1.0, 0.12, 0.06),
 ];
 const AMBER: Vec3 = Vec3::new(1.0, 0.55, 0.05);
+/// The middle of the VU meter between the two rows of knobs, and its face's width and height.
+const VU: Vec2 = Vec2::new(450.0, 220.0);
+const VU_FACE: Vec2 = Vec2::new(80.0, 40.0);
 
 /// A knob of the panel.
 struct Shown {
@@ -377,6 +380,8 @@ struct Demo {
   light: Arc<Mesh>,
   ladder: Meter,
   dots: Meter,
+  /// The needle meter that shows the louder side of the sound.
+  vu: Vu,
   /// One light of the ladder and one of the dots.
   segments: [Arc<Mesh>; 2],
   /// The buttons along the bottom, each with its body.
@@ -397,7 +402,7 @@ impl Demo {
     fixed.put(
       parts::plate(size.x, size.y, 6.0),
       Vec2::ZERO,
-      Material::textured(Vec3::new(0.30, 0.31, 0.33)),
+      Material::powder_coat(Vec3::new(0.30, 0.31, 0.33)),
     );
     fixed.put(
       parts::legend("POTPOT", 11.0, 2.0),
@@ -488,6 +493,7 @@ impl Demo {
       segments: [ladder.segment(), dots.segment()].map(Arc::new),
       ladder,
       dots,
+      vu: Vu::new(VU_FACE.x, VU_FACE.y),
       buttons,
       puck: Arc::new(xy.puck()),
       xy,
@@ -572,6 +578,8 @@ impl Demo {
     }
     drawn.extend((self.dots).lights(dot, DOTS_X, METER_FOOT, values[DOTS], None));
     lamps.extend(self.dots.lamp(DOTS_X, METER_FOOT, values[DOTS]));
+    let loudest = feed[LEFT].max(feed[RIGHT]);
+    drawn.extend(self.vu.objects(VU.x, VU.y, loudest, 1.0));
 
     // the fader on its side, and over it a row of lights that it fills from the left
     let slid = values[SLIDE];

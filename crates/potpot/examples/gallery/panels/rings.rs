@@ -22,7 +22,7 @@ pub(super) fn rings(look: Look) -> Scene {
   let mut objects = vec![Object {
     mesh: Arc::new(parts::plate(width, height, 6.0)),
     transform: Mat4::IDENTITY,
-    material: Material::textured(Vec3::new(0.075, 0.08, 0.09)),
+    material: Material::powder_coat(Vec3::new(0.075, 0.08, 0.09)),
   }];
   let ink = Material::ink(Vec3::splat(0.8));
   // each knob's name, where it points and the run its ring lights, in what color

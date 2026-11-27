@@ -69,6 +69,10 @@ const CORE: f32 = 0.8;
 // how far past its color the middle of something lit from inside is driven, which fills its
 // weaker channels toward white
 const HEAT: f32 = 20.0;
+// the share of a display's cell its lit square takes across
+const CELL_FILL: f32 = 0.78;
+// the share of a display's light that shows in the gaps between its cells
+const GAP_LIGHT: f32 = 0.3;
 // the most a half float holds, with room to spare
 const BRIGHTEST: f32 = 60000.0;
 // SHADOW_SPREAD, SHADOW_BIAS, OPEN_REACHES, OPEN_CLEAR, BOUNCE_REACHES, HARMONICS,
@@ -104,8 +108,9 @@ struct Placed {
   // x how strongly it is brushed along x, y how strongly spun around its own z axis
   @location(9) anisotropy: vec2<f32>,
   // x the texture set's place among the sets plus one, or zero for none, y the points one tile
-  // of it covers, z one when it wraps around the object's own z axis
-  @location(10) textures: vec3<f32>,
+  // of it covers, z one when it wraps around the object's own z axis, w the pitch of a
+  // display's cells or zero
+  @location(10) textures: vec4<f32>,
 }
 
 struct Lit {
@@ -119,7 +124,7 @@ struct Lit {
   @location(5) center: vec3<f32>,
   @location(6) axis: vec3<f32>,
   @location(7) anisotropy: vec2<f32>,
-  @location(9) textures: vec3<f32>,
+  @location(9) textures: vec4<f32>,
   // `world` taken where the triangle covers the pixel, which is a place on the triangle for a
   // pixel covered in part too. the bounce map is read at it
   @location(8) @interpolate(perspective, centroid) on_triangle: vec3<f32>,
@@ -541,6 +546,22 @@ fn photographed(lit: Lit, normal: vec3<f32>, moved: mat2x3<f32>) -> Photo {
   return mixed;
 }
 
+// how much of a display's light shows at a place: all of it in each square cell `pitch`
+// apart, and little in the gaps between. where the cells are finer than a pixel they fade to
+// their mean, which keeps them from shimmering
+fn cells(at: vec2<f32>, pitch: f32) -> f32 {
+  let across = at / pitch;
+  let blur = max(fwidth(across), vec2<f32>(1e-4));
+  // a cell's lit square is CELL_FILL of its width, and the gap shows GAP_LIGHT of the light
+  let edge = CELL_FILL * 0.5;
+  let off = abs(fract(across) - 0.5);
+  let inside = smoothstep(vec2<f32>(edge) + blur * 0.5, vec2<f32>(edge) - blur * 0.5, off);
+  let sharp = inside.x * inside.y;
+  let mean = CELL_FILL * CELL_FILL;
+  let fine = smoothstep(0.35, 0.7, max(blur.x, blur.y));
+  return mix(GAP_LIGHT, 1.0, mix(sharp, mean, fine));
+}
+
 // a point of a surface as the shading model takes it
 struct Surface {
   normal: vec3<f32>,
@@ -821,6 +842,9 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
     let turned = 1.0 - clamp(flat_normal.z, 0.0, 1.0);
     emitted += base * sqrt(turned) * emission * 0.8 * EMITTED;
   }
+  // taken everywhere, since a derivative needs every pixel around to take it
+  let shown = cells(lit.world.xy, max(lit.textures.w, 1.0));
+  emitted *= select(1.0, shown, lit.textures.w > 0.0);
   let color = min(diffuse_light * (1.0 - lit_over) + highlights + emitted, vec3<f32>(BRIGHTEST));
   // the share of the light that is the surface's own, which is what spills a haze later
   let weights = vec3<f32>(0.2126, 0.7152, 0.0722);

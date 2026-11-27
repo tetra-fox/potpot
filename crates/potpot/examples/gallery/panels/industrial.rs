@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Handle, Knob, LedArc, LedRing, LedStops, PushSwitch, Vent};
-use potpot::{Light, Look, Material, Scene, Textures};
+use potpot::{Light, Look, Material, Scene};
 use potpot_controls::interaction::Push;
 
 use super::{BLACK, Build, SEAT, SIZE, framed};
@@ -42,7 +42,7 @@ impl Build {
     let skirt = parts::bezel(knob.radius * 0.8, knob.radius * 1.22, knob.height * 0.18);
     self.put(skirt, on_panel(x, y), Material::chrome(Vec3::splat(0.75)));
     let turned = parts::knob_transform(x, y, turn, parts::KNOB_SWEEP);
-    self.put(knob.body(), turned, Material::glossy(BLACK));
+    self.put(knob.body(), turned, Material::bakelite(BLACK));
     self.put(knob.line(), turned, Material::lamp(CYAN));
   }
 }
@@ -62,10 +62,7 @@ impl Build {
 pub(super) fn industrial(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let mut build = Build::default();
-  let metal = Material {
-    textures: Some(Textures::Hammertone(200.0)),
-    ..Material::satin(GUNMETAL * 0.7)
-  };
+  let metal = Material::hammertone(GUNMETAL * 0.7);
   build.put(parts::plate(width, height, 6.0), Mat4::IDENTITY, metal);
 
   // a rack ear at each side, with a handle between two screws

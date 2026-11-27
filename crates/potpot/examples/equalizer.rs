@@ -437,7 +437,7 @@ impl Equalizer {
     fixed.put(
       parts::plate(size.x, size.y, 6.0),
       Vec2::ZERO,
-      Material::textured(Vec3::new(0.075, 0.08, 0.09)),
+      Material::powder_coat(Vec3::new(0.075, 0.08, 0.09)),
     );
     fixed.letters("EQUALIZER", Vec2::new(SCREEN.x, 22.0), 9.0, ink);
     fixed.screws(size, 16.0, 6.0);

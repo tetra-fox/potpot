@@ -6,7 +6,7 @@ use potpot::glam::{Mat4, Vec3};
 use potpot::parts::{self, Knob, Top};
 use potpot::{Anisotropy, Look, Material, Object, Scene, Textures};
 
-use super::{ALUMINUM, BLACK, SIZE, WALNUT, framed, lettering, screws};
+use super::{ALUMINUM, BLACK, SIZE, framed, lettering, screws};
 
 /// The way a knob of the gallery is marked.
 #[derive(Clone, Copy)]
@@ -51,7 +51,7 @@ pub fn knobs(look: Look) -> Scene {
       Material {
         anisotropy: Anisotropy::Spun(0.0),
         textures: Some(Textures::Walnut(90.0)),
-        ..Material::satin(WALNUT)
+        ..Material::walnut()
       },
       Marker::Line,
     ),

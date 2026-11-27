@@ -4,7 +4,7 @@ use std::f32::consts::FRAC_PI_2;
 use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec3};
-use potpot::parts::{self, Button, Meter, Pad, PushSwitch};
+use potpot::parts::{self, Button, Meter, Pad, PushSwitch, Vu};
 use potpot::{Light, Look, Material, Object, Scene};
 use potpot_controls::interaction::Push;
 
@@ -49,7 +49,7 @@ pub(super) fn lights(look: Look) -> Scene {
   let mut objects = vec![Object {
     mesh: Arc::new(parts::plate(width, height, 6.0)),
     transform: Mat4::IDENTITY,
-    material: Material::textured(Vec3::new(0.075, 0.08, 0.09)),
+    material: Material::powder_coat(Vec3::new(0.075, 0.08, 0.09)),
   }];
   let mut lamps = Vec::new();
   let seat = Material::matte(SEAT);
@@ -222,6 +222,9 @@ pub(super) fn lights(look: Look) -> Scene {
   ]);
   let puck = on_pad.transform_point3(Vec3::ZERO);
   lamps.push(xy.puck.lamp(puck.x, puck.y, blue, 1.0));
+
+  // a needle meter under the ladders, its lamp on
+  objects.extend(Vu::new(112.0, 60.0).objects(868.0, 588.0, 0.62, 1.0));
 
   objects.extend(screws());
   Scene {

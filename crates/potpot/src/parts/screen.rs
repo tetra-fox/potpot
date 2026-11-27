@@ -21,7 +21,7 @@ const ROUND: usize = 24;
 /// A screen, a face set in a bezel.
 ///
 /// The face lies on the panel around the origin and the bezel stands around it. [`picture`]
-/// makes what the face shows, and [`Material::screen`] is a material for the face.
+/// makes what the face shows, and [`Material::display_glass`] is a material for the face.
 #[derive(Clone, Copy, Debug)]
 pub struct Screen {
   /// The face's width along x, in points.
@@ -72,7 +72,7 @@ impl Screen {
   /// The screen's middle is at (`x`, `y`), and it is lit in `color` at `level` from zero to
   /// one. Its light is a short row of [`Lamp`]s along the face's longer side, one for each part
   /// of the face about as long as it is wide. A face that mirrors and does not light itself
-  /// shows each of them as a disc, which one of [`Material::screen`] does not.
+  /// shows each of them as a disc, which one of [`Material::display_glass`] does not.
   pub fn lamps(&self, x: f32, y: f32, color: Vec3, level: f32) -> impl Iterator<Item = Lamp> {
     let (longer, shorter) = (self.width.max(self.length), self.width.min(self.length));
     let along = if self.width >= self.length {
@@ -189,7 +189,7 @@ mod tests {
     flat.curve(&[[100.0, 60.0], [140.0, 40.0], [180.0, 70.0]], 2.0, cyan);
     flat.rect([90.0, 30.0], [92.0, 90.0], cyan);
     flat.line([90.0, 50.0], [190.0, 50.0], 1.0, amber);
-    let face = Material::screen(Vec3::splat(0.02));
+    let face = Material::display_glass(Vec3::splat(0.02), 1.5);
     let mut objects = picture(&flat, 140.0, 60.0, face, 0);
     // the region, then the curve's two lines and the rectangle as one, then the line
     assert_eq!(objects.len(), 3);

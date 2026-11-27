@@ -143,7 +143,7 @@ pub(super) fn screens(look: Look) -> Scene {
   let mut objects = vec![put(
     parts::plate(width, height, 6.0),
     Vec2::ZERO,
-    Material::textured(Vec3::new(0.075, 0.08, 0.09)),
+    Material::powder_coat(Vec3::new(0.075, 0.08, 0.09)),
   )];
   let mut lamps = Vec::new();
 

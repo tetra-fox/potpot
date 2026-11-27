@@ -64,7 +64,7 @@ pub(super) fn faders(look: Look) -> Scene {
   let mut objects = vec![Object {
     mesh: Arc::new(parts::plate(width, height, 6.0)),
     transform: Mat4::IDENTITY,
-    material: Material::textured(Vec3::new(0.16, 0.17, 0.19)),
+    material: Material::powder_coat(Vec3::new(0.16, 0.17, 0.19)),
   }];
   for (index, (fader, material, stripe)) in caps.into_iter().enumerate() {
     let x = 62.0 + 100.0 * index as f32;

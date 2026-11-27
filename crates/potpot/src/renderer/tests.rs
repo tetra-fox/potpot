@@ -236,7 +236,7 @@ fn panel(number: &mut impl FnMut() -> f32, shapes: &[Arc<Mesh>]) -> Scene {
     objects: vec![Object {
       mesh: Arc::new(crate::parts::plate(PANEL.x, PANEL.y, 6.0)),
       transform: Mat4::IDENTITY,
-      material: Material::textured(Vec3::splat(0.3)),
+      material: Material::powder_coat(Vec3::splat(0.3)),
     }],
     lamps: vec![lamp(number), lamp(number)],
   };
@@ -264,7 +264,7 @@ fn material(number: &mut impl FnMut() -> f32) -> Material {
     1 => Material::glossy(color),
     2 => Material::chrome(color),
     3 => Material::spun(color),
-    _ => Material::textured(color),
+    _ => Material::powder_coat(color),
   };
   if number() < 0.3 {
     made.lit(color, number(), 8.0)
@@ -697,7 +697,7 @@ fn a_screen_whose_picture_is_made_again_is_drawn_again_alone() {
   let target = Target::new();
   let screen = crate::parts::Screen::new(120.0, 70.0);
   let middle = Vec2::new(330.0, 120.0);
-  let face = Material::screen(Vec3::splat(0.02));
+  let face = Material::display_glass(Vec3::splat(0.02), 1.5);
   let knob = crate::parts::Knob::fluted(16.0, 14.0).body();
   // a curve over a filled region, as often made again as it is shown
   let picture = |level: f32| {
