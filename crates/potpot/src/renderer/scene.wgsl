@@ -35,7 +35,7 @@ struct Lamp {
 // x is one when what this frame draws is each pixel's first sample, and zero when it is one
 // more sample of each pixel to go into its mean
 @group(0) @binding(1) var<uniform> refine: vec4<u32>;
-// how many samples each pixel's mean holds so far, which is the index of the one drawn now
+// how many samples each pixel's mean holds so far, which is the index of the sample being drawn
 @group(2) @binding(0) var counted: texture_2d<f32>;
 @group(1) @binding(0) var shadow_map: texture_depth_2d;
 @group(1) @binding(1) var shadow_sampler: sampler_comparison;

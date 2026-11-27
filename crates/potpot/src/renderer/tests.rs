@@ -211,9 +211,8 @@ const LONGEST_WAIT: Duration = Duration::from_secs(30);
 
 /// Waits for the device to finish what it was given, `what` naming the wait.
 ///
-/// A wait that runs out fails the test with its name. This is to tell where a run that stalls
-/// stalls: one run of these tests once hung in a wait on the device, and it has not happened
-/// again or been explained.
+/// A wait that runs out fails the test with its name, so a stalled device says which wait it
+/// stalled in.
 fn finish(device: &wgpu::Device, what: &str) {
   let waited = device.poll(wgpu::PollType::Wait {
     submission_index: None,
