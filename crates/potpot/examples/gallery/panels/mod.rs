@@ -16,6 +16,7 @@ mod pads;
 mod retro;
 mod rings;
 mod screens;
+mod selectors;
 #[path = "../../shared/mod.rs"]
 pub mod shared;
 
@@ -41,7 +42,7 @@ type Page = fn(Look) -> Scene;
 /// Each page's name and the function that makes it.
 ///
 /// The name is the one the page is asked for by and printed on its tab.
-const PAGES: [(&str, Page); 11] = [
+const PAGES: [(&str, Page); 12] = [
   ("knobs", knobs::knobs),
   ("faders", faders::faders),
   ("buttons", buttons::buttons),
@@ -50,6 +51,7 @@ const PAGES: [(&str, Page); 11] = [
   ("meters", meters::meters),
   ("pads", pads::pads),
   ("screens", screens::screens),
+  ("selectors", selectors::selectors),
   ("retro", retro::retro),
   ("industrial", industrial::industrial),
   ("materials", materials::materials),
@@ -96,17 +98,13 @@ pub fn panel(page: usize, look: Look) -> (Scene, Vec<Option<Target>>) {
   };
   scene.objects.push(strip);
   targets.push(None);
-  let tabs = Tabs::new(PAGES.len(), 82.0, 30.0, 6.0);
+  let tabs = Tabs::new(PAGES.len(), 78.0, 30.0, 6.0);
   let (body, seat) = (Arc::new(tabs.body()), Arc::new(tabs.seat(1.5)));
   let middle = Vec2::new(PAGE.x / 2.0, TABS / 2.0);
-  let rubber = Material::silicone(Vec3::splat(0.62));
-  let amber = Vec3::new(1.0, 0.66, 0.14);
   for (tab, (name, _)) in PAGES.into_iter().enumerate() {
     let shown = tab == page;
     let at = middle + tabs.middle(tab);
-    // lit evenly and low, so that no hot middle or page's bloom covers its name's ink
-    let material = rubber.lit(amber, if shown { 0.35 } else { 0.0 }, 0.0);
-    let name = lettering(&name.to_uppercase(), 7.0);
+    let name = lettering(&name.to_uppercase(), KEY_LETTERS);
     scene.objects.extend([
       Object {
         mesh: Arc::clone(&seat),
@@ -116,18 +114,23 @@ pub fn panel(page: usize, look: Look) -> (Scene, Vec<Option<Target>>) {
       Object {
         mesh: Arc::clone(&body),
         transform: tabs.transform(middle.x, middle.y, tab, shown),
-        material,
+        material: key(shown),
       },
       Object {
         mesh: Arc::new(name),
         transform: tabs.name(middle.x, middle.y, tab, shown),
-        material: Material::ink(Vec3::splat(0.06)),
+        material: key_ink(),
       },
     ]);
     targets.extend([None, Some(Target::Page(tab)), Some(Target::Page(tab))]);
   }
   scene.size = Vec2::from(SIZE);
   (scene, targets)
+}
+
+/// Returns the transform of a place on a page.
+fn at(place: Vec2) -> Mat4 {
+  Mat4::from_translation(place.extend(0.0))
 }
 
 /// Returns a screw for each corner of a page.
@@ -235,6 +238,22 @@ fn dim() -> Light {
     color: Vec3::splat(0.6),
     ..Light::default()
   }
+}
+
+/// The height of the lettering on a key.
+const KEY_LETTERS: f32 = 6.5;
+
+/// Returns the rubber of a key that is lit while it is chosen.
+///
+/// It is lit evenly and low, so that no hot middle or page's bloom covers the ink on it.
+fn key(chosen: bool) -> Material {
+  let amber = Vec3::new(1.0, 0.66, 0.14);
+  Material::silicone(Vec3::splat(0.62)).lit(amber, if chosen { 0.35 } else { 0.0 }, 0.0)
+}
+
+/// Returns the ink lettering on a key is printed in.
+fn key_ink() -> Material {
+  Material::ink(Vec3::splat(0.06))
 }
 
 /// Returns the pale rubber of buttons and pucks.

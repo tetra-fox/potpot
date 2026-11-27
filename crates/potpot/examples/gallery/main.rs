@@ -12,6 +12,7 @@
 //! - `meters`: ladders of lights and a needle meter
 //! - `pads`: XY pads
 //! - `screens`: screens that show an equalizer, a scope and an envelope
+//! - `selectors`: segmented selectors and steppers
 //! - `retro`: a whole soft synth's front in an old manner
 //! - `industrial`: dark metal hardware lit from within
 //! - `materials`: every material, on a knob and two strips

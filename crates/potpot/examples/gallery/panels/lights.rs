@@ -6,7 +6,7 @@ use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Button, Knob};
 use potpot::{Lamp, Light, Look, Material, Object, Scene};
 
-use super::{BLACK, Build, Catalog, SEAT, dim};
+use super::{BLACK, Build, Catalog, SEAT, at, dim};
 
 /// The colors the lights are lit in.
 const COLORS: [Vec3; 5] = [
@@ -146,11 +146,6 @@ pub(super) fn lights(look: Look) -> Scene {
     ..dim()
   };
   catalog.finish(look, light)
-}
-
-/// Returns the transform of a place on the page.
-fn at(place: Vec2) -> Mat4 {
-  Mat4::from_translation(place.extend(0.0))
 }
 
 /// Adds a lamp at `middle` with a knob to each side.
