@@ -1,6 +1,6 @@
 //! Reading of Radiance `.hdr` pictures.
 
-use potpot::glam::Vec3;
+use glam::Vec3;
 
 /// A picture of linear light, in rows from the top.
 #[derive(Debug)]

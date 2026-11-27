@@ -1,6 +1,6 @@
 //! Spherical harmonics of the first three bands, for the light all around a surface.
 
-use potpot::glam::Vec3;
+use glam::Vec3;
 
 /// Returns the nine real spherical harmonics at a way out, in the order `scene.wgsl` reads them.
 pub fn basis(Vec3 { x, y, z }: Vec3) -> [f32; 9] {

@@ -2,7 +2,7 @@
 
 use std::f32::consts::PI;
 
-use potpot::glam::{Vec2, Vec3};
+use glam::{Vec2, Vec3};
 
 /// The faces in the order a GPU stores them: +x, -x, +y, -y, +z, -z.
 pub const FACES: usize = 6;

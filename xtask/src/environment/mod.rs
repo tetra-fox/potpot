@@ -8,10 +8,12 @@ use std::f32::consts::PI;
 use std::fmt::Write as _;
 use std::path::Path;
 
-use potpot::glam::{Mat3, Quat, Vec3};
+use glam::{Mat3, Quat, Vec3};
 
 use self::cube::{Cube, FACES, Level};
 use crate::hdr::{self, Picture};
+
+include!("../../../crates/potpot/src/default_light.rs");
 
 /// The studio, as a latitude-longitude picture.
 const SOURCE: &str = "crates/potpot/assets/source/wooden_studio_16_1k.hdr";
@@ -33,10 +35,10 @@ const SAMPLES: u32 = 1024;
 const PATCH_EDGE: f32 = 0.08;
 /// The side of the cells the picture is averaged over to find the key light's patch.
 const CELL: usize = 4;
-/// What a face seen square on mirrors, as a share of what a white surface gives back under the
-/// key light.
+/// The light a face seen square on mirrors.
 ///
-/// It is well under one, so that glass over a display keeps the display's contrast.
+/// It is a share of what a white surface gives back under the key light, well under one, so
+/// that glass over a display keeps the display's contrast.
 const FACE_LIGHT: f32 = 0.5;
 /// How far from a face seen square on the studio is averaged for [`FACE_LIGHT`], in degrees.
 const FACE_CONE: f32 = 20.0;
@@ -137,8 +139,7 @@ impl<'a> Studio<'a> {
   /// [`FACE_LIGHT`]. Of the turns that do, the one with the darkest floor is taken, since the
   /// sides of things mirror the floor.
   fn new(picture: &'a Picture, patch: &'a Patch) -> Self {
-    let key = potpot::Light::default();
-    let toward = key.toward.normalize();
+    let toward = Vec3::from_array(DEFAULT_TOWARD).normalize();
     let lying = Mat3::from_cols(Vec3::X, Vec3::Z, Vec3::NEG_Y);
     let middle = lying * patch.middle;
     // turned around the studio's up until the patch is on the key light's side, then tipped
@@ -147,7 +148,7 @@ impl<'a> Studio<'a> {
     let spun = Mat3::from_rotation_z(around) * lying;
     let tipped = Mat3::from_quat(Quat::from_rotation_arc(spun * patch.middle, toward)) * spun;
     // the renderer's light colors are irradiance over pi, as a white surface gives it back
-    let scale = key.color * PI / patch.irradiance;
+    let scale = Vec3::from_array(DEFAULT_COLOR) * PI / patch.irradiance;
     let luminance = |light: Vec3| light.dot(Vec3::new(0.2126, 0.7152, 0.0722));
     // every fourth pixel each way is enough to judge a turn by
     let pixels: Vec<(Vec3, f32, f32)> = latitude_longitude(picture.width, picture.height)
@@ -266,7 +267,8 @@ fn key_patch(picture: &Picture) -> Patch {
 
 /// Returns each pixel of a latitude-longitude picture, its way out and its solid angle.
 ///
-/// The way out is through the pixel's middle. The picture's top row looks straight up (+y), and its middle column along +z.
+/// The way out is through the pixel's middle. The picture's top row looks straight up (+y), and
+/// its middle column along +z.
 fn latitude_longitude(width: usize, height: usize) -> impl Iterator<Item = (usize, Vec3, f32)> {
   (0..width * height).map(move |index| {
     let (x, y) = (index % width, index / width);

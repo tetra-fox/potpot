@@ -1,6 +1,6 @@
 //! The `Rgb9e5Ufloat` texel format: three 9-bit mantissas with one 5-bit exponent.
 
-use potpot::glam::Vec3;
+use glam::Vec3;
 
 const MANTISSA_BITS: i32 = 9;
 const BIAS: i32 = 15;

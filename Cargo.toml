@@ -11,6 +11,7 @@ missing_docs = "warn"
 missing_debug_implementations = "warn"
 
 [workspace.dependencies]
+glam = "0.30"
 potpot-controls = { path = "crates/potpot-controls" }
 wgpu = { version = "27", default-features = false, features = ["std", "wgsl"] }
 

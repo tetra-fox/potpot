@@ -7,6 +7,8 @@ use glam::{Mat4, Vec2, Vec3};
 use crate::material::Material;
 use crate::mesh::Mesh;
 
+include!("default_light.rs");
+
 /// A panel seen from straight above.
 ///
 /// The x and y axes are the panel's own points with the origin at its top left and y running
@@ -129,8 +131,8 @@ pub struct Light {
 impl Default for Light {
   fn default() -> Self {
     Self {
-      toward: Vec3::new(-0.45, -0.6, 1.0),
-      color: Vec3::splat(1.0),
+      toward: Vec3::from_array(DEFAULT_TOWARD),
+      color: Vec3::from_array(DEFAULT_COLOR),
       occlusion: 1.0,
       bounce: 0.0,
       softness: 2.5,
