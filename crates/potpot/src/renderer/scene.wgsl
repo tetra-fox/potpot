@@ -8,7 +8,7 @@ struct Globals {
   // and in w how wide shadow edges are: the shadow map texels between the places
   // `lit_share` looks at
   toward_light: vec4<f32>,
-  // w is not read
+  // and in w how bright the studio is
   toward_viewer: vec4<f32>,
   // and in w how much of the light that comes off surfaces lands on what is next to them
   light_color: vec4<f32>,
@@ -41,6 +41,9 @@ struct Lamp {
 @group(1) @binding(4) var bounce_sampler: sampler;
 // the scale and bias on f0 of the split-sum highlight, across by n.v and down by roughness
 @group(1) @binding(5) var dfg_table: texture_2d<f32>;
+// the studio as a mirror of each roughness shows it, a mip for each 1 / STUDIO_LAST of roughness
+@group(1) @binding(6) var studio_map: texture_cube<f32>;
+@group(1) @binding(7) var studio_sampler: sampler;
 
 const TAU: f32 = 6.2831853;
 const PI: f32 = 3.14159265;
@@ -58,12 +61,8 @@ const CORE: f32 = 0.8;
 const HEAT: f32 = 20.0;
 // the most a half float holds, with room to spare
 const BRIGHTEST: f32 = 60000.0;
-// the light that reaches every surface, shadowed or not
-const AMBIENT: f32 = 0.25;
-// how bright the room is drawn
-const ROOM: f32 = 2.0;
-// SHADOW_SPREAD, SHADOW_BIAS, OPEN_REACHES, OPEN_CLEAR and BOUNCE_REACHES are put ahead of this
-// source when it is loaded
+// SHADOW_SPREAD, SHADOW_BIAS, OPEN_REACHES, OPEN_CLEAR, BOUNCE_REACHES, HARMONICS and
+// STUDIO_LAST are put ahead of this source when it is loaded
 // how many places are in each ring around a point that is looked at for what stands over it.
 // OPEN_REACHES is how far off each ring is
 const OPEN_STEPS: i32 = 10;
@@ -277,7 +276,8 @@ fn lamp_facing(normal: vec3<f32>, toward: vec3<f32>, radius: f32) -> f32 {
 fn bounce_fragment(lit: Lit) -> @location(0) vec4<f32> {
   let normal = normalize(lit.normal);
   let facing = max(dot(normal, globals.toward_light.xyz), 0.0);
-  var lighting = AMBIENT + globals.light_color.rgb * facing * lit_share(lit.world, facing);
+  var lighting = all_around(normal) * globals.toward_viewer.w;
+  lighting += globals.light_color.rgb * facing * lit_share(lit.world, facing);
   for (var index = 0; index < i32(globals.shadows.z); index++) {
     let lamp = globals.lamps[index];
     let toward = lamp.at.xyz - lit.world;
@@ -319,12 +319,6 @@ fn bounced(world: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
     }
   }
   return caught / weight;
-}
-
-// the way to the light along the panel's face, which is along y when the light is straight
-// overhead
-fn across_to_light() -> vec2<f32> {
-  return normalize(globals.toward_light.xy + vec2<f32>(0.0, 0.0001));
 }
 
 // a number from zero to one out of a place, the same every time for the same place
@@ -398,33 +392,31 @@ fn textured(normal: vec3<f32>, world: vec3<f32>, grain: f32, brushed: f32, wear:
   return vec4<f32>(normalize(bent), shade);
 }
 
-// the room around the panel as a mirror would show it, by the way a reflection leaves.
-// `crisp` is how sharp its edges are
-fn room(leaving: vec3<f32>, normal: vec3<f32>, crisp: f32) -> f32 {
-  // the mirror's own facing says what side of the room it looks at when the reflection
-  // runs straight up or down
-  let aside = normalize(leaving.xy + normal.xy * 0.02 + vec2<f32>(0.00001));
-  let side = dot(aside, across_to_light());
-  let high = leaving.z;
-  // from a blur to a clean cut
-  let edge = mix(0.3, 0.025, crisp);
-  // a wide lamp on the light's side, from well up the wall nearly to the ceiling
-  let lamp = smoothstep(0.24 - edge, 0.24 + edge, high) * (1.0 - smoothstep(0.82 - edge, 0.82 + edge, high))
-    * smoothstep(0.4 - edge * 2.0, 0.4 + edge * 2.0, side);
-  // a small dim one across from it
-  let second = smoothstep(0.3 - edge, 0.3 + edge, high) * (1.0 - smoothstep(0.6 - edge, 0.6 + edge, high))
-    * smoothstep(0.8 - edge, 0.8 + edge, -side) * 0.3;
-  // a ceiling paler than the walls
-  let ceiling = smoothstep(0.5, 1.0, high) * 0.42;
-  // the walls and the line along their foot are brighter on the side the light is on
-  let lit_side = 0.5 + 0.5 * side;
-  let over = smoothstep(-edge * 0.4, edge * 0.4, high);
-  // a bright line where the walls meet the floor
-  let line = over * (1.0 - smoothstep(0.07, 0.07 + edge * 2.0, high)) * mix(0.3, 0.95, lit_side);
-  let walls = over * mix(0.04, 0.12, lit_side);
-  // a floor that is dark at its far edge and lighter toward the panel
-  let floor = (1.0 - over) * mix(0.015, mix(0.05, 0.24, lit_side * lit_side), smoothstep(-0.05, -0.6, high));
-  return lamp + second + max(ceiling, walls) + line + floor + 0.015;
+// the studio's light all around a surface facing `normal`, as a white Lambert surface gives
+// it back, from the spherical harmonics in HARMONICS. the key light's own part is left out
+fn all_around(normal: vec3<f32>) -> vec3<f32> {
+  let n = normal;
+  let basis = array<f32, 9>(
+    0.282095,
+    0.488603 * n.y,
+    0.488603 * n.z,
+    0.488603 * n.x,
+    1.092548 * n.x * n.y,
+    1.092548 * n.y * n.z,
+    0.315392 * (3.0 * n.z * n.z - 1.0),
+    1.092548 * n.x * n.z,
+    0.546274 * (n.x * n.x - n.y * n.y),
+  );
+  var light = vec3<f32>(0.0);
+  for (var index = 0; index < 9; index++) {
+    light += HARMONICS[index] * basis[index];
+  }
+  return max(light, vec3<f32>(0.0));
+}
+
+// the studio as a mirror of a perceptual roughness shows it along `leaving`
+fn mirrored_studio(leaving: vec3<f32>, roughness: f32) -> vec3<f32> {
+  return textureSampleLevel(studio_map, studio_sampler, leaving, roughness * STUDIO_LAST).rgb;
 }
 
 // a point of a surface as the shading model takes it
@@ -614,11 +606,18 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
   let share = lit_share(lit.world, facing);
   let open = mix(1.0, open_share(lit.world), globals.shadows.w);
 
-  // the key light, whose diffuse light the corners keep a little of out too
-  let key = highlights_of(surface, toward_light, 1.0, toward_light, 1.0);
-  let key_diffuse = surface.diffuse * facing * mix(1.0, open, 0.35) * (1.0 - key.w);
+  // how much of the light the clear coat keeps off what is under it
+  var coat_kept = 0.0;
+  if surface.coat > 0.0 {
+    let coat_seen = max(dot(flat_normal, toward_viewer), 1e-4);
+    coat_kept = fresnel(vec3<f32>(DIELECTRIC), coat_seen).x * surface.coat;
+  }
+
+  // the key light, which lights only diffusely, and whose light the corners keep a little of
+  // out too. its highlight is the softbox the studio shows
+  let key_diffuse = surface.diffuse * facing * mix(1.0, open, 0.35) * (1.0 - coat_kept);
   var diffuse_light = globals.light_color.rgb * key_diffuse * share;
-  var highlights = globals.light_color.rgb * key.rgb * share;
+  var highlights = vec3<f32>(0.0);
 
   // the lamps, whose light skips what lights itself, since a lamp is most often the light of
   // such a thing and would light it twice
@@ -639,35 +638,30 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
     highlights += given.rgb * reached;
   }
 
-  // the light all around, which more of comes from the side the light is on than from under,
-  // and the room in what mirrors
-  let around = mix(0.55, 1.0, 0.5 + 0.5 * dot(surface.normal, toward_light));
-  var all_around = vec3<f32>(AMBIENT * around * open);
+  // the studio: its light all around, kept out of corners, and what it shows in a mirror,
+  // shadowed as the key light is
+  let studio = globals.toward_viewer.w;
+  var all_around_light = all_around(surface.normal) * studio * open;
   if globals.light_color.w > 0.0 {
-    all_around += bounced(lit.on_triangle, flat_normal) * globals.light_color.w;
+    all_around_light += bounced(lit.on_triangle, flat_normal) * globals.light_color.w;
   }
-  var around_diffuse = surface.diffuse * all_around * (1.0 - held);
-  // grooves bend what the surface mirrors toward the way across them
+  diffuse_light += surface.diffuse * all_around_light * (1.0 - held) * (1.0 - coat_kept);
+  // grooves bend what the surface mirrors toward the way across them, as Filament bends the
+  // normal, less on a smooth surface
   var mirror_normal = surface.normal;
   if drawn_out > 0.0 {
     let across = cross(surface.grooves, toward_viewer);
     let bent = cross(across, surface.grooves);
-    mirror_normal = normalize(mix(surface.normal, bent, drawn_out));
+    let bend = drawn_out * clamp(5.0 * roughness, 0.0, 1.0);
+    mirror_normal = normalize(mix(surface.normal, bent, bend));
   }
-  let crisp = clamp(1.0 - (roughness - 0.1) / 0.5, 0.0, 1.0);
   let leaving = reflect(-toward_viewer, mirror_normal);
-  let room_light = ROOM * mix(0.6, 1.0, share) * mix(0.5, 1.0, open);
-  var mirrored = held * surface.energy * room(leaving, mirror_normal, crisp) * room_light;
+  var mirrored = held * surface.energy * mirrored_studio(leaving, roughness);
   if surface.coat > 0.0 {
-    let coat_seen = max(dot(flat_normal, toward_viewer), 1e-4);
-    let kept = fresnel(vec3<f32>(DIELECTRIC), coat_seen).x * surface.coat;
-    let coat_crisp = clamp(1.0 - (coat_roughness - 0.1) / 0.5, 0.0, 1.0);
     let coat_leaving = reflect(-toward_viewer, flat_normal);
-    around_diffuse *= 1.0 - kept;
-    mirrored = mirrored * (1.0 - kept) + kept * room(coat_leaving, flat_normal, coat_crisp) * room_light;
+    mirrored = mirrored * (1.0 - coat_kept) + coat_kept * mirrored_studio(coat_leaving, coat_roughness);
   }
-  diffuse_light += around_diffuse;
-  highlights += mirrored;
+  highlights += mirrored * studio * share;
 
   // the light the surface gives off itself, which takes the place of the diffuse light it
   // would have under the scene's

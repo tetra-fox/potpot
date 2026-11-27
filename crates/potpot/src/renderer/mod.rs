@@ -7,6 +7,7 @@
 
 mod damage;
 mod dfg;
+mod environment;
 mod picture;
 mod pipelines;
 mod uniforms;
@@ -20,7 +21,7 @@ use wgpu::util::DeviceExt;
 
 use self::damage::{Bounds, HAZE_CELL, Reach, Redrawn, Spread};
 use self::picture::Picture;
-use self::pipelines::{BOUNCE, DEPTH, DFG, Layouts, Pipelines, SAMPLES};
+use self::pipelines::{BOUNCE, DEPTH, DFG, Layouts, Pipelines, SAMPLES, STUDIO};
 use self::uniforms::{Globals, Placed, Present};
 use crate::mesh::Mesh;
 use crate::scene::{Object, Scene};
@@ -104,6 +105,10 @@ pub struct Renderer {
   dfg_table: wgpu::Texture,
   /// The DFG table's texels, until the table holds them.
   dfg_texels: Option<wgpu::Buffer>,
+  /// The studio as mirrors of each roughness show it, a cube map.
+  studio_map: wgpu::Texture,
+  /// Whether the studio map is yet to be given its texels.
+  studio_unfilled: bool,
   layouts: Layouts,
   present_options: wgpu::Buffer,
   /// Whether the target encodes sRGB itself.
@@ -329,6 +334,31 @@ impl Renderer {
       usage: wgpu::BufferUsages::COPY_SRC,
     });
     let dfg_view = dfg_table.create_view(&wgpu::TextureViewDescriptor::default());
+    let studio_map = device.create_texture(&wgpu::TextureDescriptor {
+      label: Some("potpot studio"),
+      size: wgpu::Extent3d {
+        width: environment::SIDE,
+        height: environment::SIDE,
+        depth_or_array_layers: 6,
+      },
+      mip_level_count: environment::MIPS,
+      sample_count: 1,
+      dimension: wgpu::TextureDimension::D2,
+      format: STUDIO,
+      usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+      view_formats: &[],
+    });
+    let studio_view = studio_map.create_view(&wgpu::TextureViewDescriptor {
+      dimension: Some(wgpu::TextureViewDimension::Cube),
+      ..Default::default()
+    });
+    let studio_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+      label: Some("potpot studio"),
+      mag_filter: wgpu::FilterMode::Linear,
+      min_filter: wgpu::FilterMode::Linear,
+      mipmap_filter: wgpu::FilterMode::Linear,
+      ..Default::default()
+    });
     let view = |binding, view| wgpu::BindGroupEntry {
       binding,
       resource: wgpu::BindingResource::TextureView(view),
@@ -352,6 +382,8 @@ impl Renderer {
         view(3, &bounce_map),
         sampler(4, &bounce_sampler),
         view(5, &dfg_view),
+        view(6, &studio_view),
+        sampler(7, &studio_sampler),
       ],
     });
 
@@ -368,6 +400,8 @@ impl Renderer {
       maps_group,
       dfg_table,
       dfg_texels: Some(dfg_texels),
+      studio_map,
+      studio_unfilled: true,
       present_options: uniform("potpot present", size_of::<Present>()),
       target_encodes: target.is_srgb(),
       max_side: device.limits().max_texture_dimension_2d,
@@ -643,8 +677,41 @@ impl Renderer {
       );
       queue.submit([encoder.finish()]);
     }
+    if self.studio_unfilled {
+      self.fill_studio(queue);
+      self.studio_unfilled = false;
+    }
     self.draw_picture(device, queue, &picture, shapes, light, redrawn, reblur);
     self.picture = Some(picture);
+  }
+
+  /// Writes the baked texels into the studio map, mip after mip.
+  fn fill_studio(&self, queue: &wgpu::Queue) {
+    let mut texels = environment::SPECULAR;
+    for mip in 0..environment::MIPS {
+      let side = environment::SIDE >> mip;
+      let (level, rest) = texels.split_at((side * side * 6 * 4) as usize);
+      texels = rest;
+      queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+          texture: &self.studio_map,
+          mip_level: mip,
+          origin: wgpu::Origin3d::ZERO,
+          aspect: wgpu::TextureAspect::All,
+        },
+        level,
+        wgpu::TexelCopyBufferLayout {
+          offset: 0,
+          bytes_per_row: Some(side * 4),
+          rows_per_image: Some(side),
+        },
+        wgpu::Extent3d {
+          width: side,
+          height: side,
+          depth_or_array_layers: 6,
+        },
+      );
+    }
   }
 
   /// Returns the parts of the target where the picture is new.

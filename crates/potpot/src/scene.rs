@@ -100,10 +100,10 @@ pub struct Light {
   pub toward: Vec3,
   /// The light's color and brightness, as linear light.
   pub color: Vec3,
-  /// How much the ambient light is kept out of corners.
+  /// How much the studio's light is kept out of corners.
   ///
-  /// The light that reaches every surface is kept out of corners and from under things, which
-  /// grounds everything on the panel with a soft dark edge. Zero is none.
+  /// The light from all around is kept out of corners and from under things, which grounds
+  /// everything on the panel with a soft dark edge. Zero is none.
   pub occlusion: f32,
   /// How much light off surfaces lands on what is next to them.
   ///
@@ -115,6 +115,11 @@ pub struct Light {
   ///
   /// One is nearly a point, and a studio's wide soft light is five or more.
   pub softness: f32,
+  /// How bright the studio around the panel is, as a multiple of its own light.
+  ///
+  /// The studio lights every surface from all around and is what glossy surfaces mirror. Its
+  /// softbox lies where the light of [`Light::default`] comes from. Zero is none.
+  pub environment: f32,
   /// How much brighter the picture is made, in stops.
   ///
   /// Each stop doubles the light before it is tone mapped.
@@ -129,6 +134,7 @@ impl Default for Light {
       occlusion: 1.0,
       bounce: 0.0,
       softness: 2.5,
+      environment: 1.0,
       exposure: 0.0,
     }
   }

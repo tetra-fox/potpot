@@ -5,6 +5,7 @@ use std::mem::size_of;
 use super::damage::{
   BOUNCE_REACHES, HAZE_CELL, OPEN_CLEAR, OPEN_REACHES, SHADOW_BIAS, SHADOW_SPREAD,
 };
+use super::environment;
 use super::uniforms::Placed;
 use crate::mesh::Vertex;
 use crate::scene::LAMPS;
@@ -17,6 +18,8 @@ pub(super) const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub(super) const PICTURE: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// The format of the DFG table.
 pub(super) const DFG: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+/// The format of the studio's specular map, as `cargo xtask env` bakes it.
+pub(super) const STUDIO: wgpu::TextureFormat = wgpu::TextureFormat::Rgb9e5Ufloat;
 /// The format of the bounce map.
 ///
 /// The map holds linear light in rgb and a height in a, and a height lies outside zero to one.
@@ -42,13 +45,16 @@ pub(super) const RESOLVE_SOURCE: &str = include_str!("resolve.wgsl");
 /// Returns `scene.wgsl` with what it is given ahead of it.
 ///
 /// That is [`LAMPS`], the length of its array of lamps, how far around a point it looks things
-/// up, and the sRGB curve.
+/// up, the studio's diffuse light and its last mip, and the sRGB curve.
 pub(super) fn scene_source() -> String {
   // a row of numbers as the shader language writes it
   let listed = |numbers: &[f32]| {
     let numbers: Vec<String> = numbers.iter().map(|number| format!("{number:?}")).collect();
     numbers.join(", ")
   };
+  let harmonics: Vec<String> = (environment::HARMONICS.iter())
+    .map(|rgb| format!("vec3<f32>({})", listed(rgb)))
+    .collect();
   format!(
     "const LAMPS: u32 = {LAMPS};\n\
      const SHADOW_SPREAD: i32 = {SHADOW_SPREAD};\n\
@@ -58,6 +64,8 @@ pub(super) fn scene_source() -> String {
      const OPEN_CLEAR: f32 = {OPEN_CLEAR:?};\n\
      const BOUNCE_RINGS: i32 = {};\n\
      const BOUNCE_REACHES = array<f32, {}>({});\n\
+     const HARMONICS = array<vec3<f32>, 9>({});\n\
+     const STUDIO_LAST: f32 = {:?};\n\
      {SRGB_SOURCE}{}",
     OPEN_REACHES.len(),
     OPEN_REACHES.len(),
@@ -65,6 +73,8 @@ pub(super) fn scene_source() -> String {
     BOUNCE_REACHES.len(),
     BOUNCE_REACHES.len(),
     listed(&BOUNCE_REACHES),
+    harmonics.join(", "),
+    (environment::MIPS - 1) as f32,
     include_str!("scene.wgsl")
   )
 }
@@ -88,7 +98,8 @@ pub(super) struct Layouts {
   /// Every map the scene pass reads.
   ///
   /// The shadow map comes with its sampler, then the height map, then the bounce map with its
-  /// sampler, then the DFG table, which takes the bounce map's sampler.
+  /// sampler, then the DFG table, which takes the bounce map's sampler, then the studio's
+  /// specular map with its sampler.
   pub(super) maps: wgpu::BindGroupLayout,
   /// The picture's samples, for the pass that resolves them.
   pub(super) resolve: wgpu::BindGroupLayout,
@@ -155,6 +166,17 @@ impl Layouts {
           texture(3, wgpu::TextureSampleType::Float { filterable: true }),
           sampler(4, wgpu::SamplerBindingType::Filtering),
           texture(5, wgpu::TextureSampleType::Float { filterable: true }),
+          wgpu::BindGroupLayoutEntry {
+            binding: 6,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+              sample_type: wgpu::TextureSampleType::Float { filterable: true },
+              view_dimension: wgpu::TextureViewDimension::Cube,
+              multisampled: false,
+            },
+            count: None,
+          },
+          sampler(7, wgpu::SamplerBindingType::Filtering),
         ],
       }),
       resolve: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

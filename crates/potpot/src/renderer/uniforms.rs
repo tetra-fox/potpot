@@ -18,6 +18,7 @@ pub(super) struct Globals {
   pub(super) light_view: [[f32; 4]; 4],
   /// The way to the light, and how wide shadow edges are.
   pub(super) toward_light: [f32; 4],
+  /// The way to the viewer, and how bright the studio is.
   toward_viewer: [f32; 4],
   light_color: [f32; 4],
   /// The shadow options, one in each component.
@@ -60,7 +61,7 @@ impl Globals {
       view: scene.view().to_cols_array_2d(),
       light_view: scene.light_view().to_cols_array_2d(),
       toward_light: light.toward.normalize().extend(light.softness).into(),
-      toward_viewer: scene.toward_viewer().extend(0.0).into(),
+      toward_viewer: scene.toward_viewer().extend(light.environment).into(),
       light_color: light.color.extend(light.bounce).into(),
       shadows: [
         f32::from(u8::from(scene.look.soft_shadows)),

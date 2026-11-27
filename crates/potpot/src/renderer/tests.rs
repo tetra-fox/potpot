@@ -1,7 +1,7 @@
 //! Scenes drawn in part, against the same scenes drawn whole.
 //!
-//! These draw with a graphics device, so a plain test run leaves them out. `just gpu-test` runs
-//! them.
+//! Most of these draw with a graphics device, so a plain test run leaves them out. `just
+//! gpu-test` runs them.
 
 use glam::{Mat4, Vec2, Vec3};
 
@@ -281,6 +281,14 @@ fn lamp(number: &mut impl FnMut() -> f32) -> Lamp {
 }
 
 #[test]
+fn the_baked_studio_holds_every_mip() {
+  let texels: u32 = (0..environment::MIPS)
+    .map(|mip| (environment::SIDE >> mip).pow(2) * 6)
+    .sum();
+  assert_eq!(environment::SPECULAR.len(), texels as usize * 4);
+}
+
+#[test]
 #[ignore = "needs a graphics device"]
 fn a_scene_drawn_in_part_is_the_scene_drawn_whole() {
   let target = Target::new();
@@ -522,6 +530,7 @@ fn what_lights_itself_on_an_edge_spills_as_it_does_with_the_dark_beside_it() {
       // all that shows
       light: Light {
         color: Vec3::ZERO,
+        environment: 0.0,
         ..Light::default()
       },
       // the ordered dither of the color steps repeats every four pixels, so it is the same at
