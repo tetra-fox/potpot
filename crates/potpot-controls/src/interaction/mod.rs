@@ -68,6 +68,11 @@ enum State {
     push: Push,
     on: bool,
   },
+  /// The left button is down on an arrow of a control.
+  ///
+  /// The arrow is a [`Target::Decrement`] or a [`Target::Increment`], and it moved the control
+  /// its step as it went down.
+  Stepping(Target),
   /// The left button went down on a key of a keybed.
   ///
   /// `note` is the one that sounds, and `None` while the pointer is off the keys.
@@ -229,11 +234,23 @@ impl Interaction {
 
   /// Returns the control held down by the left button.
   ///
-  /// The control is a button being pressed, or one being dragged. `None` is none.
+  /// The control is a button being pressed, one being dragged, or one whose arrow is held.
+  /// `None` is none.
   pub fn held(&self) -> Option<usize> {
     match self.state {
       State::Held { control, .. } => Some(control),
       State::Drag(drag) => Some(drag.control),
+      State::Stepping(arrow) => arrow.control(),
+      _ => None,
+    }
+  }
+
+  /// Returns the arrow held down by the left button, if one is.
+  ///
+  /// It is a [`Target::Decrement`] or a [`Target::Increment`].
+  pub fn arrow(&self) -> Option<Target> {
+    match self.state {
+      State::Stepping(arrow) => Some(arrow),
       _ => None,
     }
   }
@@ -381,6 +398,11 @@ impl Interaction {
         actions.extend(note.map(|note| Action::NoteOff { note }));
         self.state = State::Idle;
       }
+      // it comes back out
+      State::Stepping(_) => {
+        actions.push(Action::Redraw);
+        self.state = State::Idle;
+      }
       State::Resize { .. } => self.state = State::Idle,
       State::Idle | State::Edit(_) | State::Menu(_) => {}
     }
@@ -437,7 +459,7 @@ impl Interaction {
           *note = now;
         }
       }
-      State::Idle | State::Held { .. } | State::Edit(_) => {}
+      State::Idle | State::Held { .. } | State::Stepping(_) | State::Edit(_) => {}
     }
   }
 
@@ -499,7 +521,11 @@ impl Interaction {
       }
       // the release of the press before never came, which baseview leaves out when Windows
       // takes the pointer away
-      State::Drag(_) | State::Held { .. } | State::Resize { .. } | State::Playing { .. } => {
+      State::Drag(_)
+      | State::Held { .. }
+      | State::Stepping(_)
+      | State::Resize { .. }
+      | State::Playing { .. } => {
         self.cut_short(actions);
       }
       State::Idle => {}
@@ -553,17 +579,20 @@ impl Interaction {
         let value = self.dials[parameter].chosen(choice);
         set_whole(parameter, values[parameter], value, actions);
       }
-      Some(Target::Decrement(control) | Target::Increment(control)) => {
+      Some(arrow @ (Target::Decrement(control) | Target::Increment(control))) => {
         let Control {
           parameter, feel, ..
         } = self.controls[control];
-        let lines = if over == Some(Target::Increment(control)) {
+        let lines = if matches!(arrow, Target::Increment(_)) {
           1.0
         } else {
           -1.0
         };
         let value = self.dials[parameter].wheeled(values[parameter], lines, false, feel);
         set_whole(parameter, values[parameter], value, actions);
+        // it goes in until it is let go
+        self.state = State::Stepping(arrow);
+        actions.push(Action::Redraw);
       }
       Some(Target::Grip) if double => actions.push(Action::Scale(1.0)),
       Some(Target::Grip) => {

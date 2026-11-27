@@ -61,6 +61,15 @@ impl Panel {
     pressed
   }
 
+  /// Presses an arrow and lets it go.
+  ///
+  /// Returns what the press did before the arrow went in.
+  fn step(&mut self, arrow: Target) -> Vec<Action> {
+    let mut pressed = self.click(arrow);
+    assert_eq!(pressed.pop(), Some(Redraw), "the arrow goes in");
+    pressed
+  }
+
   /// Takes the value a whole gesture sets a parameter to.
   fn take(&mut self, parameter: usize, actions: &[Action]) -> f32 {
     let [Begin(begun), Set(set, value), End(ended)] = actions else {
@@ -106,27 +115,70 @@ fn a_choice_puts_its_control_that_many_steps_from_the_start() {
 fn a_stepper_moves_one_step_each_press_and_stops_at_either_end() {
   let mut panel = Panel::new(false);
   let at = |panel: &Panel| (panel.values[STEPPER] * 15.0 + 1.0).round();
-  let actions = panel.click(Target::Increment(STEPPER));
+  let actions = panel.step(Target::Increment(STEPPER));
   panel.take(STEPPER, &actions);
   assert_eq!(at(&panel), 9.0);
   // a quick second press is one more step, and no double click
   for _ in 0..7 {
-    let actions = panel.click(Target::Increment(STEPPER));
+    let actions = panel.step(Target::Increment(STEPPER));
     panel.take(STEPPER, &actions);
   }
   assert_eq!((at(&panel), panel.values[STEPPER]), (16.0, 1.0));
-  assert_eq!(panel.click(Target::Increment(STEPPER)), []);
+  assert_eq!(panel.step(Target::Increment(STEPPER)), []);
   for _ in 0..15 {
-    let actions = panel.click(Target::Decrement(STEPPER));
+    let actions = panel.step(Target::Decrement(STEPPER));
     panel.take(STEPPER, &actions);
   }
   assert_eq!((at(&panel), panel.values[STEPPER]), (1.0, 0.0));
-  assert_eq!(panel.click(Target::Decrement(STEPPER)), []);
+  assert_eq!(panel.step(Target::Decrement(STEPPER)), []);
   // from between two steps the first press goes to the next one that way
   panel.values[STEPPER] = 4.5 / 15.0;
-  let actions = panel.click(Target::Increment(STEPPER));
+  let actions = panel.step(Target::Increment(STEPPER));
   panel.take(STEPPER, &actions);
   assert_eq!(at(&panel), 6.0);
+}
+
+#[test]
+fn an_arrow_is_held_from_its_press_to_its_release_and_steps_once() {
+  let mut panel = Panel::new(false);
+  let press = |over| Event::Press {
+    button: Button::Left,
+    at: [10.0, 10.0],
+    window: [10.0, 10.0],
+    over: Some(over),
+    reset: false,
+  };
+  let on = Target::Increment(STEPPER);
+  let pressed = panel.send(press(on));
+  assert_eq!(
+    pressed,
+    [
+      Begin(STEPPER),
+      Set(STEPPER, 8.0 / 15.0),
+      End(STEPPER),
+      Redraw
+    ]
+  );
+  assert_eq!(panel.interaction.arrow(), Some(on));
+  assert_eq!(panel.interaction.held(), Some(STEPPER));
+  // held, it moves nothing more, and let go it comes back out
+  assert_eq!(panel.send(Event::Tick), []);
+  assert_eq!(panel.send(Event::Release(Button::Left)), [Redraw]);
+  assert_eq!(panel.interaction.arrow(), None);
+  // a press elsewhere with no release before it lets it out, as does a press on a tab
+  panel.values[STEPPER] = 8.0 / 15.0;
+  let back = Target::Decrement(STEPPER);
+  panel.send(press(back));
+  assert_eq!(panel.interaction.arrow(), Some(back));
+  assert_eq!(panel.send(press(Target::Control(SMOOTH))), [Redraw]);
+  assert_eq!(panel.interaction.arrow(), None);
+  panel.send(Event::Release(Button::Left));
+  panel.send(press(back));
+  assert_eq!(panel.send(press(Target::Page(1))), [Redraw, Redraw]);
+  assert_eq!(
+    (panel.interaction.arrow(), panel.interaction.page()),
+    (None, 1)
+  );
 }
 
 #[test]

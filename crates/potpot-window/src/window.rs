@@ -197,6 +197,8 @@ struct Frame {
   menu: Option<Menu>,
   /// The control that is held down.
   held: Option<usize>,
+  /// The arrow that is held down.
+  arrow: Option<Target>,
   /// The notes whose keys are down.
   notes: Pressed,
 }
@@ -217,6 +219,7 @@ impl Frame {
       edit: None,
       menu: None,
       held: None,
+      arrow: None,
       notes: settings.notes.shown(),
     }
   }
@@ -390,7 +393,8 @@ fn due(shown: Option<&Frame>, now: &Frame) -> bool {
     (shown.page, &shown.values, shown.window, shown.scale)
       != (now.page, &now.values, now.window, now.scale)
       || !same(&shown.feed, &now.feed)
-      || (&shown.edit, &shown.menu, shown.held) != (&now.edit, &now.menu, now.held)
+      || (&shown.edit, &shown.menu) != (&now.edit, &now.menu)
+      || (shown.held, shown.arrow) != (now.held, now.arrow)
       || shown.notes != now.notes
   })
 }
@@ -514,6 +518,7 @@ fn laid_out<S: Skin>(
     edit: now.edit.as_ref(),
     menu: now.menu.as_ref(),
     held: now.held,
+    arrow: now.arrow,
     notes: now.notes,
     scale: now.scale,
     pixel,
@@ -686,6 +691,7 @@ impl<S: Skin> State<S> {
       edit: self.interaction.edit().cloned(),
       menu: self.interaction.menu().copied(),
       held: self.interaction.held(),
+      arrow: self.interaction.arrow(),
       notes: settings.notes.shown().with(self.interaction.note()),
     }
   }
@@ -1460,6 +1466,7 @@ mod tests {
       edit: None,
       menu: None,
       held: None,
+      arrow: None,
       notes: Pressed::default(),
     }
   }
@@ -1517,6 +1524,14 @@ mod tests {
     };
     assert!(due(Some(&shown), &held));
     assert!(due(Some(&held), &shown));
+    // one arrow of a control held, and then the other with no release between
+    let arrow = |arrow| Frame {
+      arrow: Some(arrow),
+      ..held.clone()
+    };
+    let (back, on) = (Target::Decrement(0), Target::Increment(0));
+    assert!(due(Some(&held), &arrow(back)));
+    assert!(due(Some(&arrow(back)), &arrow(on)));
     // a key down, whether the panel's own or one the audio thread shows
     let played = Frame {
       notes: Pressed::default().with(Some(60)),

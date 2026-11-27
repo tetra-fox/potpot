@@ -61,6 +61,10 @@ pub struct View<'a> {
   /// The control is a button being pressed or one being dragged, given by its place among the
   /// panel's controls.
   pub held: Option<usize>,
+  /// The arrow held down by the left button, if any.
+  ///
+  /// It is a [`Target::Decrement`] or a [`Target::Increment`] of the control `held` names.
+  pub arrow: Option<Target>,
   /// The notes whose keys are down.
   ///
   /// They are the one a key of the panel plays and those the audio thread shows through the

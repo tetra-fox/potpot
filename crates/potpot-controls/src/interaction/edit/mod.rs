@@ -103,6 +103,7 @@ impl Interaction {
       State::Idle
       | State::Drag { .. }
       | State::Held { .. }
+      | State::Stepping(_)
       | State::Resize { .. }
       | State::Playing { .. } => return,
     };
