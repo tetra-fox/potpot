@@ -43,3 +43,12 @@ Screenshots of plugins whose material quality potpot aims for, copied from a loc
 
 `before/`: potpot and canwetalk drawn at scale 2 on `main` at 63c115a, the baseline every step
 is compared with.
+
+## hammertone
+
+Real hammertone and hammered finishes, for judging the `hammertone` preset.
+
+- `hammertone/r394-1.jpg`: R-394KM radio panel in silver hammertone, the clearest picture of the finish on a front panel, https://commons.wikimedia.org/wiki/File:Funkger%C3%A4t_R-394KM_IMG_1663.JPG
+- `hammertone/junker-key.png`: Junker telegraph key with a grey hammertone cover, https://commons.wikimedia.org/wiki/File:Junker_Taste.png
+- `hammertone/pipe-coupling.jpg`: black hammered enamel on a pipe fitting, https://commons.wikimedia.org/wiki/File:Muffe_Eines_Steigleitungsrohrs_Detail.jpg
+- `hammertone/r394-crop.png`, `hammertone/junker-crop.png`: close crops of the two panels above
