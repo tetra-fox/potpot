@@ -122,6 +122,11 @@ pub struct Renderer {
   present_options: wgpu::Buffer,
   /// The fewest samples any pixel's mean of the picture holds.
   least: u32,
+  /// The part of the picture whose pixels are not all settled, as x, y, width and height.
+  ///
+  /// It is around every part drawn afresh since the picture last settled, and a sample that
+  /// refines is drawn there alone.
+  unsettled: [u32; 4],
   /// Whether the target encodes sRGB itself.
   target_encodes: bool,
   /// The greatest width and height of a texture of the device.
@@ -480,6 +485,7 @@ impl Renderer {
       unfilled: true,
       present_options: uniform("potpot present", size_of::<Present>()),
       least: SETTLED,
+      unsettled: [0; 4],
       target_encodes: target.is_srgb(),
       max_side: device.limits().max_texture_dimension_2d,
       picture: None,
@@ -719,6 +725,12 @@ impl Renderer {
     let redrawn = if fresh { Redrawn::Whole } else { redrawn };
     // a scene that stands still is drawn one more sample, until every pixel is settled
     let refining = redrawn == Redrawn::Nothing && self.least < SETTLED;
+    self.unsettled = match redrawn {
+      Redrawn::Nothing => self.unsettled,
+      Redrawn::Whole => [0, 0, picture_size[0], picture_size[1]],
+      Redrawn::Within(part) if self.least >= SETTLED => part,
+      Redrawn::Within(part) => united(self.unsettled, part),
+    };
     self.least = match redrawn {
       Redrawn::Nothing => (self.least + u32::from(refining)).min(SETTLED),
       _ => 1,
@@ -731,16 +743,21 @@ impl Renderer {
       }
       queue.write_buffer(&self.wipe, 0, bytemuck::cast_slice(&self.wiped));
     }
-    self.anywhere = !presented_alike || redrawn == Redrawn::Whole || refining;
+    self.anywhere = !presented_alike || redrawn == Redrawn::Whole;
     self.parts.clear();
+    // the haze shows only with a bloom, and the soften reaches a pixel
+    let reach = if look.bloom > 0.0 {
+      spread.reach()
+    } else {
+      Vec2::ONE
+    };
     if let Redrawn::Within(_) = redrawn {
-      // the haze shows only with a bloom, and the soften reaches a pixel
-      let reach = if look.bloom > 0.0 {
-        spread.reach()
-      } else {
-        Vec2::ONE
-      };
       damage::parts(&self.bands, picture_size, size, reach, &mut self.parts);
+    }
+    if refining {
+      self
+        .parts
+        .push(on_target(self.unsettled, picture_size, size, reach));
     }
     if let Some(texels) = self.dfg_texels.take() {
       let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -770,6 +787,7 @@ impl Renderer {
       self.unfilled = false;
     }
     let mut picture = picture;
+    let refining = refining.then_some(self.unsettled);
     self.draw_picture(
       device,
       queue,
@@ -851,9 +869,9 @@ impl Renderer {
   ///
   /// `shapes` is the parts of the shadow map and of the height map to draw again, and `light`
   /// the part of the bounce map, which is left alone unless light bounces. `redrawn` is the
-  /// part of the picture to draw again, where its mean starts over. `refining` draws one more
-  /// sample of the whole picture into each pixel's mean instead. `reblur` blurs all of the
-  /// glow map again, as a new blur takes.
+  /// part of the picture to draw again, where its mean starts over. `refining` is a part of the
+  /// picture to draw one more sample of into each pixel's mean instead, as x, y, width and
+  /// height. `reblur` blurs all of the glow map again, as a new blur takes.
   #[expect(clippy::too_many_arguments, reason = "each is a part of what is stale")]
   fn draw_picture(
     &self,
@@ -863,16 +881,14 @@ impl Renderer {
     shapes: [Redrawn; 2],
     light: Redrawn,
     redrawn: Redrawn,
-    refining: bool,
+    refining: Option<[u32; 4]>,
     reblur: bool,
   ) {
-    // the scene pass draws all of a sample that refines, and the mean takes it in
-    let (drawn, first) = if refining {
-      (Redrawn::Whole, 0)
-    } else {
-      (redrawn, 1)
+    // the scene pass draws all of the part a sample refines, and the mean takes it in
+    let (redrawn, first) = match refining {
+      Some(part) => (Redrawn::Within(part), 0),
+      None => (redrawn, 1),
     };
-    let redrawn = drawn;
     let light = if self.held_globals.bounces() {
       light
     } else {
@@ -986,16 +1002,23 @@ impl Renderer {
           },
         })],
         // a part is drawn over the picture as it is kept. with everything as near as can be,
-        // nothing is drawn but where the wipe puts it back as far off as can be
+        // nothing is drawn but where the wipe puts it back as far off as can be. a sample that
+        // refines draws all of its part, over which nothing is near yet
         depth_stencil_attachment: Some(depth_attachment(
           &picture.depth,
-          wgpu::LoadOp::Clear(if whole { 1.0 } else { 0.0 }),
+          wgpu::LoadOp::Clear(if whole || refining.is_some() {
+            1.0
+          } else {
+            0.0
+          }),
         )),
         timestamp_writes: None,
         occlusion_query_set: None,
       });
       let mut within = None;
-      if let Redrawn::Within(part @ [x, y, width, height]) = redrawn {
+      if let Some([x, y, width, height]) = refining {
+        pass.set_scissor_rect(x, y, width, height);
+      } else if let Redrawn::Within(part @ [x, y, width, height]) = redrawn {
         pass.set_scissor_rect(x, y, width, height);
         pass.set_pipeline(&self.pipelines.wipe[smooth]);
         pass.set_vertex_buffer(0, self.wipe.slice(..));
@@ -1058,11 +1081,14 @@ impl Renderer {
       });
       pass.set_bind_group(0, &picture.accumulate[picture.side], &[]);
       match (refining, redrawn) {
-        (true, _) => {
+        (Some([x, y, width, height]), _) => {
+          pass.set_pipeline(&self.pipelines.keep);
+          pass.draw(0..3, 0..1);
+          pass.set_scissor_rect(x, y, width, height);
           pass.set_pipeline(&self.pipelines.add);
           pass.draw(0..3, 0..1);
         }
-        (false, Redrawn::Within([x, y, width, height])) => {
+        (None, Redrawn::Within([x, y, width, height])) => {
           pass.set_pipeline(&self.pipelines.keep);
           pass.draw(0..3, 0..1);
           pass.set_scissor_rect(x, y, width, height);
@@ -1070,7 +1096,7 @@ impl Renderer {
           pass.set_vertex_buffer(0, self.wipe.slice(..));
           pass.draw(0..self.wiped.len() as u32, 0..1);
         }
-        (false, _) => {
+        (None, _) => {
           pass.set_pipeline(&self.pipelines.first[0]);
           pass.draw(0..3, 0..1);
         }
@@ -1426,6 +1452,35 @@ fn fill_sets(
       },
     );
   }
+}
+
+/// Returns the rectangle around two, each as x, y, width and height.
+fn united(one: [u32; 4], other: [u32; 4]) -> [u32; 4] {
+  let [left, top] = [one[0].min(other[0]), one[1].min(other[1])];
+  let [right, foot] = [
+    (one[0] + one[2]).max(other[0] + other[2]),
+    (one[1] + one[3]).max(other[1] + other[3]),
+  ];
+  [left, top, right - left, foot - top]
+}
+
+/// Returns the rectangle of a target a rectangle of the picture shows in.
+///
+/// The picture is `picture` pixels stretched over `target` pixels, and what the present pass
+/// gathers around a pixel is taken in, `reach` of the picture's pixels along each axis and one
+/// more. Both rectangles are x, y, width and height.
+fn on_target(part: [u32; 4], picture: [u32; 2], target: [u32; 2], reach: Vec2) -> [u32; 4] {
+  let target = Vec2::from(target.map(|side| side as f32));
+  let scale = target / Vec2::from(picture.map(|side| side as f32));
+  let reach = reach + 1.0;
+  let [x, y, width, height] = part.map(|side| side as f32);
+  let least = ((Vec2::new(x, y) - reach) * scale).floor().max(Vec2::ZERO);
+  let most = ((Vec2::new(x + width, y + height) + reach) * scale)
+    .ceil()
+    .min(target);
+  let [left, top] = least.to_array().map(|side| side as u32);
+  let [right, foot] = most.to_array().map(|side| side as u32);
+  [left, top, right - left, foot - top]
 }
 
 /// Writes baked texels into a cube map of the studio, mip after mip.

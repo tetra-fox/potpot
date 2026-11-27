@@ -314,6 +314,36 @@ fn a_part_started_over_refines_back_to_the_scene_settled_whole() {
     kept.changed().is_some(),
     "the change is drawn in part, which this test is about"
   );
+  // refining stays in the part started over: outside it every value is kept as it was, and
+  // the target is said to change inside it alone
+  let started = target.picture(&kept);
+  let [x, y, width, height] = kept.unsettled;
+  assert!(
+    width * height < SIZE[0] * SIZE[1] / 2,
+    "the part is {width} by {height}"
+  );
+  kept.prepare(&target.device, &target.queue, &scene, SIZE);
+  assert_eq!(kept.changed(), Some(&kept.parts[..]));
+  assert_eq!(kept.parts.len(), 1);
+  while !kept.settled() {
+    kept.prepare(&target.device, &target.queue, &scene, SIZE);
+  }
+  let refined = target.picture(&kept);
+  let outside = |index: usize| {
+    let (across, down) = ((index / 4) as u32 % SIZE[0], (index / 4) as u32 / SIZE[0]);
+    !((x..x + width).contains(&across) && (y..y + height).contains(&down))
+  };
+  let moved = (0..started.len())
+    .filter(|&index| outside(index) && started[index].to_bits() != refined[index].to_bits())
+    .count();
+  assert_eq!(
+    moved, 0,
+    "values outside the part moved while it was refined"
+  );
+  assert!(
+    (0..started.len()).any(|index| !outside(index) && started[index] != refined[index]),
+    "the part is refined"
+  );
   target.settle(&mut kept, &scene);
   let mut whole = Renderer::new(&target.device, FORMAT);
   target.settle(&mut whole, &scene);
