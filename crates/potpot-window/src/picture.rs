@@ -18,7 +18,12 @@ pub struct Picture {
   /// The bytes of the pixels, in rows from the top with no gaps.
   ///
   /// A pixel is four bytes: red, green, blue and alpha, the colors in sRGB. Every alpha is 255.
+  /// It is the frame once the skin has settled, as [`Skin::settled`] has it.
   pub pixels: Vec<u8>,
+  /// The bytes of the first frame drawn, before the skin refined its picture.
+  ///
+  /// They are laid out as [`Picture::pixels`] are.
+  pub first: Vec<u8>,
 }
 
 impl fmt::Debug for Picture {
@@ -30,6 +35,8 @@ impl fmt::Debug for Picture {
 }
 
 /// Draws one frame of a panel to pixels, with no window.
+///
+/// The frame is drawn again until the skin has settled on its picture.
 ///
 /// The [`Picture`] is what a window of `settings` shows at `scale` on a display with one pixel
 /// to a point: the skin's picture and over it its flat shapes and the grip. `scale` is a multiple
@@ -77,8 +84,12 @@ pub fn picture<S: Skin>(
   let values = params.iter().map(|param| (param.value)()).collect();
   let dials = params.into_iter().map(|param| param.dial).collect();
   let interaction = Interaction::new(dials, controls, settings.size, settings.scales);
-  let pixels = pictured(&graphics, settings, &interaction, values, size, skin)?;
-  Ok(Picture { size, pixels })
+  let pictured = pictured(&graphics, settings, &interaction, values, size, skin)?;
+  Ok(Picture {
+    size,
+    pixels: pictured.settled,
+    first: pictured.first,
+  })
 }
 
 #[cfg(test)]

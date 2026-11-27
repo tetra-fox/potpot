@@ -547,6 +547,10 @@ impl Skin for Compressor {
     self.renderer.changed()
   }
 
+  fn settled(&self) -> bool {
+    self.renderer.settled()
+  }
+
   fn target_at(&self, at: [f32; 2]) -> Option<Target> {
     // the dot lies flat on the screen, so it is found by its place and the rest by the scene
     if shared::dot_at(&[self.bend], at, DOT_REACH).is_some() {

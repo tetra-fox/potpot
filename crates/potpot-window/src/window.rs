@@ -573,7 +573,7 @@ pub(crate) fn pictured<S: Skin>(
   values: Vec<f32>,
   window: [u32; 2],
   skin: impl FnOnce(&Gpu) -> S,
-) -> Result<Vec<u8>, HandlerError> {
+) -> Result<Pictured, HandlerError> {
   let [width, height] = window;
   let limits = graphics.device.limits();
   let most = limits.max_texture_dimension_2d;
@@ -596,27 +596,46 @@ pub(crate) fn pictured<S: Skin>(
   let (mut skin, mut flat) = made(graphics, settings, interaction, &first, skin)?;
   let Graphics { device, queue, .. } = graphics;
   let place = fitted(window, settings.size);
-  let over = laid_out(graphics, &mut skin, interaction, settings, &first);
-  flat.prepare(device, queue, &over, settings.size, place);
   let canvas = Canvas::new(device, window);
-  let encoder = drawing(device, &canvas, &skin, &flat, place);
-  // wgpu panics over a device that is lost while it is waited on
   let whole = [[0, 0, width, height]];
-  let read = catch_unwind(AssertUnwindSafe(|| canvas.read(graphics, encoder, &whole)))
-    .unwrap_or_else(|panic| Err(said(&*panic)));
-  if let Some(fault) = graphics.fault.get() {
-    return Err(HandlerError::from_boxed(fault.as_str().into()));
-  }
-  let rows = read.map_err(|why| HandlerError::from_boxed(why.into()))?;
-  let read = canvas.read.slice(rows.bytes).get_mapped_range();
   // a row is read back with bytes after its pixels, blue first, and its fourth byte no alpha
   let wide = width as usize * 4;
-  Ok(
-    (read.chunks_exact(canvas.row as usize))
+  let mut frame = |skin: &mut S| -> Result<Vec<u8>, HandlerError> {
+    let over = laid_out(graphics, skin, interaction, settings, &first);
+    flat.prepare(device, queue, &over, settings.size, place);
+    let encoder = drawing(device, &canvas, skin, &flat, place);
+    // wgpu panics over a device that is lost while it is waited on
+    let read = catch_unwind(AssertUnwindSafe(|| canvas.read(graphics, encoder, &whole)))
+      .unwrap_or_else(|panic| Err(said(&*panic)));
+    if let Some(fault) = graphics.fault.get() {
+      return Err(HandlerError::from_boxed(fault.as_str().into()));
+    }
+    let rows = read.map_err(|why| HandlerError::from_boxed(why.into()))?;
+    let read = canvas.read.slice(rows.bytes).get_mapped_range();
+    let pixels = (read.chunks_exact(canvas.row as usize))
       .flat_map(|row| row[..wide].as_chunks::<4>().0)
       .flat_map(|&[blue, green, red, _]| [red, green, blue, u8::MAX])
-      .collect(),
-  )
+      .collect();
+    drop(read);
+    canvas.read.unmap();
+    Ok(pixels)
+  };
+  // the first frame, and then the same frame again until the skin's picture is refined
+  let drawn_first = frame(&mut skin)?;
+  let mut settled = None;
+  while !skin.settled() {
+    settled = Some(frame(&mut skin)?);
+  }
+  Ok(Pictured {
+    settled: settled.unwrap_or_else(|| drawn_first.clone()),
+    first: drawn_first,
+  })
+}
+
+/// The pixels of a picture drawn with no window, as its first frame and settled.
+pub(crate) struct Pictured {
+  pub(crate) first: Vec<u8>,
+  pub(crate) settled: Vec<u8>,
 }
 
 impl<S: Skin> State<S> {
@@ -826,7 +845,8 @@ impl<S: Skin> Window<S> {
       return;
     };
     let now = state.now(&self.hosts, &self.settings);
-    let stale = due(state.shown.as_ref(), &now);
+    // a skin that is still refining its picture is drawn again
+    let stale = due(state.shown.as_ref(), &now) || !state.skin.settled();
     // a window with no size has nothing to draw
     let asks = !state.stopped && stale && !state.window.contains(&0);
     drop(state);
@@ -956,7 +976,8 @@ impl<S: Skin> Window<S> {
     let now = state.now(&self.hosts, &self.settings);
     let at = Instant::now();
     let exposed = self.exposed.take();
-    if state.stopped || !due(state.shown.as_ref(), &now) {
+    let refining = state.shown.is_some() && !state.skin.settled();
+    if state.stopped || !(due(state.shown.as_ref(), &now) || refining) {
       // nothing to draw. the last picture goes back if the window lost some of it, or if no feed
       // moved a moment ago and no shown note is down, when it is the system that wants the
       // window painted. while a shown note is down every frame looks at the notes afresh
@@ -1072,7 +1093,7 @@ impl<S: Skin> Window<S> {
     if shown.as_ref().is_some_and(fed_now) {
       *fed = Some(at);
     }
-    let follows = self.settings.notes.shown().any() || follows(*fed, at);
+    let follows = self.settings.notes.shown().any() || follows(*fed, at) || !skin.settled();
     *shown = Some(now);
     drop(state);
     if follows {

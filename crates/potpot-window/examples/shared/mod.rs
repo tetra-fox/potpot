@@ -25,11 +25,21 @@ pub struct Sound {
   pub pictured_after: u32,
 }
 
+/// The argument that asks for the picture's first sample, before it is refined.
+pub const FIRST: &str = "--first";
+
+/// Returns the example's arguments, without [`FIRST`].
+fn arguments() -> impl Iterator<Item = std::ffi::OsString> {
+  std::env::args_os()
+    .skip(1)
+    .filter(|argument| argument != FIRST)
+}
+
 /// Returns the PNG file the example is asked to draw itself to.
 ///
 /// It is the example's first argument, and `None` if the example is to open its window.
 pub fn file() -> Option<PathBuf> {
-  std::env::args_os().nth(1).map(PathBuf::from)
+  arguments().next().map(PathBuf::from)
 }
 
 /// Opens an example's window or draws the example to a file.
@@ -37,7 +47,9 @@ pub fn file() -> Option<PathBuf> {
 /// The file is the one [`file`] returns, and with none the window opens. In a window, `sound`
 /// runs on a thread of its own, a block at a time. Before a picture its blocks are run one after
 /// another with no time between them, so the same run gives the same picture. The picture is
-/// drawn at the scale the example's second argument gives, or at the panel's own size.
+/// drawn at the scale the example's second argument gives, or at the panel's own size. It is
+/// the picture refined until the skin settles, or its first sample with [`FIRST`] anywhere
+/// among the arguments.
 ///
 /// A second argument that is no number, or a third, ends the process with what is wrong and how
 /// the example is run.
@@ -64,7 +76,7 @@ pub fn run<S: Skin>(
     return Ok(());
   };
   let scale = scale().unwrap_or_else(|wrong| {
-    eprintln!("{wrong}\nusage: just render <example> <file.png> [scale]");
+    eprintln!("{wrong}\nusage: just render <example> <file.png> [scale] [{FIRST}]");
     std::process::exit(2)
   });
   if let Some(mut sound) = sound {
@@ -73,7 +85,9 @@ pub fn run<S: Skin>(
     }
   }
   let drawn = potpot_window::picture(&settings, params, controls, scale, skin)?;
-  write_png(&file, drawn.size, &drawn.pixels)?;
+  let first = std::env::args_os().any(|argument| argument == FIRST);
+  let pixels = if first { &drawn.first } else { &drawn.pixels };
+  write_png(&file, drawn.size, pixels)?;
   eprintln!("wrote {}", file.display());
   Ok(())
 }
@@ -86,7 +100,7 @@ pub fn run<S: Skin>(
 ///
 /// Returns what is wrong if the argument is no number or another follows it.
 fn scale() -> Result<f32, String> {
-  let mut after_file = std::env::args_os().skip(2);
+  let mut after_file = arguments().skip(1);
   let scale = match after_file.next() {
     Some(given) => {
       let given = given.to_string_lossy();

@@ -22,7 +22,11 @@ use potpot::{Look, Place, Renderer, wgpu};
 use crate::panels::{PANELS, SIZE};
 
 fn main() {
-  let mut arguments = std::env::args().skip(1);
+  // the first sample alone, before the picture is refined
+  let first = std::env::args().any(|argument| argument == panels::shared::window::FIRST);
+  let mut arguments = std::env::args()
+    .skip(1)
+    .filter(|argument| argument != panels::shared::window::FIRST);
   let (Some(path), Some(panel)) = (arguments.next(), arguments.next()) else {
     panic!("gallery: expected a png file and then one of {PANELS}")
   };
@@ -73,7 +77,11 @@ fn main() {
   });
 
   let mut renderer = Renderer::new(&device, format);
-  renderer.prepare(&device, &queue, &scene(look), size);
+  let scene = scene(look);
+  renderer.prepare(&device, &queue, &scene, size);
+  while !first && !renderer.settled() {
+    renderer.prepare(&device, &queue, &scene, size);
+  }
   let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
   renderer.render(
     &mut encoder,

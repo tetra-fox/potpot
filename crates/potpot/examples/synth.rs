@@ -815,6 +815,10 @@ impl Skin for Synth {
     self.renderer.changed()
   }
 
+  fn settled(&self) -> bool {
+    self.renderer.settled()
+  }
+
   fn target_at(&self, at: [f32; 2]) -> Option<Target> {
     // the dots lie flat on their screen, so they are found by their places and the rest by
     // the scene

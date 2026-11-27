@@ -619,6 +619,10 @@ impl Skin for Equalizer {
     self.renderer.changed()
   }
 
+  fn settled(&self) -> bool {
+    self.renderer.settled()
+  }
+
   fn target_at(&self, at: [f32; 2]) -> Option<Target> {
     // a dot lies flat on the screen, so it is found by its place and the rest by the scene
     if let Some(band) = shared::dot_at(&self.dots, at, DOT_REACH) {

@@ -132,6 +132,15 @@ pub trait Skin: 'static {
     None
   }
 
+  /// Returns whether the skin's picture is settled.
+  ///
+  /// A skin whose picture is refined while the panel stands still returns false until it is
+  /// done. The window draws frames while the skin is not settled, though nothing else asks
+  /// for one, and none once it is. A skin that leaves this as it is is always settled.
+  fn settled(&self) -> bool {
+    true
+  }
+
   /// Returns the [`Target`] at a point of the panel as last prepared.
   ///
   /// The window sees to the menu and the grip itself.
