@@ -10,10 +10,8 @@ struct Globals {
   toward_light: vec4<f32>,
   // w is not read
   toward_viewer: vec4<f32>,
-  // w is not read
-  light_color: vec4<f32>,
   // and in w how much of the light that comes off surfaces lands on what is next to them
-  ambient: vec4<f32>,
+  light_color: vec4<f32>,
   // x is one when shadow edges are softened, y the size of a shadow map texel, z how many
   // of the lamps are lit, and w how much the light all around is kept out of corners
   shadows: vec4<f32>,
@@ -52,9 +50,10 @@ const LEAST_ROUGHNESS: f32 = 0.045;
 const DIELECTRIC: f32 = 0.04;
 // the most a half float holds, with room to spare
 const BRIGHTEST: f32 = 60000.0;
-// the room is drawn as bright as it is at this multiple of the ambient light, which puts it
-// at its own brightness under the default ambient of 0.25
-const ROOM_PER_AMBIENT: f32 = 8.0;
+// the light that reaches every surface, shadowed or not
+const AMBIENT: f32 = 0.25;
+// how bright the room is drawn
+const ROOM: f32 = 2.0;
 // SHADOW_SPREAD, SHADOW_BIAS, OPEN_REACHES, OPEN_CLEAR and BOUNCE_REACHES are put ahead of this
 // source when it is loaded
 // how many places are in each ring around a point that is looked at for what stands over it.
@@ -251,7 +250,7 @@ fn lamp_light(world: vec3<f32>, lamp: Lamp) -> vec3<f32> {
 fn bounce_fragment(lit: Lit) -> @location(0) vec4<f32> {
   let normal = normalize(lit.normal);
   let facing = max(dot(normal, globals.toward_light.xyz), 0.0);
-  var lighting = globals.ambient.rgb + globals.light_color.rgb * facing * lit_share(lit.world, facing);
+  var lighting = AMBIENT + globals.light_color.rgb * facing * lit_share(lit.world, facing);
   for (var index = 0; index < i32(globals.shadows.z); index++) {
     let lamp = globals.lamps[index];
     let toward = normalize(lamp.at.xyz - lit.world);
@@ -565,9 +564,9 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
   // the light all around, which more of comes from the side the light is on than from under,
   // and the room in what mirrors
   let around = mix(0.55, 1.0, 0.5 + 0.5 * dot(surface.normal, toward_light));
-  var all_around = globals.ambient.rgb * around * open;
-  if globals.ambient.w > 0.0 {
-    all_around += bounced(lit.on_triangle, flat_normal) * globals.ambient.w;
+  var all_around = vec3<f32>(AMBIENT * around * open);
+  if globals.light_color.w > 0.0 {
+    all_around += bounced(lit.on_triangle, flat_normal) * globals.light_color.w;
   }
   var around_diffuse = surface.diffuse * all_around * (1.0 - held);
   // grooves bend what the surface mirrors toward the way across them
@@ -579,7 +578,7 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
   }
   let crisp = clamp(1.0 - (roughness - 0.1) / 0.5, 0.0, 1.0);
   let leaving = reflect(-toward_viewer, mirror_normal);
-  let room_light = globals.ambient.rgb * ROOM_PER_AMBIENT * mix(0.6, 1.0, share) * mix(0.5, 1.0, open);
+  let room_light = ROOM * mix(0.6, 1.0, share) * mix(0.5, 1.0, open);
   var mirrored = held * surface.energy * room(leaving, mirror_normal, crisp) * room_light;
   if surface.coat > 0.0 {
     let coat_seen = max(dot(flat_normal, toward_viewer), 1e-4);

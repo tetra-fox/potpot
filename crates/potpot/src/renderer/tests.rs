@@ -518,10 +518,10 @@ fn what_lights_itself_on_an_edge_spills_as_it_does_with_the_dark_beside_it() {
       size: Vec2::new(wide, high),
       heights: [-8.0, 48.0],
       lean: Vec2::ZERO,
-      // no light falls on the panel, so that the bar and its haze are all that shows
+      // no light falls on the panel and it is black, so that the bar and its haze are nearly
+      // all that shows
       light: Light {
         color: Vec3::ZERO,
-        ambient: Vec3::ZERO,
         ..Light::default()
       },
       // the ordered dither of the color steps repeats every four pixels, so it is the same at
@@ -536,7 +536,7 @@ fn what_lights_itself_on_an_edge_spills_as_it_does_with_the_dark_beside_it() {
         Object {
           mesh: Arc::new(crate::parts::plate(wide, high, 6.0)),
           transform: Mat4::IDENTITY,
-          material: Material::matte(Vec3::splat(0.1)),
+          material: Material::matte(Vec3::ZERO),
         },
         Object {
           mesh: Arc::new(bar),

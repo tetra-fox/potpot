@@ -336,7 +336,6 @@ pub(super) fn retro(look: Look) -> Scene {
     light: Light {
       toward: Vec3::new(-0.3, -0.5, 1.0),
       color: Vec3::splat(0.8),
-      ambient: Vec3::splat(0.42),
       softness: 7.0,
       ..Light::default()
     },

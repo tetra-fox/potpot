@@ -222,7 +222,6 @@ pub(super) fn industrial(look: Look) -> Scene {
   Scene {
     light: Light {
       color: Vec3::splat(0.55),
-      ambient: Vec3::splat(0.18),
       ..Light::default()
     },
     lamps: build.lamps,

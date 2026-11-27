@@ -590,7 +590,6 @@ impl Equalizer {
       // dimmed, so that what the screen shows stands out
       light: Light {
         color: Vec3::splat(0.6),
-        ambient: Vec3::splat(0.2),
         ..Light::default()
       },
       look: Look::default(),

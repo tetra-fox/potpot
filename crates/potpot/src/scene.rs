@@ -97,8 +97,6 @@ pub struct Light {
   pub toward: Vec3,
   /// The light's color and brightness, as linear light.
   pub color: Vec3,
-  /// The light that reaches every surface, shadowed or not.
-  pub ambient: Vec3,
   /// How much the ambient light is kept out of corners.
   ///
   /// The light that reaches every surface is kept out of corners and from under things, which
@@ -125,7 +123,6 @@ impl Default for Light {
     Self {
       toward: Vec3::new(-0.45, -0.6, 1.0),
       color: Vec3::splat(1.0),
-      ambient: Vec3::splat(0.25),
       occlusion: 1.0,
       bounce: 0.0,
       softness: 2.5,

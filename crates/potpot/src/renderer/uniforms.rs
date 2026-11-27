@@ -20,7 +20,6 @@ pub(super) struct Globals {
   pub(super) toward_light: [f32; 4],
   toward_viewer: [f32; 4],
   light_color: [f32; 4],
-  ambient: [f32; 4],
   /// The shadow options, one in each component.
   ///
   /// - One when shadow edges are softened
@@ -38,7 +37,7 @@ pub(super) struct Globals {
 impl Globals {
   /// Returns whether light comes off surfaces onto their neighbors at all.
   pub(super) fn bounces(&self) -> bool {
-    self.ambient[3] > 0.0
+    self.light_color[3] > 0.0
   }
 
   /// Returns whether two scenes differ in their lamps at most.
@@ -62,8 +61,7 @@ impl Globals {
       light_view: scene.light_view().to_cols_array_2d(),
       toward_light: light.toward.normalize().extend(light.softness).into(),
       toward_viewer: scene.toward_viewer().extend(0.0).into(),
-      light_color: light.color.extend(0.0).into(),
-      ambient: light.ambient.extend(light.bounce).into(),
+      light_color: light.color.extend(light.bounce).into(),
       shadows: [
         f32::from(u8::from(scene.look.soft_shadows)),
         1.0 / SHADOW_SIZE as f32,
@@ -302,7 +300,6 @@ mod tests {
       ("toward_light", offset_of!(Globals, toward_light)),
       ("toward_viewer", offset_of!(Globals, toward_viewer)),
       ("light_color", offset_of!(Globals, light_color)),
-      ("ambient", offset_of!(Globals, ambient)),
       ("shadows", offset_of!(Globals, shadows)),
       ("overhead", offset_of!(Globals, overhead)),
       ("panel", offset_of!(Globals, panel)),

@@ -518,7 +518,6 @@ impl Compressor {
       // dimmed, so that what the screens show stands out
       light: Light {
         color: Vec3::splat(0.7),
-        ambient: Vec3::splat(0.2),
         ..Light::default()
       },
       look: Look::default(),

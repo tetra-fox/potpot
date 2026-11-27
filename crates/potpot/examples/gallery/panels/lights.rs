@@ -227,7 +227,6 @@ pub(super) fn lights(look: Look) -> Scene {
   Scene {
     light: Light {
       color: Vec3::splat(0.6),
-      ambient: Vec3::splat(0.2),
       ..Light::default()
     },
     lamps,

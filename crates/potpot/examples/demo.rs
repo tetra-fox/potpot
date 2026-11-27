@@ -609,7 +609,6 @@ impl Demo {
       light: Light {
         toward: Vec3::new(reach(across), -reach(up), 1.0),
         color: Vec3::splat(0.6),
-        ambient: Vec3::splat(0.2),
         bounce: values[BOUNCE] * MOST_BOUNCE,
         ..Light::default()
       },
