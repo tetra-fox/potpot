@@ -11,6 +11,10 @@ example name:
 render name file *args:
     cargo run --example {{ name }} -- {{ file }} {{ args }}
 
+# the gpu time of each frame of a knob turned on the knobs panel, median and 95th percentile
+timing:
+    cargo run --release --example timing
+
 test:
     cargo test --workspace
 
