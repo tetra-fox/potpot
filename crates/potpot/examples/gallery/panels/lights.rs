@@ -6,6 +6,7 @@ use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Button, Knob};
 use potpot::{Lamp, Light, Look, Material, Object, Scene};
 
+use super::shared::rubber;
 use super::{BLACK, Build, Catalog, SEAT, at, dim};
 
 /// The colors the lights are lit in.
@@ -125,7 +126,7 @@ pub(super) fn lights(look: Look) -> Scene {
   let green = COLORS[2];
   let build = &mut catalog.build;
   build.put(pad.seat(3.0), at(middle), Material::matte(SEAT));
-  let lit = Material::silicone(Vec3::splat(0.62)).lit(green, 1.0, pad.emission_radius());
+  let lit = rubber().lit(green, 1.0, pad.emission_radius());
   build.put(pad.body(), pad.transform(middle.x, middle.y, 0.0), lit);
   build.lamps.push(pad.lamp(middle.x, middle.y, green, 1.0));
   for (x, color) in [
