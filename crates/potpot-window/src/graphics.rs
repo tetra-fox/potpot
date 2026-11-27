@@ -183,9 +183,9 @@ impl Graphics {
 ///
 /// It is kept for as long as the process lives, and every device is opened from it or from
 /// [`LAST`].
-// the nvidia driver on linux, seen with its release 595, no longer hands a process its
-// graphics card once the process has let go of 17 vulkan instances. an adapter asked of a
-// later one is the cpu's
+// each vulkan instance loads the nvidia driver on linux (release 595) again, and its
+// libnvidia-tls takes static tls from glibc on every load. after 17 loads none is left, the
+// loader fails to load the driver and an adapter asked of a later instance is the cpu's
 // TODO: make an instance for each device again if a driver stops doing this
 static FIRST: LazyLock<wgpu::Instance> =
   LazyLock::new(|| instance_of(wgpu::Backends::VULKAN | wgpu::Backends::METAL));

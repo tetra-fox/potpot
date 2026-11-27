@@ -29,8 +29,7 @@ static ONE_DEVICE: Mutex<()> = Mutex::new(());
 /// The instance every test's device is opened from.
 ///
 /// It is kept for as long as the process lives, as potpot-window's `graphics::FIRST` is, for the
-/// same reason: the NVIDIA driver hands a process no graphics card once it has let go of 17
-/// Vulkan instances, and the adapter of a later one is the CPU's.
+/// reason given there: the NVIDIA driver can be loaded only so many times in one process.
 // TODO: make an instance for each test again if a driver stops doing this
 static INSTANCE: LazyLock<wgpu::Instance> = LazyLock::new(wgpu::Instance::default);
 
