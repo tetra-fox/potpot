@@ -8,6 +8,7 @@ use super::*;
 
 mod grip;
 mod keybed;
+mod pages;
 
 #[test]
 fn a_control_turns_the_parameter_it_names_and_not_the_one_at_its_own_place() {

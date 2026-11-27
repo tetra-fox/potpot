@@ -14,6 +14,7 @@ mod dial;
 mod drag;
 mod edit;
 mod event;
+mod page;
 mod wheel;
 
 pub use control::{Control, Feel, Push, Reading, Readout, Touch};
@@ -119,10 +120,14 @@ pub struct Interaction {
   awaiting: Option<Paste>,
   /// The least and the most times its own size the window is pulled to.
   scales: [f32; 2],
+  /// The number of pages the panel has.
+  pages: usize,
+  /// The page shown, by its place among the panel's pages.
+  page: usize,
 }
 
 impl Interaction {
-  /// Creates the behaviour of a panel of controls.
+  /// Creates the behaviour of a panel of controls on one page.
   ///
   /// The panel is `size` across and down, with `controls` on parameters that `dials`
   /// describe. The grip pulls the window from the first of `scales` times its own size to
@@ -132,10 +137,38 @@ impl Interaction {
   ///
   /// Panics if a control names a parameter that `dials` has none for, or names one twice, which
   /// [`Control::fits`] tells.
+  ///
+  /// Panics if a control is on a page other than the first.
   pub fn new(dials: Vec<Dial>, controls: Vec<Control>, size: Point, scales: [f32; 2]) -> Self {
+    Self::paged(dials, controls, size, scales, 1, 0)
+  }
+
+  /// Creates the behaviour of a panel of several pages.
+  ///
+  /// The panel has `pages` pages and shows the one at the place `shown` first. The rest is as
+  /// [`Interaction::new`] has it.
+  ///
+  /// # Panics
+  ///
+  /// Panics if a control names a parameter that `dials` has none for, or names one twice, which
+  /// [`Control::fits`] tells.
+  ///
+  /// Panics if a control is on a page past the last, or `shown` is.
+  pub fn paged(
+    dials: Vec<Dial>,
+    controls: Vec<Control>,
+    size: Point,
+    scales: [f32; 2],
+    pages: usize,
+    shown: usize,
+  ) -> Self {
     assert!(
       controls.iter().all(|control| control.fits(dials.len())),
       "every control names parameters of the panel, each once"
+    );
+    assert!(
+      (controls.iter().map(|control| control.page)).all(|page| page < pages) && shown < pages,
+      "every control and the page shown are on the panel's pages"
     );
     Self {
       dials,
@@ -146,6 +179,8 @@ impl Interaction {
       wheel: None,
       awaiting: None,
       scales,
+      pages,
+      page: shown,
     }
   }
 
@@ -230,7 +265,7 @@ impl Interaction {
   ///
   /// # Panics
   ///
-  /// Panics if the event is over a control that the panel has none of.
+  /// Panics if the event is over a control or the tab of a page that the panel has none of.
   ///
   /// Panics if the values of `moment` have none for a parameter that a control turns.
   ///
@@ -244,7 +279,10 @@ impl Interaction {
         window,
         over,
         fine,
-      } => self.moved(at, window, over, fine, moment.values, &mut actions),
+      } => {
+        let over = self.reachable(over);
+        self.moved(at, window, over, fine, moment.values, &mut actions);
+      }
       Event::Press {
         button,
         at,
@@ -252,6 +290,7 @@ impl Interaction {
         over,
         reset,
       } => {
+        let over = self.reachable(over);
         self.rest_wheel(&mut actions);
         match button {
           Button::Left => self.pressed_left(at, window, over, reset, moment, &mut actions),
@@ -261,6 +300,7 @@ impl Interaction {
       Event::Release(Button::Left) => self.let_go(&mut actions),
       Event::Release(Button::Right) => {}
       Event::Wheel { over, lines, fine } => {
+        let over = self.reachable(over);
         self.wheeled(over, lines, fine, moment, &mut actions);
       }
       Event::Key(key) => self.keyed(key, &mut actions),
@@ -507,6 +547,7 @@ impl Interaction {
         actions.push(Action::NoteOn { note, velocity });
       }
       Some(Target::Readout(control)) if double => self.begin_edit(control, values, actions),
+      Some(Target::Page(page)) => self.show(page, actions),
       Some(Target::Grip) if double => actions.push(Action::Scale(1.0)),
       Some(Target::Grip) => {
         self.state = State::Resize {

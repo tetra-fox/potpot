@@ -135,12 +135,17 @@ pub struct Control {
   /// turns it at the pace of `feel` and by the steps of its own [`Dial`](super::Dial). With
   /// `None` the wheel turns `parameter`.
   pub wheel: Option<usize>,
+  /// The page it is on, by its place among the panel's pages.
+  ///
+  /// It takes input only while its page is shown.
+  pub page: usize,
 }
 
 impl Control {
   /// Creates a dragged control on a parameter, with a readout.
   ///
-  /// It feels as [`Feel::default`] does, and the wheel turns the same parameter.
+  /// It feels as [`Feel::default`] does, the wheel turns the same parameter, and it is on the
+  /// first page.
   pub fn new(parameter: usize, readout: Readout) -> Self {
     Self {
       parameter,
@@ -148,6 +153,7 @@ impl Control {
       readout,
       touch: Touch::Turn,
       wheel: None,
+      page: 0,
     }
   }
 

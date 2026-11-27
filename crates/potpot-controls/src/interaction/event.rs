@@ -18,6 +18,10 @@ pub enum Target {
   Item(Item),
   /// The grip the window is pulled larger and smaller by.
   Grip,
+  /// The tab that shows the page at this place among the panel's.
+  ///
+  /// A press on it shows that page.
+  Page(usize),
   /// A key of a keybed.
   ///
   /// A press on it plays its note, and a slide to another key while the button is down plays
