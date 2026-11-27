@@ -122,7 +122,8 @@ pub struct Light {
   /// How bright the studio around the panel is, as a multiple of its own light.
   ///
   /// The studio lights every surface from all around and is what glossy surfaces mirror. Its
-  /// softbox lies where the light of [`Light::default`] comes from. Zero is none.
+  /// softbox lies where the light of [`Light::default`] comes from, and all of it takes
+  /// [`Light::color`] as the light does. Zero is none.
   pub environment: f32,
   /// How much brighter the picture is made, in stops.
   ///

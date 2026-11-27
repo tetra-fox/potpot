@@ -24,7 +24,7 @@ pub(super) const MEAN_COLOR: [[f32; 3]; 4] = [
   [0.027468812, 0.026291125, 0.03521369],
 ];
 /// The mean of each set's roughness.
-pub(super) const ROUGHNESS_MEAN: [f32; 4] = [0.48566517, 0.5143116, 0.4297225, 0.6491278];
+pub(super) const ROUGHNESS_MEAN: [f32; 4] = [0.48566517, 0.5145507, 0.4297225, 0.6491278];
 /// The color maps as [`wgpu::TextureFormat::Bc7RgbaUnormSrgb`].
 ///
 /// They are mip after mip, each mip's layers in turn, each layer in rows of blocks from the

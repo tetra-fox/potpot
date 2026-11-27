@@ -53,7 +53,7 @@ const SOURCE_SIDE: usize = 1024;
 /// A set's color and roughness are divided by their mean over this many texels around each.
 const EVEN_REACH: usize = 24;
 /// The cells across one tile of hammered paint, of the larger dents and the smaller.
-const DIMPLES: [usize; 2] = [19, 43];
+const DIMPLES: [usize; 2] = [67, 149];
 /// How steep the dents of hammered paint are, as the slope of a dent one cell wide.
 const DENT_DEPTH: f32 = 0.015;
 /// The folder the sources are in, each `<ID>_1K-JPG_<map>.jpg` as ambientCG names them.

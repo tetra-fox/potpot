@@ -320,7 +320,7 @@ fn lamp_facing(normal: vec3<f32>, toward: vec3<f32>, radius: f32) -> f32 {
 fn bounce_fragment(lit: Lit) -> @location(0) vec4<f32> {
   let normal = normalize(lit.normal);
   let facing = max(dot(normal, globals.toward_light.xyz), 0.0);
-  var lighting = all_around(normal) * globals.toward_viewer.w;
+  var lighting = all_around(normal) * globals.toward_viewer.w * globals.light_color.rgb;
   lighting += globals.light_color.rgb * facing * lit_share(lit.world, facing, vec2<f32>(0.5));
   for (var index = 0; index < i32(globals.shadows.z); index++) {
     let lamp = globals.lamps[index];
@@ -835,7 +835,9 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
 
   // the studio: its light all around, kept out of corners, and what it shows in a mirror, whose
   // softbox the key light's shadow hides as it hides the key light
-  let studio = globals.toward_viewer.w;
+  // the studio is baked lit by the key light at its default color, so it takes the key
+  // light's color as the key light is dimmed or tinted
+  let studio = globals.toward_viewer.w * globals.light_color.rgb;
   var all_around_light = all_around(surface.normal) * studio * open;
   if globals.light_color.w > 0.0 {
     all_around_light += bounced(lit.on_triangle, flat_normal, jitter.y) * globals.light_color.w;

@@ -37,7 +37,7 @@ Haven, under CC0, chosen from its studio category. The 1k file is
 
 - The ambientCG sets are under CC0, from their 1K JPG downloads
 - ambientCG has no hammertone, so the bake makes one: a soft round dent at a random point in
-  each cell of two tiling fields of 19 and 43 cells a side, even paint with a slight drift,
+  each cell of two tiling fields of 67 and 149 cells a side, even paint with a slight drift,
   and a little more roughness deep in the dents
 - Metal010's color and roughness are divided by their mean over 24 texels around, which
   takes out its stains and keeps the brushing

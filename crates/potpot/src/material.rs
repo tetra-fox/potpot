@@ -138,7 +138,7 @@ impl Material {
   /// A moulded cap has such a finish.
   pub fn glossy(color: Vec3) -> Self {
     Self {
-      roughness: 0.2,
+      roughness: 0.3,
       ..Self::matte(color)
     }
   }

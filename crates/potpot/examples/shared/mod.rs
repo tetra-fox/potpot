@@ -21,7 +21,9 @@ use potpot_window::{Param, View, wgpu};
 pub mod window;
 
 /// The black of knob bodies, caps and the frames of readouts.
-pub const BLACK: Vec3 = Vec3::new(0.035, 0.035, 0.04);
+///
+/// It is sRGB, and gives back about two hundredths of the light, as black plastic does.
+pub const BLACK: Vec3 = Vec3::new(0.17, 0.17, 0.18);
 /// The color of aluminum turned on a lathe.
 pub const ALUMINUM: Vec3 = Vec3::new(0.78, 0.79, 0.81);
 /// The color of the dark gap around what is set into a panel.
