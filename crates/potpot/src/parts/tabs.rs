@@ -72,8 +72,7 @@ impl Tabs {
   /// The name is lettering made as [`legend`](super::legend) makes it, which goes on the key's
   /// top and in with it. The key is in a row whose middle is at (`x`, `y`).
   pub fn name(&self, x: f32, y: f32, tab: usize, shown: bool) -> Mat4 {
-    let top = self.key.height * (1.0 + self.key.crown);
-    self.transform(x, y, tab, shown) * Mat4::from_translation(Vec3::Z * top)
+    self.transform(x, y, tab, shown) * Mat4::from_translation(Vec3::Z * self.key.top())
   }
 }
 
@@ -155,7 +154,7 @@ mod tests {
     let depth = |tab: usize, shown| tabs.transform(0.0, 0.0, tab, shown).w_axis.z;
     assert_eq!(depth(1, false), 0.0);
     assert!(depth(1, true) < 0.0 && depth(1, true) > -tabs.key.height * 0.25);
-    let top = tabs.key.height * (1.0 + tabs.key.crown);
+    let top = tabs.key.top();
     for shown in [false, true] {
       let name = tabs
         .name(0.0, 0.0, 1, shown)

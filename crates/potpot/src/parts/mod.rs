@@ -22,6 +22,8 @@ mod panel;
 mod ring;
 mod scale;
 mod screen;
+mod selector;
+mod stepper;
 mod switch;
 mod tabs;
 mod vent;
@@ -44,6 +46,8 @@ pub use panel::{
 pub use ring::{LedArc, LedRing, LedStops};
 pub use scale::{dashes, fader_ticks, ticks};
 pub use screen::{Screen, picture};
+pub use selector::Selector;
+pub use stepper::{Arrow, Stepper};
 pub use switch::PushSwitch;
 pub use tabs::Tabs;
 pub use vent::Vent;

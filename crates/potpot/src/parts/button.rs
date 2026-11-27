@@ -133,6 +133,11 @@ impl Button {
     self.outline().grown(gap).strip()
   }
 
+  /// Returns the height of the middle of the button's top.
+  pub fn top(&self) -> f32 {
+    self.height * (1.0 + self.crown)
+  }
+
   /// Returns the light a lit button throws on what is around it.
   ///
   /// The button is at (`x`, `y`), lit in `color` at `level` from zero to one.
@@ -199,7 +204,7 @@ mod tests {
         "{button:?} to {max}"
       );
       assert_eq!(min.z, 0.0);
-      let top = button.height * (1.0 + button.crown);
+      let top = button.top();
       assert!((max.z - top).abs() < 1e-3, "{button:?} is {} high", max.z);
       // its seat is that much wider all around and lies flat
       for vertex in &button.seat(2.0).vertices {
