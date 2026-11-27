@@ -14,6 +14,8 @@ bytemuck = { version = "1", features = ["derive"] }
 # the strokes of the face its lettering is in
 potpot-controls.workspace = true
 glam = { version = "0.30", features = ["bytemuck"] }
+# the half floats of the DFG table
+half = { version = "2", features = ["bytemuck"] }
 wgpu.workspace = true
 
 [dev-dependencies]

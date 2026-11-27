@@ -363,7 +363,7 @@ mod tests {
     let segment = Arc::new(ring.segment());
     let glows = |run| -> Vec<f32> {
       (ring.lights(&segment, 0.0, 0.0, run, Vec3::ONE))
-        .map(|light| light.material.glow)
+        .map(|light| light.material.emission)
         .collect()
     };
     // from the middle down to a fifth, which is three whole lights
@@ -459,7 +459,7 @@ mod tests {
     let lit = |stops: &LedStops, place: f32| -> Vec<f32> {
       let light = Arc::new(stops.light());
       (stops.lights(&light, 0.0, 0.0, place, Vec3::ONE))
-        .map(|light| light.material.glow)
+        .map(|light| light.material.emission)
         .collect()
     };
     let middle = |stops: &LedStops, stop: u32| -> Vec3 {

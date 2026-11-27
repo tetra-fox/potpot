@@ -73,3 +73,5 @@ const TOP_RINGS: usize = 14;
 const ROLL: usize = 6;
 /// The distance paint and inlays stand off their surface.
 const PAINT: f32 = 0.25;
+/// The distance lettering and the marks of a scale stand off the surface they are printed on.
+const INK: f32 = 0.02;

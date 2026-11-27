@@ -8,7 +8,8 @@ use bytemuck::{Pod, Zeroable};
 
 use super::SHADOW_SIZE;
 use super::damage::Spread;
-use crate::scene::{LAMPS, Look, Object, Scene};
+use crate::material::Anisotropy;
+use crate::scene::{LAMPS, Light, Look, Object, Scene};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
@@ -60,10 +61,8 @@ impl Globals {
       view: scene.view().to_cols_array_2d(),
       light_view: scene.light_view().to_cols_array_2d(),
       toward_light: light.toward.normalize().extend(light.softness).into(),
-      toward_viewer: (scene.toward_viewer())
-        .extend(light.nearness * scene.size.max_element())
-        .into(),
-      light_color: light.color.extend(light.falloff).into(),
+      toward_viewer: scene.toward_viewer().extend(0.0).into(),
+      light_color: light.color.extend(0.0).into(),
       ambient: light.ambient.extend(light.bounce).into(),
       shadows: [
         f32::from(u8::from(scene.look.soft_shadows)),
@@ -95,48 +94,51 @@ impl Globals {
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(super) struct Placed {
   pub(super) model: [[f32; 4]; 4],
+  /// The base color and the emission.
   color: [f32; 4],
-  highlight: [f32; 4],
+  /// How metal and how rough it is, and its clear coat.
   finish: [f32; 4],
-  /// How grainy, brushed and worn it is, and a mark.
+  /// Its grain, wear and emission radius, and a mark.
   ///
   /// The mark is one if the object throws no shadow. The shaders make nothing of it, and it is
   /// here for a change of it to be told as any other of the object's.
   texture: [f32; 4],
+  /// How strongly it is brushed and how strongly spun.
+  anisotropy: [f32; 2],
 }
 
 impl Placed {
-  /// The four columns of the model and then the four of the material.
+  /// The four columns of the model and then the four parts of the material.
   ///
   /// They come after the two locations a vertex takes.
   const ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
     2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4,
-    6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x4
+    6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x2
   ];
 
   pub(super) fn of(object: &Object) -> Self {
     let material = object.material;
+    let anisotropy = match material.anisotropy {
+      Anisotropy::None => [0.0; 2],
+      Anisotropy::Brushed(strength) => [strength, 0.0],
+      Anisotropy::Spun(strength) => [0.0, strength],
+    };
     Self {
       model: object.transform.to_cols_array_2d(),
-      color: material.color.extend(material.glow).into(),
-      highlight: [
-        material.specular,
-        material.shininess,
-        material.glow_radius,
-        0.0,
-      ],
+      color: material.color.extend(material.emission).into(),
       finish: [
-        material.reflect,
-        material.metal,
-        material.spun,
-        material.glaze,
+        material.metallic,
+        material.roughness,
+        material.clearcoat,
+        material.clearcoat_roughness,
       ],
       texture: [
         material.grain,
-        material.brushed,
         material.wear,
+        material.emission_radius,
         f32::from(u8::from(material.shadowless)),
       ],
+      anisotropy,
     }
   }
 
@@ -167,7 +169,7 @@ pub(super) struct Present {
   /// - The bloom
   /// - The vignette
   options: [f32; 4],
-  /// How far the picture is blurred, in x.
+  /// The blur, and in y the exposure as a multiple.
   more: [f32; 4],
   /// The Gaussian the glow map is blurred by.
   ///
@@ -176,7 +178,7 @@ pub(super) struct Present {
 }
 
 impl Present {
-  pub(super) fn of(look: Look, target_encodes: bool, spread: Spread) -> Self {
+  pub(super) fn of(look: Look, light: &Light, target_encodes: bool, spread: Spread) -> Self {
     let [across, down] = spread.falloff;
     let taps = spread.taps.map(|taps| taps as f32);
     Self {
@@ -186,7 +188,7 @@ impl Present {
         look.bloom,
         look.vignette,
       ],
-      more: [look.soften, 0.0, 0.0, 0.0],
+      more: [look.soften, light.exposure.exp2(), 0.0, 0.0],
       spread: [across, down, taps[0], taps[1]],
     }
   }
@@ -200,7 +202,9 @@ mod tests {
 
   use super::*;
   use crate::mesh::Vertex;
-  use crate::renderer::pipelines::{VERTEX_ATTRIBUTES, present_source, scene_source};
+  use crate::renderer::pipelines::{
+    RESOLVE_SOURCE, VERTEX_ATTRIBUTES, present_source, scene_source,
+  };
 
   /// Returns a shader as `wgpu` takes it, parsed and then checked.
   ///
@@ -265,7 +269,11 @@ mod tests {
   fn every_shader_can_be_written_for_every_backend() {
     use naga::back::{hlsl, msl, spv};
 
-    let shaders = [("scene", scene_source()), ("present", present_source())];
+    let shaders = [
+      ("scene", scene_source()),
+      ("present", present_source()),
+      ("resolve", RESOLVE_SOURCE.to_owned()),
+    ];
     for (name, source) in shaders {
       let (module, info) = shader(&source);
       let mut direct3d = String::new();

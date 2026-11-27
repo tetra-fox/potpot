@@ -389,7 +389,7 @@ impl Demo {
   fn new(gpu: &Gpu) -> Self {
     let knobs = knobs();
     let mut fixed = Drawn::default();
-    let ink = Material::matte(Vec3::splat(0.9));
+    let ink = Material::ink(Vec3::splat(0.9));
     let hole = Material::matte(SEAT);
     let chrome = Material::chrome(Vec3::splat(0.8));
     let size = Vec2::from(SIZE);
@@ -535,7 +535,7 @@ impl Demo {
     drawn.place(
       &self.plunger,
       self.switch.transform(SWITCH.x, SWITCH.y, depth),
-      rubber.lit(color, level, plunger.glow_radius()),
+      rubber.lit(color, level, plunger.emission_radius()),
       Some(Target::Control(SWITCH_CONTROL)),
     );
 
@@ -555,7 +555,7 @@ impl Demo {
       drawn.place(
         body,
         shape.transform(x, BUTTONS_Y, depth),
-        rubber.lit(color, level, shape.glow_radius()),
+        rubber.lit(color, level, shape.emission_radius()),
         Some(Target::Control(control)),
       );
       if level > 0.0 {

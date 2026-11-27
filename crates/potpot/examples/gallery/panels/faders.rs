@@ -6,7 +6,7 @@ use potpot::glam::{Mat4, Vec3};
 use potpot::parts::{self, Fader};
 use potpot::{Look, Material, Object, Scene};
 
-use crate::{ALUMINUM, BLACK, SIZE, framed, lettering, screws};
+use super::{ALUMINUM, BLACK, SIZE, framed, lettering, screws};
 
 /// Returns every fader cap in its slot.
 ///
@@ -77,7 +77,7 @@ pub(super) fn faders(look: Look) -> Scene {
     objects.push(Object {
       mesh: Arc::clone(&scale),
       transform: track,
-      material: Material::matte(Vec3::splat(0.85)),
+      material: Material::ink(Vec3::splat(0.85)),
     });
     // each a little higher than the last, and then around again
     let value = (0.15 + 0.23 * index as f32) % 1.0;
@@ -93,7 +93,7 @@ pub(super) fn faders(look: Look) -> Scene {
       material: Material::matte(stripe),
     });
     // the channel's number over its slot, and the scale's levels beside every other mark
-    let print = Material::matte(Vec3::splat(0.82));
+    let print = Material::ink(Vec3::splat(0.82));
     let mut letters = |text: &str, x: f32, y: f32, tall: f32| {
       objects.push(Object {
         mesh: Arc::new(lettering(text, tall)),

@@ -169,7 +169,7 @@ impl Drawn {
       Vec3::new(-half.x, -half.y, 0.0),
       Vec3::new(half.x, half.y, 0.4),
     );
-    let pane = Material::pane(Vec3::splat(0.01), wide * 3.5);
+    let pane = Material::pane(Vec3::splat(0.01));
     self.place(&Arc::new(glass), on_panel, pane, target);
   }
 }
@@ -312,10 +312,8 @@ impl<Source: PartialEq> Picture<Source> {
 }
 
 /// Returns the material of a screen's face.
-///
-/// Its glass is large for the face, so that its sheen lies over one corner alone.
-pub fn glass(screen: &parts::Screen) -> Material {
-  Material::screen(FACE, (screen.width + screen.length) * 3.0)
+pub fn glass() -> Material {
+  Material::screen(FACE)
 }
 
 /// Returns a parameter for each dial, and where each stands.

@@ -6,7 +6,7 @@ use potpot::glam::{Mat4, Vec3};
 use potpot::parts::{self, Knob, LedRing};
 use potpot::{Light, Look, Material, Object, Scene};
 
-use crate::{BLACK, SIZE, framed, lettering, screws};
+use super::{BLACK, SIZE, framed, lettering, screws};
 
 /// Returns knobs in rings of lights on a dark panel.
 ///
@@ -24,7 +24,7 @@ pub(super) fn rings(look: Look) -> Scene {
     transform: Mat4::IDENTITY,
     material: Material::textured(Vec3::new(0.075, 0.08, 0.09)),
   }];
-  let ink = Material::matte(Vec3::splat(0.8));
+  let ink = Material::ink(Vec3::splat(0.8));
   // each knob's name, where it points and the run its ring lights, in what color
   let shown = [
     ("LEVEL", 0.7, [0.0, 0.7], Vec3::new(0.1, 0.95, 0.3)),

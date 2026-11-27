@@ -6,7 +6,7 @@ use potpot::glam::{Mat4, Vec3};
 use potpot::parts::{self, Knob, Top};
 use potpot::{Look, Material, Object, Scene};
 
-use crate::{ALUMINUM, BLACK, SIZE, framed, lettering, screws};
+use super::{ALUMINUM, BLACK, SIZE, framed, lettering, screws};
 
 /// The way a knob of the gallery is marked.
 #[derive(Clone, Copy)]
@@ -30,7 +30,7 @@ struct Shown {
 }
 
 /// Returns every knob style in rows of five, each over a scale.
-pub(super) fn knobs(look: Look) -> Scene {
+pub fn knobs(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let (radius, tall) = (58.0, 42.0);
   let white = Vec3::splat(0.86);
@@ -169,19 +169,15 @@ pub(super) fn knobs(look: Look) -> Scene {
   let mut objects = vec![Object {
     mesh: Arc::new(parts::plate(width, height, 6.0)),
     transform: Mat4::IDENTITY,
-    material: Material::brushed(Vec3::new(0.30, 0.32, 0.36)),
+    material: Material::brushed(Vec3::new(0.55, 0.57, 0.6)),
   }];
   for (index, shown) in knobs.into_iter().enumerate() {
-    let (x, y) = (
-      112.0 + 200.0 * (index % 5) as f32,
-      112.0 + 208.0 * (index / 5) as f32,
-    );
-    let turn = 0.12 + 0.055 * index as f32;
-    let transform = parts::knob_transform(x, y, turn, parts::KNOB_SWEEP);
+    let (x, y) = middle(index);
+    let transform = turned(index, turn(index));
     objects.push(Object {
       mesh: Arc::clone(&scale),
       transform: Mat4::from_translation(Vec3::new(x, y, 0.0)),
-      material: Material::matte(Vec3::splat(0.85)),
+      material: Material::ink(Vec3::splat(0.85)),
     });
     let mut part = |mesh: potpot::Mesh, material: Material| {
       objects.push(Object {
@@ -200,7 +196,7 @@ pub(super) fn knobs(look: Look) -> Scene {
       Marker::None => {}
     }
     // its name engraved under it, and the ends of its scale numbered
-    let engraved = Material::matte(Vec3::splat(0.08));
+    let engraved = Material::ink(Vec3::splat(0.08));
     let mut letters = |text: &str, x: f32, y: f32, tall: f32| {
       objects.push(Object {
         mesh: Arc::new(lettering(text, tall)),
@@ -214,4 +210,27 @@ pub(super) fn knobs(look: Look) -> Scene {
   }
   objects.extend(screws());
   framed(look, objects)
+}
+
+/// Returns the middle of a knob of the rows.
+fn middle(index: usize) -> (f32, f32) {
+  (
+    112.0 + 200.0 * (index % 5) as f32,
+    112.0 + 208.0 * (index / 5) as f32,
+  )
+}
+
+/// Returns the turn a knob of the rows is drawn at.
+///
+/// The turn runs from zero to one.
+pub fn turn(index: usize) -> f32 {
+  0.12 + 0.055 * index as f32
+}
+
+/// Returns the transform of a knob of the rows at a turn.
+///
+/// The turn runs from zero to one. The parts that turn with the knob have it, and nothing else on the panel does.
+pub fn turned(index: usize, turn: f32) -> Mat4 {
+  let (x, y) = middle(index);
+  parts::knob_transform(x, y, turn, parts::KNOB_SWEEP)
 }

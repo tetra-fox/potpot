@@ -211,8 +211,7 @@ fn curve_grid() -> Flat {
   // whatever the makeup
   let [x, y] = plot.at([0.0, LEVELS_OUT.turn(LEVELS.plain(1.0))]);
   flat.legend("0 DB", [x + 4.0, y + 4.0], 6.0, 1.0, LABELS);
-  // under the sheen in the glass's top left corner, and over the curve's left end wherever
-  // the makeup puts it
+  // over the curve's left end wherever the makeup puts it
   let [x, y] = plot.at([0.0, 0.42]);
   flat.legend("OUT", [x + 4.0, y], 6.0, 1.0, LABELS);
   let [x, y] = plot.at([1.0, 0.0]);
@@ -342,7 +341,7 @@ struct Compressor {
 impl Compressor {
   fn new(gpu: &Gpu) -> Self {
     let size = Vec2::from(SIZE);
-    let ink = Material::matte(Vec3::splat(0.88));
+    let ink = Material::ink(Vec3::splat(0.88));
     let mut fixed = Drawn::default();
     fixed.put(
       parts::plate(size.x, size.y, 6.0),
@@ -353,13 +352,13 @@ impl Compressor {
     fixed.screws(size, 16.0, 6.0);
 
     let screens = [CURVE_GLASS, PAST_GLASS].map(|glass| Screen::new(glass.x, glass.y));
-    let glasses = screens.map(|screen| shared::glass(&screen));
+    let glasses = screens.map(|_| shared::glass());
     for ((screen, glass), middle) in screens.iter().zip(glasses).zip([CURVE, PAST_SCREEN]) {
       fixed.put(screen.face(), middle, glass);
       fixed.put(screen.bezel(), middle, Material::glossy(BLACK));
     }
     // what the wide screen's two lines are, each named under it in paint of its own color
-    let paint = |[red, green, blue, _]: Color| Material::matte(Vec3::new(red, green, blue));
+    let paint = |[red, green, blue, _]: Color| Material::ink(Vec3::new(red, green, blue));
     // each at an end of the screen, clear of the knobs under its middle
     let named = [("LEVEL IN", -130.0, LOUD_EDGE), ("REDUCTION", 130.0, INK)];
     for (name, aside, color) in named {

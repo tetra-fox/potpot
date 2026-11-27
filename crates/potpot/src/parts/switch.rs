@@ -73,7 +73,7 @@ impl PushSwitch {
   /// The plunger is smoky and barely tinted when `level` is zero, and glows in `color` toward
   /// one.
   pub fn backlight(&self, color: Vec3, level: f32) -> Material {
-    pipe_end(color, level, self.plunger.glow_radius())
+    pipe_end(color, level, self.plunger.emission_radius())
   }
 
   /// Returns the mesh of the plunger when it is out.

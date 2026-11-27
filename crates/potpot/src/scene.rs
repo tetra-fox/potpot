@@ -77,9 +77,10 @@ pub const LAMPS: usize = 32;
 pub struct Lamp {
   /// The lamp's place, in the scene's x, y and z.
   pub at: Vec3,
-  /// The lamp's color and brightness, as linear light.
+  /// The lamp's light a quarter of its reach away.
   ///
-  /// The values may be more than one.
+  /// The light is linear, its color and brightness together, and may be more than one. The light falls with the square of the distance, down to
+  /// `radius` from the lamp's middle, and nearer it is no brighter.
   pub color: Vec3,
   /// The distance at which its light has faded to nothing.
   pub reach: f32,
@@ -98,11 +99,6 @@ pub struct Light {
   pub color: Vec3,
   /// The light that reaches every surface, shadowed or not.
   pub ambient: Vec3,
-  /// How much brighter the panel is at the edge nearest the light.
-  ///
-  /// The edge nearest the light is that much brighter than the panel's middle and the far edge
-  /// as much dimmer, the way a lamp close by lights unevenly.
-  pub falloff: f32,
   /// How much the ambient light is kept out of corners.
   ///
   /// The light that reaches every surface is kept out of corners and from under things, which
@@ -118,12 +114,10 @@ pub struct Light {
   ///
   /// One is nearly a point, and a studio's wide soft light is five or more.
   pub softness: f32,
-  /// How far off the light is for what shines, in panel lengths.
+  /// How much brighter the picture is made, in stops.
   ///
-  /// A panel length is the panel's longer side, and the viewer is twice as far off as the light.
-  /// Up close a flat glossy face has its highlight in one place and fades away from it, as it
-  /// does in a photograph. Zero puts both infinitely far, and such a face shines evenly.
-  pub nearness: f32,
+  /// Each stop doubles the light before it is tone mapped.
+  pub exposure: f32,
 }
 
 impl Default for Light {
@@ -132,11 +126,10 @@ impl Default for Light {
       toward: Vec3::new(-0.45, -0.6, 1.0),
       color: Vec3::splat(1.0),
       ambient: Vec3::splat(0.25),
-      falloff: 0.22,
       occlusion: 1.0,
       bounce: 0.0,
       softness: 2.5,
-      nearness: 1.2,
+      exposure: 0.0,
     }
   }
 }

@@ -9,7 +9,7 @@ use potpot::glam::{Mat4, Vec3};
 use potpot::parts::{self, Button, Knob};
 use potpot::{Lamp, Light, Look, Material, Object, Scene};
 
-use crate::{ALUMINUM, BLACK, SEAT, SIZE, framed};
+use super::{ALUMINUM, BLACK, SEAT, SIZE, framed};
 
 /// Returns two rows on a pale plate under a dimmed light.
 ///
@@ -59,7 +59,7 @@ pub(super) fn lamp(look: Look) -> Scene {
   objects.push(Object {
     mesh: Arc::new(pad.body()),
     transform: pad.transform(200.0, 450.0, 0.0),
-    material: Material::silicone(Vec3::splat(0.62)).lit(green, 1.0, pad.glow_radius()),
+    material: Material::silicone(Vec3::splat(0.62)).lit(green, 1.0, pad.emission_radius()),
   });
   lamps.push(pad.lamp(200.0, 450.0, green, 1.0));
   let blocks = [

@@ -536,7 +536,7 @@ struct Synth {
 impl Synth {
   fn new(gpu: &Gpu) -> Self {
     let size = Vec2::from(SIZE);
-    let ink = Material::matte(Vec3::splat(0.9));
+    let ink = Material::ink(Vec3::splat(0.9));
     let hole = Material::matte(SEAT);
     let mut fixed = Drawn::default();
     let plastic = Material {
@@ -552,7 +552,7 @@ impl Synth {
       ("FILTER", RESPONSE),
       ("ENVELOPE", ENVELOPE),
     ];
-    let glasses = sections.map(|(_, (_, width))| shared::glass(&screen(width)));
+    let glasses = sections.map(|_| shared::glass());
     let faces = sections.map(|(_, (x, width))| [x - width / 2.0, x + width / 2.0]);
     for ((name, (x, width)), glass) in sections.into_iter().zip(glasses) {
       let (screen, middle) = (screen(width), Vec2::new(x, SCREEN_Y));
@@ -710,7 +710,7 @@ impl Synth {
     drawn.place(
       &self.puck,
       on_pad,
-      rubber.lit(cyan, 0.5, self.pad.puck.glow_radius()),
+      rubber.lit(cyan, 0.5, self.pad.puck.emission_radius()),
       Some(Target::Control(PUCK)),
     );
     let puck = on_pad.transform_point3(Vec3::ZERO);
@@ -725,7 +725,7 @@ impl Synth {
     drawn.place(
       &self.host_body,
       self.host.transform(HOST_BUTTON.x, HOST_BUTTON.y, depth),
-      rubber.lit(amber, level, self.host.glow_radius()),
+      rubber.lit(amber, level, self.host.emission_radius()),
       Some(Target::Control(HOST)),
     );
     lamps.push((self.host).lamp(HOST_BUTTON.x, HOST_BUTTON.y, amber, level));

@@ -1,11 +1,14 @@
-// the rendered picture stretched over its place in the window, as blocks, and cut to few colors
-// srgb.wgsl, with `decode`, and HAZE_CELL are put ahead of this source when loaded
+// the rendered picture of linear light stretched over its place in the window, as blocks, tone
+// mapped and cut to few colors
+// srgb.wgsl, with `encode` and `decode`, tonemap.wgsl, with `tonemap`, and HAZE_CELL are put
+// ahead of this source when loaded
 
 struct Present {
   // x the steps each channel is cut to if two or more, y one when the target encodes srgb
   // itself, z how much what lights itself spills over, w how much the corners darken
   options: vec4<f32>,
-  // x how far the picture is blurred
+  // x how far the picture is blurred, y what the light is multiplied by before it is tone
+  // mapped
   more: vec4<f32>,
   // the Gaussian the glow map is blurred by: xy the falloff across and down, a cell `i` off
   // weighing exp(-falloff i^2), and zw the cells read to each side across and down
@@ -96,12 +99,34 @@ fn spread_down(@builtin(position) cell: vec4<f32>) -> @location(0) vec4<f32> {
   return blurred(vec2<i32>(cell.xy), vec2<i32>(0, 1), present.spread.y, i32(present.spread.w));
 }
 
+// a number from zero to one out of a pixel, the same every time for the same pixel
+fn noise(pixel: vec2<u32>, seed: u32) -> f32 {
+  // the pcg hash
+  let state = (pixel.x * 1973u + pixel.y * 9277u + seed * 26699u) * 747796405u + 2891336453u;
+  let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+  return f32((word >> 22u) ^ word) / 4294967296.0;
+}
+
+// the picture at a place as it is shown: its light and its haze, exposed, tone mapped and
+// sRGB-encoded
+fn shown(at: vec2<f32>) -> vec3<f32> {
+  var light = textureSampleLevel(picture, picture_sampler, at, 0.0).rgb;
+  if present.options.z > 0.0 {
+    // a mix of the four blurred cells around the pixel
+    let size = vec2<f32>(textureDimensions(picture));
+    let cells = vec2<f32>(textureDimensions(haze));
+    let middle = (at * size / f32(HAZE_CELL) + 1.0) / cells;
+    light += textureSampleLevel(haze, haze_sampler, middle, 0.0).rgb * present.options.z;
+  }
+  return encode(tonemap(light * present.more.y));
+}
+
 @fragment
 fn fragment(spread: Spread) -> @location(0) vec4<f32> {
   let size = vec2<f32>(textureDimensions(picture));
   // how far apart the picture's pixels are in `spread.at`
   let pixel = 1.0 / size;
-  var color = textureSampleLevel(picture, picture_sampler, spread.at, 0.0).rgb;
+  var color = shown(spread.at);
   if present.more.x > 0.0 {
     // toward the mean of the pixel and the eight around it, the nearer ones counting more
     var around = color * 4.0;
@@ -110,17 +135,11 @@ fn fragment(spread: Spread) -> @location(0) vec4<f32> {
         if x != 0 || y != 0 {
           let weight = select(1.0, 2.0, x == 0 || y == 0);
           let aside = vec2<f32>(f32(x), f32(y)) * pixel;
-          around += textureSampleLevel(picture, picture_sampler, spread.at + aside, 0.0).rgb * weight;
+          around += shown(spread.at + aside) * weight;
         }
       }
     }
     color = mix(color, around / 16.0, present.more.x);
-  }
-  if present.options.z > 0.0 {
-    // a mix of the four blurred cells around the pixel
-    let cells = vec2<f32>(textureDimensions(haze));
-    let middle = (spread.at * size / f32(HAZE_CELL) + 1.0) / cells;
-    color += textureSampleLevel(haze, haze_sampler, middle, 0.0).rgb * present.options.z;
   }
   // darker toward the corners, by how far out along the picture's own shape
   let out = (spread.at - 0.5) * 2.0;
@@ -130,6 +149,12 @@ fn fragment(spread: Spread) -> @location(0) vec4<f32> {
     // the dither follows the picture's own pixels, so its pattern is as blocky as they are
     let cell = vec2<u32>(spread.at * size);
     color = floor(color * (steps - 1.0) + threshold(cell)) / (steps - 1.0);
+  } else {
+    // a triangular dither one step of eight bits wide, which keeps dark gradients from
+    // banding when they are stored
+    let target_pixel = vec2<u32>(spread.clip.xy);
+    let spread_by = noise(target_pixel, 0u) + noise(target_pixel, 1u) - 1.0;
+    color = clamp(color + spread_by / 255.0, vec3<f32>(0.0), vec3<f32>(1.0));
   }
   if present.options.y != 0.0 {
     color = decode(color);

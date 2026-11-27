@@ -4,15 +4,15 @@ use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Handle, Knob, LedArc, LedRing, LedStops, PushSwitch, Vent};
-use potpot::{Light, Look, Material, Scene};
+use potpot::{Anisotropy, Light, Look, Material, Scene};
 use potpot_controls::interaction::Push;
 
-use crate::{BLACK, Build, SEAT, SIZE, framed};
+use super::{BLACK, Build, SEAT, SIZE, framed};
 
 /// The color of the light built into the hardware.
 const CYAN: Vec3 = Vec3::new(0.2, 0.85, 1.0);
 /// The color of the panel's dark metal.
-const GUNMETAL: Vec3 = Vec3::new(0.12, 0.13, 0.14);
+const GUNMETAL: Vec3 = Vec3::new(0.28, 0.3, 0.32);
 
 /// Returns the place (`x`, `y`) on the panel.
 fn on_panel(x: f32, y: f32) -> Mat4 {
@@ -63,7 +63,7 @@ pub(super) fn industrial(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let mut build = Build::default();
   let metal = Material {
-    brushed: 0.35,
+    anisotropy: Anisotropy::Brushed(0.35),
     grain: 0.3,
     ..Material::brushed(GUNMETAL)
   };
@@ -79,7 +79,7 @@ pub(super) fn industrial(look: Look) -> Scene {
   let screw_seat = Arc::new(parts::screw_seat(7.0, 1.2));
   for x in [40.0, width - 40.0] {
     let at = Mat4::from_translation(Vec3::new(x, height / 2.0, 0.0));
-    build.place(&mounts, at, Material::brushed(Vec3::splat(0.32)));
+    build.place(&mounts, at, Material::brushed(Vec3::splat(0.5)));
     build.place(&bar, at, Material::chrome(Vec3::splat(0.7)));
     for y in [60.0, height - 60.0] {
       let at = Mat4::from_translation(Vec3::new(x, y, 0.0));
@@ -198,7 +198,7 @@ pub(super) fn industrial(look: Look) -> Scene {
   build.put(
     plate,
     on_panel(430.0, strip + 30.0),
-    Material::brushed(Vec3::splat(0.3)),
+    Material::brushed(Vec3::splat(0.5)),
   );
   // on the plate's top
   build.lit_letters("POTPOT", Vec3::new(430.0, strip + 30.0, 3.0), 12.0);

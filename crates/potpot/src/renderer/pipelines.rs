@@ -12,9 +12,11 @@ use crate::scene::LAMPS;
 pub(super) const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// The format of the picture.
 ///
-/// The picture holds sRGB-encoded color in a format that does not encode, for the reason given
-/// in `scene.wgsl`.
-pub(super) const PICTURE: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// The picture holds linear light in rgb, which is often more than one, and in a the share of
+/// it that the surface gives off itself.
+pub(super) const PICTURE: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// The format of the DFG table.
+pub(super) const DFG: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 /// The format of the bounce map.
 ///
 /// The map holds linear light in rgb and a height in a, and a height lies outside zero to one.
@@ -32,6 +34,10 @@ pub(super) const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
 
 /// The sRGB curve, which goes ahead of each shader that uses it.
 const SRGB_SOURCE: &str = include_str!("srgb.wgsl");
+/// The tone map, which goes ahead of the present shader.
+pub(super) const TONEMAP_SOURCE: &str = include_str!("tonemap.wgsl");
+/// The shader that resolves the picture's samples.
+pub(super) const RESOLVE_SOURCE: &str = include_str!("resolve.wgsl");
 
 /// Returns `scene.wgsl` with what it is given ahead of it.
 ///
@@ -65,11 +71,11 @@ pub(super) fn scene_source() -> String {
 
 /// Returns `present.wgsl` with what it is given ahead of it.
 ///
-/// That is the sRGB curve and the side of a cell of the glow map.
+/// That is the sRGB curve, the tone map and the side of a cell of the glow map.
 pub(super) fn present_source() -> String {
   format!(
     "const HAZE_CELL: i32 = {HAZE_CELL};\n\
-     {SRGB_SOURCE}{}",
+     {SRGB_SOURCE}{TONEMAP_SOURCE}{}",
     include_str!("present.wgsl")
   )
 }
@@ -82,8 +88,10 @@ pub(super) struct Layouts {
   /// Every map the scene pass reads.
   ///
   /// The shadow map comes with its sampler, then the height map, then the bounce map with its
-  /// sampler.
+  /// sampler, then the DFG table, which takes the bounce map's sampler.
   pub(super) maps: wgpu::BindGroupLayout,
+  /// The picture's samples, for the pass that resolves them.
+  pub(super) resolve: wgpu::BindGroupLayout,
   /// The picture alone, for the glow pass to read.
   pub(super) glow: wgpu::BindGroupLayout,
   /// What a pass that blurs the glow map along one axis reads.
@@ -146,7 +154,21 @@ impl Layouts {
           texture(2, wgpu::TextureSampleType::Depth),
           texture(3, wgpu::TextureSampleType::Float { filterable: true }),
           sampler(4, wgpu::SamplerBindingType::Filtering),
+          texture(5, wgpu::TextureSampleType::Float { filterable: true }),
         ],
+      }),
+      resolve: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("potpot resolve"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+          binding: 0,
+          visibility: wgpu::ShaderStages::FRAGMENT,
+          ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: true,
+          },
+          count: None,
+        }],
       }),
       glow: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("potpot glow"),
@@ -194,6 +216,8 @@ pub(super) struct Pipelines {
   pub(super) wipe_depth: wgpu::RenderPipeline,
   /// The pipeline that wipes the bounce map the same way.
   pub(super) wipe_bounce: wgpu::RenderPipeline,
+  /// The pipeline that resolves the picture's samples.
+  pub(super) resolve: wgpu::RenderPipeline,
   /// The pipeline that draws the glow map from the picture.
   pub(super) glow: wgpu::RenderPipeline,
   /// The pipelines that blur the glow map across and then down.
@@ -407,6 +431,31 @@ impl Pipelines {
         cache: None,
       })
     };
+    let resolve_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+      label: Some("potpot resolve"),
+      source: wgpu::ShaderSource::Wgsl(RESOLVE_SOURCE.into()),
+    });
+    let resolve = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+      label: Some("potpot resolve"),
+      layout: Some(&layout("potpot resolve", &[&layouts.resolve])),
+      vertex: wgpu::VertexState {
+        module: &resolve_shader,
+        entry_point: Some("vertex"),
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+        buffers: &[],
+      },
+      fragment: Some(wgpu::FragmentState {
+        module: &resolve_shader,
+        entry_point: Some("fragment"),
+        compilation_options: wgpu::PipelineCompilationOptions::default(),
+        targets: &[Some(wgpu::ColorTargetState::from(PICTURE))],
+      }),
+      primitive,
+      depth_stencil: None,
+      multisample: wgpu::MultisampleState::default(),
+      multiview: None,
+      cache: None,
+    });
     let glow = over_all("potpot glow", &layouts.glow, "glow_fragment", GLOW);
     let spread = ["spread_across", "spread_down"]
       .map(|fragment| over_all("potpot spread", &layouts.spread, fragment, GLOW));
@@ -420,6 +469,7 @@ impl Pipelines {
       wipe,
       wipe_depth,
       wipe_bounce,
+      resolve,
       glow,
       spread,
       present,

@@ -5,7 +5,7 @@ use std::f32::consts::PI;
 use glam::{Vec2, Vec3};
 use potpot_controls::stroke;
 
-use super::PAINT;
+use super::INK;
 use crate::mesh::{Mesh, Vertex};
 
 /// The count of sides in the half round at each end of a stroke.
@@ -63,7 +63,7 @@ pub fn legend(text: &str, height: f32, weight: f32) -> Mesh {
 pub fn tracked_legend(text: &str, height: f32, weight: f32, tracking: f32) -> Mesh {
   let mut legend = Mesh::default();
   for line in stroke::tracked_lines(text, height, tracking) {
-    add_stroke(&mut legend, line.map(Vec2::from), weight, PAINT, END);
+    add_stroke(&mut legend, line.map(Vec2::from), weight, INK, END);
   }
   legend
 }

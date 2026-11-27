@@ -2,6 +2,7 @@
 
 use glam::{Mat4, Vec3};
 
+use super::INK;
 use crate::mesh::Mesh;
 
 /// Returns the reach and the half width of one mark of a scale.
@@ -31,7 +32,7 @@ pub fn ticks(count: u32, sweep: f32, inner: f32, outer: f32, long_every: u32) ->
     let (reach, half_width) = mark(tick, long_every, inner, outer);
     let mark = Mesh::cuboid(
       Vec3::new(-half_width, -reach, 0.0),
-      Vec3::new(half_width, -inner, 0.3),
+      Vec3::new(half_width, -inner, INK),
     );
     ticks = ticks.merged(&mark.transformed(Mat4::from_rotation_z((turn - 0.5) * sweep)));
   }
@@ -57,7 +58,7 @@ pub fn fader_ticks(count: u32, travel: f32, inner: f32, outer: f32, long_every: 
       let (from, to) = (side * inner, side * reach);
       ticks = ticks.merged(&Mesh::cuboid(
         Vec3::new(from.min(to), y - half, 0.0),
-        Vec3::new(from.max(to), y + half, 0.3),
+        Vec3::new(from.max(to), y + half, INK),
       ));
     }
   }
@@ -78,7 +79,7 @@ pub fn dashes(count: u32, sweep: f32, radius: f32, width: f32, fill: f32) -> Mes
     let turn = (dash as f32 + 0.5) * share - sweep / 2.0;
     let bar = Mesh::cuboid(
       Vec3::new(-half_length, -radius - width / 2.0, 0.0),
-      Vec3::new(half_length, -radius + width / 2.0, 0.3),
+      Vec3::new(half_length, -radius + width / 2.0, INK),
     );
     ring = ring.merged(&bar.transformed(Mat4::from_rotation_z(turn)));
   }

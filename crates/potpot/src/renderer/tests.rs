@@ -102,6 +102,48 @@ impl Target {
     pixels
   }
 
+  /// Returns the picture a renderer drew last.
+  ///
+  /// It is the light and the emission of each pixel, in rows.
+  fn picture(&self, renderer: &Renderer) -> Vec<f32> {
+    let texture = (renderer.picture.as_ref())
+      .expect("a picture was drawn")
+      .color
+      .texture();
+    let size = texture.size();
+    // a texel is four half floats
+    let row = size.width * 8;
+    let read = self.device.create_buffer(&wgpu::BufferDescriptor {
+      label: None,
+      size: u64::from(row * size.height),
+      usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+      mapped_at_creation: false,
+    });
+    let mut encoder =
+      (self.device).create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    encoder.copy_texture_to_buffer(
+      texture.as_image_copy(),
+      wgpu::TexelCopyBufferInfo {
+        buffer: &read,
+        layout: wgpu::TexelCopyBufferLayout {
+          offset: 0,
+          bytes_per_row: Some(row),
+          rows_per_image: None,
+        },
+      },
+      size,
+    );
+    self.queue.submit([encoder.finish()]);
+    (read.slice(..)).map_async(wgpu::MapMode::Read, |mapped| {
+      mapped.expect("the picture maps")
+    });
+    (self.device.poll(wgpu::PollType::wait_indefinitely())).expect("the device finishes");
+    let texels = read.slice(..).get_mapped_range();
+    (texels.as_chunks::<2>().0.iter())
+      .map(|bits| f32::from(half::f16::from_le_bytes(*bits)))
+      .collect()
+  }
+
   /// Returns the target's pixels with a scene drawn afresh.
   ///
   /// Nothing is kept from a scene before. `whole` draws another scene first, under another
@@ -130,15 +172,9 @@ impl Target {
     scene: &Scene,
     step: &str,
   ) {
-    let (in_part, in_whole) = (self.drawn(kept, scene), self.drawn_whole(whole, scene));
-    let differing = (in_part.as_chunks::<4>().0.iter())
-      .zip(in_whole.as_chunks::<4>().0)
-      .filter(|(part, whole)| part != whole)
-      .count();
-    assert_eq!(
-      differing, 0,
-      "pixels differ from the scene drawn whole, {step}"
-    );
+    let in_part = self.drawn(kept, scene);
+    self.drawn_whole(whole, scene);
+    assert_alike(&self.picture(kept), &self.picture(whole), step);
     if let Some(parts) = kept.changed() {
       let named = |across: u32, down: u32| {
         parts.iter().any(|&[left, top, width, height]| {
@@ -158,6 +194,20 @@ impl Target {
     }
     *shown = in_part;
   }
+}
+
+/// Asserts that two pictures hold the same light.
+///
+/// Each value has to be within a thousandth of itself.
+fn assert_alike(one: &[f32], other: &[f32], step: &str) {
+  assert_eq!(one.len(), other.len(), "{step}");
+  let differing = (one.iter().zip(other))
+    .filter(|&(&one, &other)| (one - other).abs() > 1e-3 * one.abs().max(other.abs()))
+    .count();
+  assert_eq!(
+    differing, 0,
+    "values differ from the scene drawn whole, {step}"
+  );
 }
 
 /// Returns numbers from zero to one, the same ones for a seed.
@@ -320,8 +370,10 @@ fn a_scene_drawn_in_part_is_the_scene_drawn_whole() {
       in_part += usize::from(kept.changed().is_some());
       // and against a renderer that has drawn nothing before
       if frame % 16 == 15 {
-        let first = target.drawn(&mut Renderer::new(&target.device, FORMAT), &scene);
-        assert!(first == target.drawn(&mut kept, &scene), "{step}");
+        let mut first = Renderer::new(&target.device, FORMAT);
+        target.drawn(&mut first, &scene);
+        target.drawn(&mut kept, &scene);
+        assert_alike(&target.picture(&first), &target.picture(&kept), &step);
       }
     }
   }
@@ -466,10 +518,18 @@ fn what_lights_itself_on_an_edge_spills_as_it_does_with_the_dark_beside_it() {
       size: Vec2::new(wide, high),
       heights: [-8.0, 48.0],
       lean: Vec2::ZERO,
-      light: Light::default(),
+      // no light falls on the panel, so that the bar and its haze are all that shows
+      light: Light {
+        color: Vec3::ZERO,
+        ambient: Vec3::ZERO,
+        ..Light::default()
+      },
+      // the ordered dither of the color steps repeats every four pixels, so it is the same at
+      // the places compared, which a dither that differs at every pixel is not
       look: Look {
         antialias: false,
         vignette: 0.0,
+        color_steps: 256,
         ..Look::default()
       },
       objects: vec![
@@ -625,7 +685,7 @@ fn a_screen_whose_picture_is_made_again_is_drawn_again_alone() {
   let target = Target::new();
   let screen = crate::parts::Screen::new(120.0, 70.0);
   let middle = Vec2::new(330.0, 120.0);
-  let face = Material::screen(Vec3::splat(0.02), 400.0);
+  let face = Material::screen(Vec3::splat(0.02));
   let knob = crate::parts::Knob::fluted(16.0, 14.0).body();
   // a curve over a filled region, as often made again as it is shown
   let picture = |level: f32| {
@@ -791,6 +851,92 @@ fn light_off_what_changes_color_shows_on_a_sliver_where_the_sliver_is() {
     if frame > 1 {
       let parts = kept.changed().expect("the color is drawn in part");
       assert!(share(parts) < 0.5, "{parts:?} {step}");
+    }
+  }
+}
+
+#[test]
+#[ignore = "needs a graphics device"]
+fn the_tone_map_meets_the_khronos_reference_points() {
+  // inputs and what Khronos's sample code, pbrNeutral.glsl, makes of them
+  let points: [([f32; 3], [f32; 3]); 10] = [
+    ([0.0; 3], [0.0; 3]),
+    ([0.05; 3], [0.015625; 3]),
+    ([0.18; 3], [0.14; 3]),
+    ([0.5; 3], [0.46; 3]),
+    ([1.0; 3], [0.869091; 3]),
+    ([4.0; 3], [0.983256; 3]),
+    ([16.0; 3], [0.996269; 3]),
+    ([1.0, 0.5, 0.1], [0.869091, 0.422529, 0.065279]),
+    ([4.0, 2.0, 0.5], [0.983256, 0.639951, 0.382473]),
+    ([0.02, 0.3, 0.9], [0.007559, 0.272777, 0.841103]),
+  ];
+  let target = Target::new();
+  let device = &target.device;
+  let source = format!(
+    "{}
+     @group(0) @binding(0) var<storage, read_write> light: array<vec4<f32>>;
+     @compute @workgroup_size(1)
+     fn main(@builtin(global_invocation_id) at: vec3<u32>) {{
+       light[at.x] = vec4<f32>(tonemap(light[at.x].rgb), 1.0);
+     }}",
+    pipelines::TONEMAP_SOURCE
+  );
+  let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    label: None,
+    source: wgpu::ShaderSource::Wgsl(source.into()),
+  });
+  let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+    label: None,
+    layout: None,
+    module: &module,
+    entry_point: Some("main"),
+    compilation_options: wgpu::PipelineCompilationOptions::default(),
+    cache: None,
+  });
+  let inputs: Vec<[f32; 4]> = (points.iter())
+    .map(|([red, green, blue], _)| [*red, *green, *blue, 1.0])
+    .collect();
+  let light = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    label: None,
+    contents: bytemuck::cast_slice(&inputs),
+    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+  });
+  let read = device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
+    size: light.size(),
+    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+    mapped_at_creation: false,
+  });
+  let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    label: None,
+    layout: &pipeline.get_bind_group_layout(0),
+    entries: &[wgpu::BindGroupEntry {
+      binding: 0,
+      resource: light.as_entire_binding(),
+    }],
+  });
+  let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+  {
+    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
+    pass.set_pipeline(&pipeline);
+    pass.set_bind_group(0, &group, &[]);
+    pass.dispatch_workgroups(points.len() as u32, 1, 1);
+  }
+  encoder.copy_buffer_to_buffer(&light, 0, &read, 0, light.size());
+  target.queue.submit([encoder.finish()]);
+  (read.slice(..)).map_async(wgpu::MapMode::Read, |mapped| {
+    mapped.expect("the light maps")
+  });
+  (device.poll(wgpu::PollType::wait_indefinitely())).expect("the device finishes");
+  let mapped = read.slice(..).get_mapped_range();
+  let mapped: &[[f32; 4]] = bytemuck::cast_slice(&mapped);
+  for ((input, wanted), got) in points.iter().zip(mapped) {
+    for (wanted, got) in wanted.iter().zip(got) {
+      assert!(
+        (wanted - got).abs() < 1e-5,
+        "{input:?} maps to {got:?}, not {wanted:?}"
+      );
     }
   }
 }

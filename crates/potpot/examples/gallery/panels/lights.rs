@@ -8,7 +8,7 @@ use potpot::parts::{self, Button, Meter, Pad, PushSwitch};
 use potpot::{Light, Look, Material, Object, Scene};
 use potpot_controls::interaction::Push;
 
-use crate::{SEAT, SIZE, framed, screws};
+use super::{SEAT, SIZE, framed, screws};
 
 /// Returns rubber buttons and level meters on a dark panel.
 ///
@@ -69,7 +69,7 @@ pub(super) fn lights(look: Look) -> Scene {
     objects.push(Object {
       mesh: Arc::clone(body),
       transform: shape.transform(x, y, held),
-      material: rubber.lit(color, level, shape.glow_radius()),
+      material: rubber.lit(color, level, shape.emission_radius()),
     });
     if level > 0.0 {
       lamps.push(shape.lamp(x, y, color, level));
@@ -163,7 +163,7 @@ pub(super) fn lights(look: Look) -> Scene {
       material: if round {
         black
       } else {
-        rubber.lit(amber, level, switch.plunger.glow_radius())
+        rubber.lit(amber, level, switch.plunger.emission_radius())
       },
     });
     if on && !round {
@@ -217,7 +217,7 @@ pub(super) fn lights(look: Look) -> Scene {
     Object {
       mesh: Arc::new(xy.puck()),
       transform: on_pad,
-      material: rubber.lit(blue, 1.0, xy.puck.glow_radius()),
+      material: rubber.lit(blue, 1.0, xy.puck.emission_radius()),
     },
   ]);
   let puck = on_pad.transform_point3(Vec3::ZERO);

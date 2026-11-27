@@ -99,7 +99,7 @@ impl Screen {
 /// The shapes of `flat` are in the panel's points, as they are when they are drawn flat, and
 /// (`x`, `y`) is the middle of the [`Screen`] they show on. `face` is the material of its face.
 /// Each [`Object`] lights itself in the color of its shapes and is finished as the face is, so
-/// the shine and the sheen of the face's glass lie over the picture too. Each is
+/// the highlights of the face's glass lie over the picture too. Each is
 /// [shadowless](Material::shadowless), so a picture made again costs the drawing of where it is
 /// seen and, while light bounces, of what its light is thrown on.
 ///
@@ -116,7 +116,7 @@ impl Screen {
 /// too.
 pub fn picture(flat: &Flat, x: f32, y: f32, face: Material, under: usize) -> Vec<Object> {
   let middle = Vec2::new(x, y);
-  // the middle of the screen, which the face's sheen is laid out from
+  // placed at the middle of the screen, as the face is
   let transform = Mat4::from_translation(middle.extend(0.0));
   let runs = flat
     .shapes()
@@ -167,8 +167,8 @@ pub fn picture(flat: &Flat, x: f32, y: f32, face: Material, under: usize) -> Vec
         transform,
         material: Material {
           color: face.color.lerp(Vec3::new(red, green, blue), cover),
-          glow: face.glow + (1.0 - face.glow) * cover,
-          glow_radius: 0.0,
+          emission: face.emission + (1.0 - face.emission) * cover,
+          emission_radius: 0.0,
           shadowless: true,
           ..face
         },
@@ -189,7 +189,7 @@ mod tests {
     flat.curve(&[[100.0, 60.0], [140.0, 40.0], [180.0, 70.0]], 2.0, cyan);
     flat.rect([90.0, 30.0], [92.0, 90.0], cyan);
     flat.line([90.0, 50.0], [190.0, 50.0], 1.0, amber);
-    let face = Material::screen(Vec3::splat(0.02), 100.0);
+    let face = Material::screen(Vec3::splat(0.02));
     let mut objects = picture(&flat, 140.0, 60.0, face, 0);
     // the region, then the curve's two lines and the rectangle as one, then the line
     assert_eq!(objects.len(), 3);

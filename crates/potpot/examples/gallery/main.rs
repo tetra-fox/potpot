@@ -15,115 +15,19 @@
 //! After the panel's name, a whole number is the scale the picture is drawn at. After it, one
 //! number is the pixel size and a second the color steps, for the crude looks.
 
-mod faders;
-mod industrial;
-mod knobs;
-mod lamp;
-mod lights;
-mod retro;
-mod rings;
-mod screens;
-#[path = "../shared/mod.rs"]
-mod shared;
+mod panels;
 
-use std::sync::Arc;
+use potpot::{Look, Place, Renderer, wgpu};
 
-use potpot::glam::{Mat4, Vec2, Vec3};
-use potpot::parts;
-use potpot::{Lamp, Light, Look, Material, Mesh, Object, Place, Renderer, Scene, wgpu};
-
-use crate::faders::faders;
-use crate::industrial::industrial;
-use crate::knobs::knobs;
-use crate::lamp::lamp;
-use crate::lights::lights;
-use crate::retro::retro;
-use crate::rings::rings;
-use crate::screens::screens;
-use crate::shared::{ALUMINUM, BLACK, SEAT, lettering};
-
-const SIZE: [u32; 2] = [1024, 640];
-/// The names of the panels, as a message lists them.
-const PANELS: &str = "knobs, faders, lights, lamp, rings, screens, retro, industrial";
-
-/// Returns a screw for each corner, each turned its own way.
-fn screws() -> [Object; 4] {
-  let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
-  let screw = Arc::new(parts::screw(8.0));
-  let inset = 18.0;
-  [
-    (inset, inset),
-    (width - inset, inset),
-    (inset, height - inset),
-    (width - inset, height - inset),
-  ]
-  .map(|(x, y)| Object {
-    mesh: Arc::clone(&screw),
-    transform: Mat4::from_translation(Vec3::new(x, y, 0.0)) * Mat4::from_rotation_z(x * 0.3 + y),
-    material: Material::chrome(Vec3::splat(0.75)),
-  })
-}
-
-/// Returns the scene of a panel that fills the picture.
-///
-/// The panel is seen leaning a little, under the plain light and with no lamps.
-fn framed(look: Look, objects: Vec<Object>) -> Scene {
-  Scene {
-    size: Vec2::new(SIZE[0] as f32, SIZE[1] as f32),
-    heights: [-8.0, 64.0],
-    lean: Vec2::new(0.0, -0.25),
-    light: Light::default(),
-    look,
-    objects,
-    lamps: Vec::new(),
-  }
-}
-
-/// A panel being put together.
-///
-/// It holds what stands where and what is lit.
-#[derive(Default)]
-struct Build {
-  objects: Vec<Object>,
-  lamps: Vec<Lamp>,
-}
-
-impl Build {
-  /// Adds a mesh that is placed as often as wanted.
-  fn place(&mut self, mesh: &Arc<Mesh>, transform: Mat4, material: Material) {
-    self.objects.push(Object {
-      mesh: Arc::clone(mesh),
-      transform,
-      material,
-    });
-  }
-
-  /// Adds a mesh that goes in one place only.
-  fn put(&mut self, mesh: Mesh, transform: Mat4, material: Material) {
-    self.place(&Arc::new(mesh), transform, material);
-  }
-
-  /// Adds lettering centered on a point at a height off the panel.
-  fn letters(&mut self, text: &str, at: Vec3, tall: f32, material: Material) {
-    self.put(lettering(text, tall), Mat4::from_translation(at), material);
-  }
-}
+use crate::panels::{PANELS, SIZE};
 
 fn main() {
   let mut arguments = std::env::args().skip(1);
   let (Some(path), Some(panel)) = (arguments.next(), arguments.next()) else {
     panic!("gallery: expected a png file and then one of {PANELS}")
   };
-  let scene: fn(Look) -> Scene = match panel.as_str() {
-    "knobs" => knobs,
-    "faders" => faders,
-    "lights" => lights,
-    "lamp" => lamp,
-    "rings" => rings,
-    "screens" => screens,
-    "retro" => retro,
-    "industrial" => industrial,
-    _ => panic!("gallery: unknown panel {panel}: expected one of {PANELS}"),
+  let Some(scene) = panels::scene(&panel) else {
+    panic!("gallery: unknown panel {panel}: expected one of {PANELS}")
   };
   // a whole number, so that a row of the picture stays a multiple of the 256 bytes wgpu
   // copies rows by
@@ -209,6 +113,6 @@ fn main() {
     .expect("the device finishes");
 
   let pixels = read.slice(..).get_mapped_range();
-  shared::window::write_png(path.as_ref(), size, &pixels).expect("the png file is written");
+  panels::shared::window::write_png(path.as_ref(), size, &pixels).expect("the png file is written");
   eprintln!("wrote {path}");
 }

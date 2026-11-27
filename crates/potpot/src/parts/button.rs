@@ -146,10 +146,10 @@ impl Button {
     }
   }
 
-  /// Returns how far from its middle a lit button's glow fades.
+  /// Returns how far from its middle a lit button's emission fades.
   ///
   /// The distance is the radius for [`Material::lit`](crate::Material::lit).
-  pub fn glow_radius(&self) -> f32 {
+  pub fn emission_radius(&self) -> f32 {
     self.width.min(self.length) * 0.55
   }
 

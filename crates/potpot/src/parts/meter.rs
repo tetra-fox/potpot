@@ -186,7 +186,7 @@ mod tests {
     let segment = Arc::new(meter.segment());
     let lights: Vec<Object> = (meter.lights(&segment, 50.0, 200.0, 0.45, None)).collect();
     assert_eq!(lights.len(), 10);
-    let glows: Vec<f32> = lights.iter().map(|light| light.material.glow).collect();
+    let glows: Vec<f32> = lights.iter().map(|light| light.material.emission).collect();
     // four whole lights and half of the fifth
     assert_eq!(&glows[..4], &[1.0; 4]);
     assert!((glows[4] - 0.5).abs() < 1e-5);
@@ -203,8 +203,8 @@ mod tests {
     assert!(meter.color(8).y > 0.5 && meter.color(9).y < 0.5);
     // a held peak lights one light above the level
     let held: Vec<Object> = (meter.lights(&segment, 0.0, 0.0, 0.2, Some(0.9))).collect();
-    assert_eq!(held[8].material.glow, 1.0);
-    assert_eq!(held[7].material.glow, 0.0);
+    assert_eq!(held[8].material.emission, 1.0);
+    assert_eq!(held[7].material.emission, 0.0);
     // and a silent meter throws no light
     assert!(meter.lamp(0.0, 0.0, 0.0).is_none());
     assert!(

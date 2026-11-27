@@ -9,8 +9,8 @@ pub(super) struct Picture {
   pub(super) size: [u32; 2],
   /// The texture the scene is drawn into when edges are smoothed.
   ///
-  /// It is resolved into `color`.
-  pub(super) smoothed: Option<wgpu::TextureView>,
+  /// It is resolved into `color` by the resolve pass, which reads it through `resolve`.
+  pub(super) smoothed: Option<(wgpu::TextureView, wgpu::BindGroup)>,
   pub(super) color: wgpu::TextureView,
   pub(super) depth: wgpu::TextureView,
   /// The glow map, of what lights itself in the picture.
@@ -66,10 +66,13 @@ impl Picture {
         })
         .create_view(&wgpu::TextureViewDescriptor::default())
     };
+    // the tests read the picture back
     let color = texture(
       "potpot picture",
       PICTURE,
-      wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+      wgpu::TextureUsages::RENDER_ATTACHMENT
+        | wgpu::TextureUsages::TEXTURE_BINDING
+        | wgpu::TextureUsages::COPY_SRC,
       1,
       size,
     );
@@ -86,13 +89,22 @@ impl Picture {
     let spread = [map("potpot spread across"), map("potpot spread down")];
     let samples = if smooth { SAMPLES } else { 1 };
     let smoothed = smooth.then(|| {
-      texture(
+      let samples = texture(
         "potpot picture samples",
         PICTURE,
-        wgpu::TextureUsages::RENDER_ATTACHMENT,
+        wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         samples,
         size,
-      )
+      );
+      let resolve = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("potpot resolve"),
+        layout: &layouts.resolve,
+        entries: &[wgpu::BindGroupEntry {
+          binding: 0,
+          resource: wgpu::BindingResource::TextureView(&samples),
+        }],
+      });
+      (samples, resolve)
     });
     let depth = texture(
       "potpot picture depth",

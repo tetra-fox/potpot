@@ -10,8 +10,8 @@ use potpot_controls::axis::Axis;
 use potpot_controls::flat::Flat;
 use potpot_controls::response::{self, Band, Kind};
 
-use crate::shared::{self, GRID, Plot};
-use crate::{BLACK, SIZE, framed, lettering, screws};
+use super::shared::{self, GRID, Plot};
+use super::{BLACK, SIZE, framed, lettering, screws};
 
 /// The sample rate the curve is drawn for, in hertz.
 const RATE: f32 = 48000.0;
@@ -134,7 +134,7 @@ fn envelope(flat: &mut Flat, plot: Plot) {
 /// the screens show stands out.
 pub(super) fn screens(look: Look) -> Scene {
   let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
-  let ink = Material::matte(Vec3::splat(0.8));
+  let ink = Material::ink(Vec3::splat(0.8));
   let put = |mesh: potpot::Mesh, at: Vec2, material: Material| Object {
     mesh: Arc::new(mesh),
     transform: Mat4::from_translation(at.extend(0.0)),
@@ -173,7 +173,7 @@ pub(super) fn screens(look: Look) -> Scene {
     ),
   ];
   for (name, screen, middle, color, picture) in shown {
-    let glass = shared::glass(&screen);
+    let glass = shared::glass();
     objects.push(put(screen.face(), middle, glass));
     objects.push(put(screen.bezel(), middle, Material::glossy(BLACK)));
     let over = Vec2::new(0.0, -screen.length / 2.0 - screen.border - 12.0);

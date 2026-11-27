@@ -6,6 +6,7 @@
 //! again, and of the picture as much as the difference shows in.
 
 mod damage;
+mod dfg;
 mod picture;
 mod pipelines;
 mod uniforms;
@@ -19,7 +20,7 @@ use wgpu::util::DeviceExt;
 
 use self::damage::{Bounds, HAZE_CELL, Reach, Redrawn, Spread};
 use self::picture::Picture;
-use self::pipelines::{BOUNCE, DEPTH, Layouts, Pipelines, SAMPLES};
+use self::pipelines::{BOUNCE, DEPTH, DFG, Layouts, Pipelines, SAMPLES};
 use self::uniforms::{Globals, Placed, Present};
 use crate::mesh::Mesh;
 use crate::scene::{Object, Scene};
@@ -99,6 +100,10 @@ pub struct Renderer {
   bounce_map: wgpu::TextureView,
   /// Every map, for the scene pass to read.
   maps_group: wgpu::BindGroup,
+  /// The DFG table.
+  dfg_table: wgpu::Texture,
+  /// The DFG table's texels, until the table holds them.
+  dfg_texels: Option<wgpu::Buffer>,
   layouts: Layouts,
   present_options: wgpu::Buffer,
   /// Whether the target encodes sRGB itself.
@@ -304,6 +309,26 @@ impl Renderer {
       min_filter: wgpu::FilterMode::Linear,
       ..Default::default()
     });
+    let dfg_table = device.create_texture(&wgpu::TextureDescriptor {
+      label: Some("potpot dfg"),
+      size: wgpu::Extent3d {
+        width: dfg::SIDE,
+        height: dfg::SIDE,
+        depth_or_array_layers: 1,
+      },
+      mip_level_count: 1,
+      sample_count: 1,
+      dimension: wgpu::TextureDimension::D2,
+      format: DFG,
+      usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+      view_formats: &[],
+    });
+    let dfg_texels = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+      label: Some("potpot dfg"),
+      contents: bytemuck::cast_slice(&dfg::table()),
+      usage: wgpu::BufferUsages::COPY_SRC,
+    });
+    let dfg_view = dfg_table.create_view(&wgpu::TextureViewDescriptor::default());
     let view = |binding, view| wgpu::BindGroupEntry {
       binding,
       resource: wgpu::BindingResource::TextureView(view),
@@ -326,6 +351,7 @@ impl Renderer {
         view(2, &height_map),
         view(3, &bounce_map),
         sampler(4, &bounce_sampler),
+        view(5, &dfg_view),
       ],
     });
 
@@ -340,6 +366,8 @@ impl Renderer {
       bounce_depth,
       bounce_map,
       maps_group,
+      dfg_table,
+      dfg_texels: Some(dfg_texels),
       present_options: uniform("potpot present", size_of::<Present>()),
       target_encodes: target.is_srgb(),
       max_side: device.limits().max_texture_dimension_2d,
@@ -409,7 +437,7 @@ impl Renderer {
     let reblur = spread != self.held_spread;
     self.held_spread = spread;
     // the present pass reads these every time it runs, so new ones need no new picture
-    let present = Present::of(look, self.target_encodes, spread);
+    let present = Present::of(look, &scene.light, self.target_encodes, spread);
     let presented_alike = present == self.held_present && size == self.held_size;
     if present != self.held_present {
       queue.write_buffer(&self.present_options, 0, bytemuck::bytes_of(&present));
@@ -597,6 +625,24 @@ impl Renderer {
       };
       damage::parts(&self.bands, picture_size, size, reach, &mut self.parts);
     }
+    if let Some(texels) = self.dfg_texels.take() {
+      let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("potpot dfg"),
+      });
+      encoder.copy_buffer_to_texture(
+        wgpu::TexelCopyBufferInfo {
+          buffer: &texels,
+          layout: wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(dfg::SIDE * size_of::<[half::f16; 2]>() as u32),
+            rows_per_image: None,
+          },
+        },
+        self.dfg_table.as_image_copy(),
+        self.dfg_table.size(),
+      );
+      queue.submit([encoder.finish()]);
+    }
     self.draw_picture(device, queue, &picture, shapes, light, redrawn, reblur);
     self.picture = Some(picture);
   }
@@ -770,9 +816,9 @@ impl Renderer {
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("potpot scene"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-          view: picture.smoothed.as_ref().unwrap_or(&picture.color),
+          view: (picture.smoothed.as_ref()).map_or(&picture.color, |(samples, _)| samples),
           depth_slice: None,
-          resolve_target: picture.smoothed.as_ref().map(|_| &picture.color),
+          resolve_target: None,
           ops: wgpu::Operations {
             load: if whole {
               wgpu::LoadOp::Clear(wgpu::Color::BLACK)
@@ -804,6 +850,31 @@ impl Renderer {
       pass.set_bind_group(1, &self.maps_group, &[]);
       self.draw_objects(&mut pass, within, Objects::All);
       drop(pass);
+
+      // the samples resolved into the picture where they were drawn
+      if let Some((_, samples)) = &picture.smoothed {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+          label: Some("potpot resolve"),
+          color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: &picture.color,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+              load: wgpu::LoadOp::Load,
+              store: wgpu::StoreOp::Store,
+            },
+          })],
+          depth_stencil_attachment: None,
+          timestamp_writes: None,
+          occlusion_query_set: None,
+        });
+        if let Redrawn::Within([x, y, width, height]) = redrawn {
+          pass.set_scissor_rect(x, y, width, height);
+        }
+        pass.set_pipeline(&self.pipelines.resolve);
+        pass.set_bind_group(0, samples, &[]);
+        pass.draw(0..3, 0..1);
+      }
 
       // the glow map follows the picture, in the cells that what was drawn again lies in. the
       // dark cells around them are cleared with the whole map and never drawn

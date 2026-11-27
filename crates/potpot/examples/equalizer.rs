@@ -325,7 +325,7 @@ fn grid() -> Flat {
   }
   for (gain, name) in decibels {
     let [x, y] = plot.at([1.0, DECIBELS.turn(gain)]);
-    // at the right, clear of the sheen in the glass's top left corner
+    // at the right
     let left = x - 2.0 - stroke::width(name.chars().count(), 6.0);
     flat.legend(name, [left, y - 9.0], 6.0, 1.0, LABELS);
   }
@@ -431,7 +431,7 @@ struct Equalizer {
 impl Equalizer {
   fn new(gpu: &Gpu) -> Self {
     let size = Vec2::from(SIZE);
-    let ink = Material::matte(Vec3::splat(0.8));
+    let ink = Material::ink(Vec3::splat(0.8));
     let hole = Material::matte(SEAT);
     let mut fixed = Drawn::default();
     fixed.put(
@@ -443,7 +443,7 @@ impl Equalizer {
     fixed.screws(size, 16.0, 6.0);
 
     let screen = Screen::new(GLASS.x, GLASS.y);
-    let glass = shared::glass(&screen);
+    let glass = shared::glass();
     fixed.put(screen.face(), SCREEN, glass);
     fixed.put(screen.bezel(), SCREEN, Material::glossy(BLACK));
 
@@ -557,7 +557,7 @@ impl Equalizer {
       drawn.place(
         &self.button_body,
         self.button.transform(at.x, at.y, depth),
-        rubber.lit(start.color, level, self.button.glow_radius()),
+        rubber.lit(start.color, level, self.button.emission_radius()),
         Some(Target::Control(first + BUTTON)),
       );
       if on {

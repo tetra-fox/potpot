@@ -6,7 +6,7 @@ use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Button, Edge, Grip, Knob, Meter, Top};
 use potpot::{Light, Look, Material, Object, Scene};
 
-use crate::{Build, SEAT, SIZE, framed};
+use super::{Build, SEAT, SIZE, framed};
 
 /// Returns a soft synth's front in the manner of the mid 2000s.
 ///
@@ -28,8 +28,8 @@ pub(super) fn retro(look: Look) -> Scene {
     grain: 0.22,
     ..Material::satin(color)
   };
-  let ink = Material::matte(Vec3::splat(0.92));
-  let dark_ink = Material::matte(Vec3::new(0.04, 0.07, 0.16));
+  let ink = Material::ink(Vec3::splat(0.92));
+  let dark_ink = Material::ink(Vec3::new(0.04, 0.07, 0.16));
   let hole = Material::matte(SEAT);
 
   // the panel and the rim around it
@@ -221,7 +221,7 @@ pub(super) fn retro(look: Look) -> Scene {
   build.put(
     potpot::Mesh::cuboid(Vec3::new(-138.0, -106.0, 0.0), Vec3::new(138.0, 106.0, 1.0)),
     at(middle, top + 26.0, 5.0),
-    Material::pane(glass, 300.0).lit(Vec3::new(0.1, 0.26, 0.56), 0.16, 0.0),
+    Material::pane(glass).lit(Vec3::new(0.1, 0.26, 0.56), 0.16, 0.0),
   );
   let glow = Material::matte(shown).lit(shown, 0.6, 0.0);
   let dim = Material::matte(shown * 0.5).lit(shown * 0.6, 0.3, 0.0);
@@ -337,7 +337,6 @@ pub(super) fn retro(look: Look) -> Scene {
       toward: Vec3::new(-0.3, -0.5, 1.0),
       color: Vec3::splat(0.8),
       ambient: Vec3::splat(0.42),
-      falloff: 0.35,
       softness: 7.0,
       ..Light::default()
     },
