@@ -215,6 +215,20 @@ fn adapter_of(instance: &wgpu::Instance) -> Result<wgpu::Adapter, wgpu::RequestA
   pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
 }
 
+/// The lock a test holds for as long as the graphics devices it opens live.
+///
+/// The NVIDIA 595 Vulkan driver can deadlock when one device is destroyed while another thread
+/// builds pipelines on another: `vkDestroyDevice` holds the Vulkan loader's lock and waits for
+/// a driver thread that spins at its exit, and the other thread waits for the loader's lock.
+/// So the tests' devices live one at a time.
+// TODO: let the tests' devices live at once when the driver no longer deadlocks
+#[cfg(test)]
+pub(crate) fn alone() -> std::sync::MutexGuard<'static, ()> {
+  static ONE_DEVICE: Mutex<()> = Mutex::new(());
+  // a test that failed while it held the lock has let go of its devices all the same
+  ONE_DEVICE.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 #[cfg(test)]
 mod tests {
   use std::sync::Barrier;
@@ -232,6 +246,7 @@ mod tests {
   #[test]
   #[ignore = "needs a graphics device"]
   fn one_device_is_shared_for_as_long_as_it_is_held_and_has_no_fault() {
+    let _alone = alone();
     let first = Graphics::shared().expect("a device opens");
     let second = Graphics::shared().expect("the device is shared");
     assert!(Arc::ptr_eq(&first, &second));
@@ -277,6 +292,7 @@ mod tests {
   #[test]
   #[ignore = "needs a graphics device"]
   fn what_goes_wrong_while_building_is_returned_and_is_no_fault_of_the_device() {
+    let _alone = alone();
     let graphics = Graphics::new().expect("a device opens");
     assert_eq!(graphics.built(|| 7).ok(), Some(7));
     assert!(graphics.built(|| broken(&graphics.device)).is_err());
@@ -291,6 +307,7 @@ mod tests {
   #[test]
   #[ignore = "needs a graphics device"]
   fn two_builds_at_once_each_get_their_own_errors() {
+    let _alone = alone();
     let graphics = Graphics::new().expect("a device opens");
     for _ in 0..40 {
       let start = Barrier::new(2);

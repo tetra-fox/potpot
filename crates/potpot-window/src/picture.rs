@@ -121,6 +121,7 @@ mod tests {
   #[test]
   #[ignore = "needs a graphics device"]
   fn a_picture_is_the_frame_in_rows_of_its_own_width_with_red_first() {
+    let _alone = crate::graphics::alone();
     let settings = Settings::new("Halves", [200.0, 100.0]);
     let params = vec![Param::free(Dial::linear([0.0, 1.0], 1.0, None, 2, ""))];
     let controls = vec![Control::new(0, Readout::new(4))];

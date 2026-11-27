@@ -3,6 +3,7 @@
 //! Most of these draw with a graphics device, so a plain test run leaves them out. `just
 //! gpu-test` runs them.
 
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use glam::{Mat4, Vec2, Vec3};
@@ -17,16 +18,29 @@ const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 /// Its rows are of a length wgpu copies as they are.
 const SIZE: [u32; 2] = [448, 256];
 
+/// The lock a test holds for as long as its graphics device lives.
+///
+/// The NVIDIA 595 Vulkan driver can deadlock when one device is destroyed while another thread
+/// builds pipelines on another: `vkDestroyDevice` holds the Vulkan loader's lock and waits for
+/// a driver thread that spins at its exit, and the other thread waits for the loader's lock.
+/// So the tests' devices live one at a time.
+// TODO: let the tests' devices live at once when the driver no longer deadlocks
+static ONE_DEVICE: Mutex<()> = Mutex::new(());
+
 /// A target that scenes are drawn on and read back from.
 struct Target {
   device: wgpu::Device,
   queue: wgpu::Queue,
   texture: wgpu::Texture,
   read: wgpu::Buffer,
+  /// The lock held while the device lives, let go of after it, as fields go in order.
+  _alone: MutexGuard<'static, ()>,
 }
 
 impl Target {
   fn new() -> Self {
+    // a test that failed while it held the lock has let go of its device all the same
+    let alone = ONE_DEVICE.lock().unwrap_or_else(PoisonError::into_inner);
     let instance = wgpu::Instance::default();
     let adapter =
       pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
@@ -61,6 +75,7 @@ impl Target {
       queue,
       texture,
       read,
+      _alone: alone,
     }
   }
 

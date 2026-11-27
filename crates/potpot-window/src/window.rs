@@ -1753,6 +1753,7 @@ mod tests {
   #[test]
   #[ignore = "needs a graphics device"]
   fn a_picture_patched_with_the_parts_of_each_frame_is_the_frame_read_back_whole() {
+    let _alone = crate::graphics::alone();
     let graphics = Graphics::new().expect("a device opens");
     let (device, queue) = (&graphics.device, &graphics.queue);
     // a panel one and a half times its size, in rows longer than their pixels
@@ -1829,6 +1830,7 @@ mod tests {
   #[test]
   #[ignore = "needs a graphics device"]
   fn windows_on_threads_of_their_own_each_read_back_their_own_frames_from_one_device() {
+    let _alone = crate::graphics::alone();
     let graphics = Graphics::new().expect("a device opens");
     let whole = [[0, 0, 2048, 2048]];
     std::thread::scope(|scope| {
