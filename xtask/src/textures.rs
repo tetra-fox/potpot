@@ -42,7 +42,7 @@ enum Source {
   /// `even` takes out the variation wider than [`EVEN_REACH`], such as stains, from its color
   /// and roughness, and keeps the fine detail.
   Photo { id: &'static str, even: bool },
-  /// Hammered paint, made by the bake: plateaus split by crevices over two tiling fields.
+  /// Hammered paint, made by the bake: shallow dishes of many sizes with raised rims.
   Hammered,
 }
 
@@ -52,16 +52,20 @@ const SOURCE_SIDE: usize = 1024;
 ///
 /// A set's color and roughness are divided by their mean over this many texels around each.
 const EVEN_REACH: usize = 24;
-/// The cells across one tile of hammered paint, of its two fields.
-///
-/// The first is of the plateaus, and the second splits some of them.
-const CELLS: [usize; 2] = [70, 150];
-/// How far from a border a crevice of hammered paint reaches, as a share of a cell.
-const CREVICE: f32 = 0.06;
-/// The most a plateau of hammered paint is tilted, as the slope of its facet.
-const TILT: f32 = 0.035;
-/// How steep the crevices of hammered paint are, as the slope across one large cell.
-const CREVICE_DEPTH: f32 = 0.006;
+/// The steps across one tile of the grid hammered paint's dishes are scattered over.
+const GRID: usize = 70;
+/// The most of the grid's points a place leaves out, where its dishes run largest.
+const LEFT_OUT: f32 = 0.75;
+/// The steps across one tile of the field that says where dishes run larger.
+const CLUSTERS: usize = 5;
+/// The radius of the smallest dishes of hammered paint, in grid steps.
+const RADIUS: f32 = 0.75;
+/// The grid steps to each side a place looks for the points nearest it.
+const SEARCH: i64 = 3;
+/// How far below a ridge between two dishes its rim reaches, in grid steps.
+const RIM: f32 = 0.03;
+/// How deep a dish of hammered paint is, as a share of its radius.
+const DISH_DEPTH: f32 = 0.1;
 /// The folder the sources are in, each `<ID>_1K-JPG_<map>.jpg` as ambientCG names them.
 const SOURCES: &str = "crates/potpot/assets/source";
 /// The color maps of every set, as one array.
@@ -256,84 +260,141 @@ fn blurred(map: &Map, dx: usize, dy: usize) -> Map {
 
 /// Returns the color, the way the relief faces and the roughness of hammered paint.
 ///
-/// Hammered paint dries into flat plateaus, one around each point of a tiling field of cells,
-/// split by thin crevices where two cells meet. A finer field splits some plateaus again with
-/// fainter crevices. Each plateau is a facet tilted a little its own way and is a little
-/// lighter or darker than the next, and the crevices are rough and dark where the paint pools.
+/// Hammered paint dries into shallow dishes with a narrow raised rim where two dishes meet. The
+/// dishes are cells around scattered points: most are small, a few are large, and they run
+/// larger in some places than others. Some rims are faint, which merges two dishes. The key
+/// light catches each dish on the side away from it and each rim on the side toward it, which
+/// is what the finish reads by, so the color is nearly even. The rims are a little smoother
+/// than the floors, so they glint.
 fn hammered() -> (Map, Map, Map) {
   let side = SOURCE_SIDE;
-  // for each texel, how far down toward a crevice it is, from zero on a plateau to one at a
-  // crevice's floor, how dark the crevice is there, the tone of the plateau and its tilt. the
-  // dark of a crevice is as strong as its cell has it, so the crevices do not all join into
-  // one net, and the finer field splits only some plateaus
-  let texels: Vec<(f32, f32, f32, Vec2)> = (0..side * side)
+  let field = Dishes::new();
+  // the height of each texel, in grid steps, how strong the rim is there, and its cell
+  let texels: Vec<(f32, f32, usize)> = (0..side * side)
     .map(|index| {
       let at = Vec2::new((index % side) as f32, (index / side) as f32) / side as f32;
-      let (large, cell) = cells(at, CELLS[0], 1);
-      let (small, part) = cells(at, CELLS[1], 2);
-      let strength = 0.35 + 0.65 * scattered(cell[0], cell[1], 9);
-      let split = 0.6 * scattered(part[0], part[1], 11);
-      let down = |border: f32| 1.0 - smoothstep(0.0, CREVICE, border);
-      let deep = down(large).max(down(small) * split);
-      let dark = (down(large) * strength).max(down(small) * split);
-      let random = |seed| scattered(cell[0], cell[1], seed) * 2.0 - 1.0;
-      let tilt = Vec2::new(random(13), random(17)) * TILT;
-      (
-        deep,
-        dark,
-        0.92 + 0.16 * scattered(cell[0], cell[1], 5),
-        tilt,
-      )
+      let near = field.near(at);
+      let rim = (1.0 - smoothstep(0.0, RIM, near.border)) * near.rim;
+      (near.height, rim, near.cell)
     })
     .collect();
-  let depth = |x: usize, y: usize| texels[(y % side) * side + x % side].0;
-  // the slopes over two texels, in depths a large cell's width
-  let per_cell = (side / CELLS[0]) as f32 / 2.0;
+  let height = |x: usize, y: usize| texels[(y % side) * side + x % side].0;
+  let texels_per_step = side as f32 / GRID as f32;
   let mut bent = Vec::with_capacity(side * side);
   let mut rough = Vec::with_capacity(side * side);
   let mut color = Vec::with_capacity(side * side);
-  for (index, &(deep, dark, tone, tilt)) in texels.iter().enumerate() {
+  for (index, &(_, rim, cell)) in texels.iter().enumerate() {
     let (x, y) = (index % side, index / side);
-    // the surface goes down into a crevice, and the picture's y runs up, its rows down. each
-    // plateau is a facet tilted its own way, which a light catches on some and not others
-    let across = -(depth(x + 1, y) - depth(x + side - 1, y)) * per_cell * CREVICE_DEPTH;
-    let up = -(depth(x, y + side - 1) - depth(x, y + 1)) * per_cell * CREVICE_DEPTH;
-    let facet = tilt * (1.0 - deep);
-    bent.push(Vec3::new(facet.x - across, facet.y - up, 1.0).normalize());
-    rough.push(Vec3::splat(0.3 + 0.35 * dark));
-    color.push(Vec3::splat(tone * (1.0 - 0.6 * dark)));
+    // slopes in heights a grid step, and the picture's y runs up, its rows down
+    let across = (height(x + 1, y) - height(x + side - 1, y)) * texels_per_step / 2.0;
+    let up = (height(x, y + side - 1) - height(x, y + 1)) * texels_per_step / 2.0;
+    bent.push(Vec3::new(-across, -up, 1.0).normalize());
+    rough.push(Vec3::splat(0.45 - 0.15 * rim));
+    let tone = 0.98 + 0.04 * scattered(cell as u32, 0, 5);
+    color.push(Vec3::splat(tone * (1.0 - 0.12 * rim)));
   }
   let map = |texels| Map { side, texels };
   (map(color), map(bent), map(rough))
 }
 
-/// Returns how far a place on the unit square is from the border of its cell, and the cell.
+/// The round dishes hammered paint dries into, over a tiling grid of [`GRID`] steps a side.
 ///
-/// The cells are those of a tiling field of `cells` points a side, each placed at random by
-/// `seed`, and a place is in the cell of the point nearest it. The distance is the second
-/// nearest point's less the nearest's, as a share of a cell, which is zero on a border. The
-/// field wraps, so it is the same at opposite edges of the square.
-fn cells(at: Vec2, cells: usize, seed: u32) -> (f32, [u32; 2]) {
-  let scaled = at * cells as f32;
-  let (cx, cy) = (scaled.x.floor() as i64, scaled.y.floor() as i64);
-  let wrap = |n: i64| n.rem_euclid(cells as i64) as u32;
-  let (mut nearest, mut next, mut cell) = (f32::MAX, f32::MAX, [0, 0]);
-  for dy in -2..=2 {
-    for dx in -2..=2 {
-      let (x, y) = (cx + dx, cy + dy);
-      let point = Vec2::new(
-        x as f32 + scattered(wrap(x), wrap(y), seed),
-        y as f32 + scattered(wrap(x), wrap(y), seed + 7),
-      );
-      let away = point.distance(scaled);
-      if away < nearest {
-        (next, nearest, cell) = (nearest, away, [wrap(x), wrap(y)]);
-      } else if away < next {
-        next = away;
+/// Each step of the grid holds at most one dish's middle. A smooth field that tiles leaves out
+/// more of them in some places, and grows the dishes there. Each dish's width is also drawn
+/// from a skewed spread, so most are small and a few are large. Where dishes overlap the
+/// surface is the deepest of them, so two meet in a ridge.
+#[derive(Debug)]
+struct Dishes {
+  /// Each grid step's dish, if it has one.
+  ///
+  /// A dish is its middle in the grid, its radius in grid steps and how strong its rim is.
+  points: Vec<Option<(Vec2, f32, f32)>>,
+}
+
+/// Where a place is among the dishes of hammered paint.
+#[derive(Clone, Copy, Debug)]
+struct Near {
+  /// The height of the surface there, in grid steps, zero where no dish reaches.
+  height: f32,
+  /// How far the place is below the ridge where its dish meets the next, in grid steps.
+  border: f32,
+  /// How strong the rim there is, from the two cells either side of it.
+  rim: f32,
+  /// The grid step its cell's point is in.
+  cell: usize,
+}
+
+impl Dishes {
+  /// Creates the points of the dishes.
+  fn new() -> Self {
+    let points = (0..GRID * GRID)
+      .map(|step| {
+        let (x, y) = ((step % GRID) as u32, (step / GRID) as u32);
+        let at = Vec2::new(x as f32, y as f32) / GRID as f32;
+        let cluster = clustered(at);
+        let kept = 1.0 - LEFT_OUT * cluster;
+        (scattered(x, y, 21) < kept).then(|| {
+          let place = Vec2::new(x as f32 + scattered(x, y, 1), y as f32 + scattered(x, y, 8));
+          let radius = RADIUS * (1.0 + 0.6 * cluster) * (0.8 + 1.2 * scattered(x, y, 3).powi(3));
+          let rim = 0.25 + 0.75 * scattered(x, y, 9);
+          (place, radius, rim)
+        })
+      })
+      .collect();
+    Self { points }
+  }
+
+  /// Returns where a place of the unit square is among the dishes.
+  ///
+  /// A place is in the deepest dish there. The grid wraps, so the dishes are the same at
+  /// opposite edges of the square.
+  fn near(&self, at: Vec2) -> Near {
+    let scaled = at * GRID as f32;
+    let (cx, cy) = (scaled.x.floor() as i64, scaled.y.floor() as i64);
+    let wrap = |n: i64| n.rem_euclid(GRID as i64);
+    let mut best = [(0.0, 0.0, 0); 2];
+    for dy in -SEARCH..=SEARCH {
+      for dx in -SEARCH..=SEARCH {
+        let (x, y) = (cx + dx, cy + dy);
+        let step = (wrap(y) * GRID as i64 + wrap(x)) as usize;
+        let Some((place, radius, rim)) = self.points[step] else {
+          continue;
+        };
+        // the middle as it lies in this copy of the grid
+        let place = place + Vec2::new((x - wrap(x)) as f32, (y - wrap(y)) as f32);
+        // a bowl as deep as it is wide, by DISH_DEPTH, that meets the surface at its radius
+        let out = (place.distance(scaled) / radius).min(1.0);
+        let depth = (out * out - 1.0) * radius * DISH_DEPTH;
+        if depth < best[0].0 {
+          best = [(depth, rim, step), best[0]];
+        } else if depth < best[1].0 {
+          best[1] = (depth, rim, step);
+        }
       }
     }
+    let [(deepest, rim, cell), (next, other_rim, _)] = best;
+    Near {
+      height: deepest,
+      border: next - deepest,
+      rim: (rim + other_rim) / 2.0,
+      cell,
+    }
   }
-  (next - nearest, cell)
+}
+
+/// Returns a smooth field from zero to one over the unit square, which tiles.
+///
+/// It is value noise on a lattice of [`CLUSTERS`] steps a side, eased between lattice points.
+fn clustered(at: Vec2) -> f32 {
+  let place = at * CLUSTERS as f32;
+  let (x, y) = (place.x.floor() as i64, place.y.floor() as i64);
+  let wrap = |n: i64| n.rem_euclid(CLUSTERS as i64) as u32;
+  let value = |dx: i64, dy: i64| scattered(wrap(x + dx), wrap(y + dy), 31);
+  let part = place - place.floor();
+  let ease = part * part * (Vec2::splat(3.0) - 2.0 * part);
+  let top = value(0, 0) + (value(1, 0) - value(0, 0)) * ease.x;
+  let foot = value(0, 1) + (value(1, 1) - value(0, 1)) * ease.x;
+  top + (foot - top) * ease.y
 }
 
 /// Returns zero below `low`, one above `high`, and a smooth step between.
@@ -477,13 +538,17 @@ mod tests {
   use super::*;
 
   #[test]
-  fn the_cells_tile() {
-    for count in CELLS {
-      for along in [0.0, 0.13, 0.5, 0.91] {
-        let (left, right) = (Vec2::new(0.0, along), Vec2::new(1.0, along));
-        let (top, foot) = (Vec2::new(along, 0.0), Vec2::new(along, 1.0));
-        assert!((cells(left, count, 1).0 - cells(right, count, 1).0).abs() < 1e-4);
-        assert!((cells(top, count, 1).0 - cells(foot, count, 1).0).abs() < 1e-4);
+  fn the_dishes_tile() {
+    let dishes = Dishes::new();
+    for along in [0.0, 0.13, 0.5, 0.91] {
+      let pairs = [
+        (Vec2::new(0.0, along), Vec2::new(1.0, along)),
+        (Vec2::new(along, 0.0), Vec2::new(along, 1.0)),
+      ];
+      for (one, other) in pairs {
+        let (one, other) = (dishes.near(one), dishes.near(other));
+        assert!((one.border - other.border).abs() < 1e-4);
+        assert_eq!(one.cell, other.cell);
       }
     }
   }

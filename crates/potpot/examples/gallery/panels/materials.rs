@@ -36,7 +36,7 @@ pub(super) fn materials(look: Look) -> Scene {
     ("anodized", Material::anodized(Vec3::new(0.2, 0.21, 0.23))),
     (
       "hammertone",
-      Material::hammertone(Vec3::new(0.3, 0.42, 0.5)),
+      Material::hammertone(Vec3::new(0.6, 0.62, 0.65)),
     ),
     ("soft_touch", Material::soft_touch(Vec3::splat(0.05))),
     ("bakelite", Material::bakelite(Vec3::splat(0.03))),
