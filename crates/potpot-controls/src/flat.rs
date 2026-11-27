@@ -201,7 +201,7 @@ impl Flat {
   ///
   /// # Panics
   ///
-  /// Panics if the length of a dash is below zero or the gap is not above zero.
+  /// Panics if the length of a dash is not at least zero or the gap is not above zero.
   pub fn dashed(&mut self, points: &[Point], weight: f32, dashes: Dashes, color: Color) {
     let Dashes { length, gap } = dashes;
     assert!(
@@ -223,9 +223,9 @@ impl Flat {
     };
     // the point a distance along the curve is at, and the line it is on
     let place = |along: f32| {
-      let line = (ends.partition_point(|&end| end < along)).min(runs.len() - 1);
+      let line = ends.partition_point(|&end| end < along);
       let run = runs[line];
-      let into = along - (ends[line] - run.length);
+      let into = along - line.checked_sub(1).map_or(0.0, |before| ends[before]);
       let at = [
         run.from[0] + run.way[0] * into,
         run.from[1] + run.way[1] * into,
