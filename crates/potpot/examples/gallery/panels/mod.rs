@@ -77,6 +77,14 @@ pub fn on_panel(on_page: Mat4) -> Mat4 {
   Mat4::from_translation(Vec3::new(0.0, TABS, 0.0)) * on_page
 }
 
+/// Returns a point on a page as a point on the panel.
+///
+/// A picture's shapes are in the panel's points, which the page's objects are moved to only
+/// after the page is made.
+fn on_panel_point(on_page: Vec2) -> Vec2 {
+  on_page + Vec2::new(0.0, TABS)
+}
+
 /// Returns the panel showing a page, and its objects' targets.
 ///
 /// The page is under a strip with a tab for every page, whose own tab is in and lit. A press on
@@ -95,6 +103,7 @@ pub fn panel(page: usize, look: Look) -> (Scene, Vec<Option<Target>>) {
     mesh: Arc::new(parts::plate(PAGE.x, TABS, 6.0)),
     transform: Mat4::IDENTITY,
     material: Material::anodized(Vec3::new(0.2, 0.21, 0.23)),
+    picture: Vec::new(),
   };
   scene.objects.push(strip);
   targets.push(None);
@@ -110,16 +119,19 @@ pub fn panel(page: usize, look: Look) -> (Scene, Vec<Option<Target>>) {
         mesh: Arc::clone(&seat),
         transform: Mat4::from_translation(at.extend(0.0)),
         material: Material::matte(SEAT),
+        picture: Vec::new(),
       },
       Object {
         mesh: Arc::clone(&body),
         transform: tabs.transform(middle.x, middle.y, tab, shown),
         material: key(shown),
+        picture: Vec::new(),
       },
       Object {
         mesh: Arc::new(name),
         transform: tabs.name(middle.x, middle.y, tab, shown),
         material: key_ink(),
+        picture: Vec::new(),
       },
     ]);
     targets.extend([None, Some(Target::Page(tab)), Some(Target::Page(tab))]);
@@ -149,6 +161,7 @@ fn screws() -> [Object; 4] {
     mesh: Arc::clone(&screw),
     transform: Mat4::from_translation(Vec3::new(x, y, 0.0)) * Mat4::from_rotation_z(x * 0.3 + y),
     material: Material::chrome(Vec3::splat(0.75)),
+    picture: Vec::new(),
   })
 }
 
@@ -183,6 +196,7 @@ impl Build {
       mesh: Arc::clone(mesh),
       transform,
       material,
+      picture: Vec::new(),
     });
   }
 

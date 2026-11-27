@@ -498,10 +498,10 @@ struct Synth {
   targets: Vec<Option<Target>>,
   /// Everything that never moves or changes.
   fixed: Drawn,
-  /// The material of each screen's face.
+  /// The place of each screen's face among the objects that never move.
   ///
   /// They are the scope's, the response's and the envelope's.
-  glasses: [Material; 3],
+  faces: [usize; 3],
   scope: Picture<[f32; 6]>,
   response: Picture<[f32; 2]>,
   envelope: Picture<([f32; 4], Option<usize>)>,
@@ -552,12 +552,13 @@ impl Synth {
       ("FILTER", RESPONSE),
       ("ENVELOPE", ENVELOPE),
     ];
-    let glasses = sections.map(|_| shared::glass());
     let faces = sections.map(|(_, (x, width))| [x - width / 2.0, x + width / 2.0]);
-    for ((name, (x, width)), glass) in sections.into_iter().zip(glasses) {
+    let mut screen_faces = [0; 3];
+    for ((name, (x, width)), face) in sections.into_iter().zip(&mut screen_faces) {
       let (screen, middle) = (screen(width), Vec2::new(x, SCREEN_Y));
       fixed.letters(name, Vec2::new(x, 26.0), 8.0, ink);
-      fixed.put(screen.face(), middle, glass);
+      *face = fixed.objects.len();
+      fixed.put(screen.face(), middle, shared::glass());
       fixed.put(screen.bezel(), middle, Material::glossy(shared::BLACK));
     }
     let cut = |fixed: &mut Drawn, half: Vec2, middle: Vec2| {
@@ -646,7 +647,7 @@ impl Synth {
       renderer: Renderer::new(gpu.device, gpu.format),
       targets: Vec::new(),
       fixed,
-      glasses,
+      faces: screen_faces,
       scope: Picture::new(),
       response: Picture::new(),
       envelope: Picture::new(),
@@ -753,31 +754,30 @@ impl Synth {
     }
 
     // each screen's picture is made again only when the parameters it shows have moved
-    let [scope_glass, response_glass, envelope_glass] = self.glasses;
-    let middle = |(x, _): (f32, f32)| Vec2::new(x, SCREEN_Y);
     let of = |parameters: [usize; 4]| parameters.map(|parameter| values[parameter]);
     let [wave, tune, cutoff, resonance] = of([WAVE, TUNE, CUTOFF, RESONANCE]);
     let source = [wave, tune, cutoff, resonance, feed[PITCH], feed[STRUCK]];
-    (self.scope).show(source, scope, middle(SCOPE), scope_glass, 0);
+    (self.scope).show(source, scope);
     let source = [values[CUTOFF], values[RESONANCE]];
-    (self.response).show(source, response, middle(RESPONSE), response_glass, 0);
+    (self.response).show(source, response);
     let source = (of(STAGES), held.and_then(dot_of));
-    (self.envelope).show(source, envelope, middle(ENVELOPE), envelope_glass, 0);
-    let (source, under) = (
-      (of(STAGES), feed[ALONG], feed[LEVEL]),
-      self.envelope.objects.len(),
-    );
-    (self.rider).show(source, rider, middle(ENVELOPE), envelope_glass, under);
+    (self.envelope).show(source, envelope);
+    (self.rider).show((of(STAGES), feed[ALONG], feed[LEVEL]), rider);
+    let [scope_face, response_face, envelope_face] = self.faces;
     let pictures = [
-      (&self.scope.objects, SCOPE, GREEN),
-      (&self.response.objects, RESPONSE, CYAN),
-      (&self.envelope.objects, ENVELOPE, AMBER),
+      (scope_face, vec![self.scope.layer()], SCOPE, GREEN),
+      (response_face, vec![self.response.layer()], RESPONSE, CYAN),
+      (
+        envelope_face,
+        vec![self.envelope.layer(), self.rider.layer()],
+        ENVELOPE,
+        AMBER,
+      ),
     ];
-    for (picture, (x, width), [red, green, blue, _]) in pictures {
-      drawn.extend(picture.iter().cloned());
+    for (face, picture, (x, width), [red, green, blue, _]) in pictures {
+      drawn.objects[face].picture = picture;
       lamps.extend(screen(width).lamps(x, SCREEN_Y, Vec3::new(red, green, blue), 0.8));
     }
-    drawn.extend(self.rider.objects.iter().cloned());
 
     let scene = Scene {
       size: SIZE.into(),

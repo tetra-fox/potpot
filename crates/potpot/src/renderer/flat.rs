@@ -1,6 +1,7 @@
 //! A renderer of [`Flat`] shapes.
 //!
-//! The shapes go straight onto a target, over whatever a skin has drawn there.
+//! The shapes go straight onto a target, over whatever is drawn there already. The same
+//! pipeline draws a window's shapes and the pictures of a scene.
 
 use std::mem::size_of;
 
@@ -121,52 +122,101 @@ impl Corner {
   }
 }
 
+/// The way the shapes' points land on the pixels of their place.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Mapping {
+  /// The pixels to a point, across and down.
+  pub(crate) scale: [f32; 2],
+  /// The pixel the panel's top left lands on, from the place's top left.
+  pub(crate) shift: [f32; 2],
+  /// Whether the edges of lines and spans are left rough.
+  ///
+  /// A pixel that an edge covers in part is then drawn whole or not at all.
+  pub(crate) rough: bool,
+}
+
+impl Mapping {
+  /// Returns the mapping of a panel of `size` points over the whole of a place.
+  fn over(size: Point, place: [u32; 4]) -> Self {
+    Self {
+      scale: [0, 1].map(|axis| place[axis + 2] as f32 / size[axis]),
+      shift: [0.0; 2],
+      rough: false,
+    }
+  }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 struct Options {
-  size: [f32; 2],
+  /// The pixels to a point, then the pixel the panel's top left lands on.
+  mapping: [f32; 4],
+  /// The width and height of the shapes' place in pixels.
   pixels: [f32; 2],
   /// The left and top of the shapes' place in the target.
   ///
   /// They are in the target's pixels.
   origin: [f32; 2],
-  /// One as its first number when the target encodes sRGB itself.
-  options: [f32; 2],
+  /// The target's encoding and the edges' roughness.
+  ///
+  /// The first is one when the target encodes sRGB itself, and the second one when edges are
+  /// left rough.
+  options: [f32; 4],
 }
 
-/// The GPU resources that drawing [`Flat`] shapes takes.
+impl Options {
+  fn new(mapping: Mapping, place: [u32; 4], target_encodes: bool) -> Self {
+    let [left, top, width, height] = place.map(|side| side as f32);
+    let ([across, down], [x, y]) = (mapping.scale, mapping.shift);
+    Self {
+      mapping: [across, down, x, y],
+      pixels: [width, height],
+      origin: [left, top],
+      options: [
+        f32::from(u8::from(target_encodes)),
+        f32::from(u8::from(mapping.rough)),
+        0.0,
+        0.0,
+      ],
+    }
+  }
+}
+
+/// The pipeline that draws shapes onto targets of one format.
 #[derive(Debug)]
-pub(crate) struct FlatRenderer {
+pub(crate) struct Pipeline {
   pipeline: wgpu::RenderPipeline,
-  options: wgpu::Buffer,
-  group: wgpu::BindGroup,
-  corners: wgpu::Buffer,
-  /// The number of corners the buffer has room for.
-  room: usize,
-  /// The shapes whose corners the corner buffer holds.
-  ///
-  /// [`FlatRenderer::prepare`] writes the buffer only when it is given other shapes.
-  held: Flat,
-  /// The contents of the options buffer.
-  ///
-  /// [`FlatRenderer::prepare`] writes the buffer only when the options differ from them.
-  held_options: Options,
-  /// The place on the target the shapes last prepared go on.
-  place: [u32; 4],
+  layout: wgpu::BindGroupLayout,
   target_encodes: bool,
 }
 
-impl FlatRenderer {
-  /// Creates a renderer for targets of one format.
+/// What one list of shapes is drawn from: its corners and its options.
+#[derive(Debug)]
+pub(crate) struct Drawing {
+  options: wgpu::Buffer,
+  group: wgpu::BindGroup,
+  corners: wgpu::Buffer,
+  /// The number of corners the corner buffer has room for.
+  room: usize,
+  /// The number of corners it holds.
+  count: u32,
+  /// The contents of the options buffer.
   ///
-  /// `target` is the format of the textures [`FlatRenderer::render`] draws onto.
+  /// The buffer is written only when the options differ from them.
+  held_options: Options,
+  /// The place on the target the shapes go on.
+  place: [u32; 4],
+}
+
+impl Pipeline {
+  /// Creates the pipeline for targets of `target`'s format.
   pub(crate) fn new(device: &wgpu::Device, target: wgpu::TextureFormat) -> Self {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-      label: Some("controls flat"),
+      label: Some("potpot flat"),
       source: wgpu::ShaderSource::Wgsl(source().into()),
     });
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-      label: Some("controls flat"),
+      label: Some("potpot flat"),
       entries: &[wgpu::BindGroupLayoutEntry {
         binding: 0,
         visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
@@ -178,25 +228,11 @@ impl FlatRenderer {
         count: None,
       }],
     });
-    let options = device.create_buffer(&wgpu::BufferDescriptor {
-      label: Some("controls flat"),
-      size: size_of::<Options>() as u64,
-      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-      mapped_at_creation: false,
-    });
-    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-      label: Some("controls flat"),
-      layout: &layout,
-      entries: &[wgpu::BindGroupEntry {
-        binding: 0,
-        resource: options.as_entire_binding(),
-      }],
-    });
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-      label: Some("controls flat"),
+      label: Some("potpot flat"),
       layout: Some(
         &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-          label: Some("controls flat"),
+          label: Some("potpot flat"),
           bind_group_layouts: &[&layout],
           push_constant_ranges: &[],
         }),
@@ -230,28 +266,158 @@ impl FlatRenderer {
     });
     Self {
       pipeline,
-      options,
-      group,
-      corners: corner_buffer(device, 0),
-      room: 0,
-      held: Flat::default(),
-      place: [0; 4],
-      // a new buffer is all zeros
-      held_options: Options::zeroed(),
+      layout,
       target_encodes: target.is_srgb(),
     }
   }
 
-  /// Returns the options that shapes are drawn with on a place.
+  /// Creates a drawing with no shapes, to be drawn by this pipeline.
+  pub(crate) fn drawing(&self, device: &wgpu::Device) -> Drawing {
+    let options = device.create_buffer(&wgpu::BufferDescriptor {
+      label: Some("potpot flat"),
+      size: size_of::<Options>() as u64,
+      usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+      mapped_at_creation: false,
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+      label: Some("potpot flat"),
+      layout: &self.layout,
+      entries: &[wgpu::BindGroupEntry {
+        binding: 0,
+        resource: options.as_entire_binding(),
+      }],
+    });
+    Drawing {
+      options,
+      group,
+      corners: corner_buffer(device, 0),
+      room: 0,
+      count: 0,
+      // a new buffer is all zeros
+      held_options: Options::zeroed(),
+      place: [0; 4],
+    }
+  }
+
+  /// Returns the options a drawing is drawn with.
+  fn options(&self, mapping: Mapping, place: [u32; 4]) -> Options {
+    Options::new(mapping, place, self.target_encodes)
+  }
+
+  /// Draws a drawing onto its place on the target.
   ///
-  /// `size` and `place` are as [`FlatRenderer::prepare`] takes them.
-  fn options(&self, size: Point, place: [u32; 4]) -> Options {
-    let [left, top, width, height] = place.map(|side| side as f32);
-    Options {
-      size,
-      pixels: [width, height],
-      origin: [left, top],
-      options: [f32::from(u8::from(self.target_encodes)), 0.0],
+  /// Everything outside the place stays as it was. With `clear`, the place is cleared to no
+  /// color first.
+  pub(crate) fn draw(
+    &self,
+    encoder: &mut wgpu::CommandEncoder,
+    target: &wgpu::TextureView,
+    drawing: &Drawing,
+    clear: bool,
+  ) {
+    let [x, y, width, height] = drawing.place;
+    if (drawing.count == 0 && !clear) || width == 0 || height == 0 {
+      return;
+    }
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+      label: Some("potpot flat"),
+      color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+        view: target,
+        depth_slice: None,
+        resolve_target: None,
+        ops: wgpu::Operations {
+          load: if clear {
+            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+          } else {
+            wgpu::LoadOp::Load
+          },
+          store: wgpu::StoreOp::Store,
+        },
+      })],
+      depth_stencil_attachment: None,
+      timestamp_writes: None,
+      occlusion_query_set: None,
+    });
+    if drawing.count == 0 {
+      return;
+    }
+    pass.set_pipeline(&self.pipeline);
+    pass.set_bind_group(0, &drawing.group, &[]);
+    pass.set_viewport(x as f32, y as f32, width as f32, height as f32, 0.0, 1.0);
+    pass.set_scissor_rect(x, y, width, height);
+    pass.set_vertex_buffer(0, drawing.corners.slice(..));
+    pass.draw(0..drawing.count, 0..1);
+  }
+}
+
+impl Drawing {
+  /// Takes the options the shapes are drawn with next and the place they go on.
+  fn set_options(&mut self, queue: &wgpu::Queue, options: Options, place: [u32; 4]) {
+    self.place = place;
+    if options != self.held_options {
+      queue.write_buffer(&self.options, 0, bytemuck::bytes_of(&options));
+      self.held_options = options;
+    }
+  }
+
+  /// Takes the shapes to draw next, first drawn first.
+  fn set_shapes<'a>(
+    &mut self,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    shapes: impl IntoIterator<Item = &'a Shape>,
+  ) {
+    let corners: Vec<Corner> = shapes.into_iter().flat_map(Corner::of).collect();
+    if corners.len() > self.room {
+      self.room = corners.len().next_power_of_two();
+      self.corners = corner_buffer(device, self.room);
+    }
+    queue.write_buffer(&self.corners, 0, bytemuck::cast_slice(&corners));
+    self.count = corners.len() as u32;
+  }
+
+  /// Takes shapes and the way they are drawn on the place they go on.
+  ///
+  /// `place` is `[left, top, width, height]` in the pixels of the target the drawing is drawn
+  /// on, and has to lie on it.
+  pub(crate) fn set<'a>(
+    &mut self,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    pipeline: &Pipeline,
+    shapes: impl IntoIterator<Item = &'a Shape>,
+    mapping: Mapping,
+    place: [u32; 4],
+  ) {
+    self.set_options(queue, pipeline.options(mapping, place), place);
+    self.set_shapes(device, queue, shapes);
+  }
+}
+
+/// The GPU resources that drawing [`Flat`] shapes over a panel takes.
+///
+/// The shapes are drawn with their edges smoothed, in colors blended over what the target
+/// shows. [`FlatRenderer::prepare`] takes the shapes and [`FlatRenderer::render`] draws them.
+#[derive(Debug)]
+pub struct FlatRenderer {
+  pipeline: Pipeline,
+  drawing: Drawing,
+  /// The shapes whose corners the drawing holds.
+  ///
+  /// [`FlatRenderer::prepare`] writes them only when it is given other shapes.
+  held: Flat,
+}
+
+impl FlatRenderer {
+  /// Creates a renderer for targets of one format.
+  ///
+  /// `target` is the format of the textures [`FlatRenderer::render`] draws onto.
+  pub fn new(device: &wgpu::Device, target: wgpu::TextureFormat) -> Self {
+    let pipeline = Pipeline::new(device, target);
+    Self {
+      drawing: pipeline.drawing(device),
+      pipeline,
+      held: Flat::default(),
     }
   }
 
@@ -260,9 +426,9 @@ impl FlatRenderer {
   /// `flat`, `size` and `place` are as [`FlatRenderer::prepare`] takes them, and each rectangle
   /// is given as `place` is. Together they hold every pixel that the shapes are drawn otherwise
   /// in than the ones last prepared, and there is none if they are drawn the same.
-  pub(crate) fn differing(&self, flat: &Flat, size: Point, place: [u32; 4]) -> Vec<[u32; 4]> {
-    let options = self.options(size, place);
-    if options == self.held_options {
+  pub fn differing(&self, flat: &Flat, size: Point, place: [u32; 4]) -> Vec<[u32; 4]> {
+    let options = self.pipeline.options(Mapping::over(size, place), place);
+    if options == self.drawing.held_options {
       differing(self.held.shapes(), flat.shapes(), &options)
     } else {
       vec![place]
@@ -273,7 +439,7 @@ impl FlatRenderer {
   ///
   /// `size` is the panel's width and height in points. `place` is `[left, top, width, height]`
   /// in the pixels of the target [`FlatRenderer::render`] is given, and has to lie on it.
-  pub(crate) fn prepare(
+  pub fn prepare(
     &mut self,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -281,19 +447,10 @@ impl FlatRenderer {
     size: Point,
     place: [u32; 4],
   ) {
-    let options = self.options(size, place);
-    self.place = place;
-    if options != self.held_options {
-      queue.write_buffer(&self.options, 0, bytemuck::bytes_of(&options));
-      self.held_options = options;
-    }
+    let options = self.pipeline.options(Mapping::over(size, place), place);
+    self.drawing.set_options(queue, options, place);
     if *flat != self.held {
-      let corners: Vec<Corner> = flat.shapes().iter().flat_map(Corner::of).collect();
-      if corners.len() > self.room {
-        self.room = corners.len().next_power_of_two();
-        self.corners = corner_buffer(device, self.room);
-      }
-      queue.write_buffer(&self.corners, 0, bytemuck::cast_slice(&corners));
+      self.drawing.set_shapes(device, queue, flat.shapes());
       self.held.clone_from(flat);
     }
   }
@@ -301,33 +458,8 @@ impl FlatRenderer {
   /// Draws the shapes last prepared onto the target.
   ///
   /// They go on the place they were prepared for, and everything outside it stays as it was.
-  pub(crate) fn render(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
-    let count = self.held.shapes().len() as u32 * 6;
-    let [x, y, width, height] = self.place;
-    if count == 0 || width == 0 || height == 0 {
-      return;
-    }
-    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-      label: Some("controls flat"),
-      color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-        view: target,
-        depth_slice: None,
-        resolve_target: None,
-        ops: wgpu::Operations {
-          load: wgpu::LoadOp::Load,
-          store: wgpu::StoreOp::Store,
-        },
-      })],
-      depth_stencil_attachment: None,
-      timestamp_writes: None,
-      occlusion_query_set: None,
-    });
-    pass.set_pipeline(&self.pipeline);
-    pass.set_bind_group(0, &self.group, &[]);
-    pass.set_viewport(x as f32, y as f32, width as f32, height as f32, 0.0, 1.0);
-    pass.set_scissor_rect(x, y, width, height);
-    pass.set_vertex_buffer(0, self.corners.slice(..));
-    pass.draw(0..count, 0..1);
+  pub fn render(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
+    self.pipeline.draw(encoder, target, &self.drawing, false);
   }
 }
 
@@ -402,7 +534,8 @@ fn differing(before: &[Shape], now: &[Shape], options: &Options) -> Vec<[u32; 4]
 /// It is its left, top, right and foot in pixels of the shapes' place, [`PAST`] past the shape
 /// as `flat.wgsl` draws it.
 fn reach(shape: &Shape, options: &Options) -> [f32; 4] {
-  let scale = [0, 1].map(|axis| options.pixels[axis] / options.size[axis]);
+  let [across, down, x, y] = options.mapping;
+  let (scale, shift) = ([across, down], [x, y]);
   let (min, max, past) = match *shape {
     Shape::Rect { min, max, .. } => (min, max, PAST),
     Shape::Line {
@@ -421,16 +554,16 @@ fn reach(shape: &Shape, options: &Options) -> [f32; 4] {
     ),
   };
   [
-    min[0] * scale[0] - past,
-    min[1] * scale[1] - past,
-    max[0] * scale[0] + past,
-    max[1] * scale[1] + past,
+    min[0] * scale[0] + shift[0] - past,
+    min[1] * scale[1] + shift[1] - past,
+    max[0] * scale[0] + shift[0] + past,
+    max[1] * scale[1] + shift[1] + past,
   ]
 }
 
 fn corner_buffer(device: &wgpu::Device, room: usize) -> wgpu::Buffer {
   device.create_buffer(&wgpu::BufferDescriptor {
-    label: Some("controls flat"),
+    label: Some("potpot flat"),
     size: (room.max(1) * size_of::<Corner>()) as u64,
     usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
     mapped_at_creation: false,
@@ -444,12 +577,8 @@ mod tests {
   #[test]
   fn shapes_differ_in_a_rectangle_around_those_that_are_not_the_same() {
     // a panel of 100 by 50 points on 200 by 100 pixels, 10 and 20 into the target
-    let options = Options {
-      size: [100.0, 50.0],
-      pixels: [200.0, 100.0],
-      origin: [10.0, 20.0],
-      options: [0.0; 2],
-    };
+    let place = [10, 20, 200, 100];
+    let options = Options::new(Mapping::over([100.0, 50.0], place), place, false);
     let ink = [1.0; 4];
     let mut before = Flat::default();
     before.rect([0.0, 0.0], [100.0, 50.0], ink);
@@ -501,12 +630,8 @@ mod tests {
 
   #[test]
   fn shapes_that_differ_far_apart_differ_in_rectangles_of_their_own() {
-    let options = Options {
-      size: [400.0, 200.0],
-      pixels: [400.0, 200.0],
-      origin: [0.0; 2],
-      options: [0.0; 2],
-    };
+    let place = [0, 0, 400, 200];
+    let options = Options::new(Mapping::over([400.0, 200.0], place), place, false);
     let ink = [1.0; 4];
     // two values written far apart with a line between them, the first of them a stroke longer
     let written = |first: &[f32], second: f32| {

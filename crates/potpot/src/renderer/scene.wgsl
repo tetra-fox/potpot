@@ -36,7 +36,9 @@ struct Lamp {
 // more sample of each pixel to go into its mean
 @group(0) @binding(1) var<uniform> refine: vec4<u32>;
 // how many samples each pixel's mean holds so far, which is the index of the sample being drawn
-@group(2) @binding(0) var counted: texture_2d<f32>;
+@group(3) @binding(0) var counted: texture_2d<f32>;
+// the picture the object being drawn shows, its color in linear light times its cover
+@group(2) @binding(0) var picture_map: texture_2d<f32>;
 @group(1) @binding(0) var shadow_map: texture_depth_2d;
 @group(1) @binding(1) var shadow_sampler: sampler_comparison;
 @group(1) @binding(2) var height_map: texture_depth_2d;
@@ -113,6 +115,9 @@ struct Placed {
   // of it covers, z one when it wraps around the object's own z axis, w the pitch of a
   // display's cells or zero
   @location(10) textures: vec4<f32>,
+  // xy times the x and y of a point in the view's clip space, plus zw, is the texel of the
+  // picture at the point
+  @location(11) picture: vec4<f32>,
 }
 
 struct Lit {
@@ -127,6 +132,7 @@ struct Lit {
   @location(6) axis: vec3<f32>,
   @location(7) anisotropy: vec2<f32>,
   @location(9) textures: vec4<f32>,
+  @location(10) @interpolate(flat) picture: vec4<f32>,
   // `world` taken where the triangle covers the pixel, which is a place on the triangle for a
   // pixel covered in part too. the bounce map is read at it
   @location(8) @interpolate(perspective, centroid) on_triangle: vec3<f32>,
@@ -168,6 +174,7 @@ fn seen_through(view: mat4x4<f32>, corner: Corner, placed: Placed) -> Lit {
   lit.axis = placed.model_2.xyz;
   lit.anisotropy = placed.anisotropy;
   lit.textures = placed.textures;
+  lit.picture = placed.picture;
   return lit;
 }
 
@@ -314,6 +321,25 @@ fn lamp_facing(normal: vec3<f32>, toward: vec3<f32>, radius: f32) -> f32 {
   return max(lit, 0.0) / (PI * sin_sigma2);
 }
 
+// the picture at a point of an object, or no color outside it
+fn picture_at(world: vec3<f32>, picture: vec4<f32>) -> vec4<f32> {
+  let seen = globals.view * vec4<f32>(world, 1.0);
+  let texel = floor(seen.xy * picture.xy + picture.zw);
+  let size = vec2<f32>(textureDimensions(picture_map));
+  if any(texel < vec2<f32>(0.0)) || any(texel >= size) {
+    return vec4<f32>(0.0);
+  }
+  return textureLoad(picture_map, vec2<i32>(texel), 0);
+}
+
+// the base color and emission of a surface with its picture over it: the color covered by
+// the picture's cover, and lit by itself as far as the picture covers
+fn pictured(lit: Lit) -> vec4<f32> {
+  let shown = picture_at(lit.world, lit.picture);
+  let base = decode(lit.color.rgb) * (1.0 - shown.a) + shown.rgb;
+  return vec4<f32>(base, lit.color.a + (1.0 - lit.color.a) * shown.a);
+}
+
 // the light a surface gives off to what is next to it: its color under the light, without
 // the shine, the corners or the lamps' shadows, which the little that lands does not show
 @fragment
@@ -327,8 +353,9 @@ fn bounce_fragment(lit: Lit) -> @location(0) vec4<f32> {
     let toward = lamp.at.xyz - lit.world;
     lighting += lamp_light(lit.world, lamp) * lamp_facing(normal, toward, lamp.color.w);
   }
-  let base = decode(lit.color.rgb);
-  let emission = lit.color.a;
+  let colored = pictured(lit);
+  let base = colored.rgb;
+  let emission = colored.a;
   let given = base * (1.0 - lit.finish.x) * lighting * (1.0 - emission) + base * emission * EMITTED;
   return vec4<f32>(given, lit.world.z);
 }
@@ -751,7 +778,8 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
   // the texture layer, whose color and roughness are scaled to a mean of one, so that the
   // material's own say how light and how rough the surface is
   var relief = flat_normal;
-  var tinted = decode(lit.color.rgb);
+  let colored = pictured(lit);
+  var tinted = colored.rgb;
   var given_roughness = lit.finish.y;
   let moved = mat2x3<f32>(dpdx(lit.world), dpdy(lit.world));
   if lit.textures.x > 0.0 {
@@ -763,7 +791,7 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
   }
   let rough = textured(relief, lit.world, lit.texture.x, lit.texture.y);
   let base = tinted * (1.0 + rough.w);
-  let emission = lit.color.a;
+  let emission = colored.a;
   let metallic = lit.finish.x;
   // the relief and grain bend the normal from pixel to pixel too, which widens the highlight
   // the same way

@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use glam::{Mat4, Vec2, Vec3};
+use potpot_controls::flat::Flat;
 
 use crate::material::Material;
 use crate::mesh::Mesh;
@@ -37,6 +38,7 @@ include!("default_light.rs");
 ///     )),
 ///     transform: Mat4::IDENTITY,
 ///     material: Material::matte(Vec3::ONE),
+///     picture: Vec::new(),
 ///   }],
 ///   lamps: Vec::new(),
 /// };
@@ -210,6 +212,20 @@ pub struct Object {
   pub transform: Mat4,
   /// The material of its surface.
   pub material: Material,
+  /// The picture shown on its surface, as layers of flat shapes drawn first to last.
+  ///
+  /// The shapes are in the panel's points and are drawn as a
+  /// [`FlatRenderer`](crate::FlatRenderer) draws them, at the scale of the scene's picture, with
+  /// each layer blended over the ones before it. They lie on the object where it is highest and
+  /// are seen from the viewer, cut off at the edges of the object as it is seen. Their edges are
+  /// as smooth as the scene's [`Look`] has them. The picture covers the material's color by its
+  /// cover and lights itself as far as it covers, so it takes the material's finish, cells and
+  /// haze. An empty list shows none.
+  ///
+  /// A picture whose layers are each the same allocation as in the scene drawn last, or hold
+  /// the same shapes, is not drawn again. A change of the picture alone costs the drawing of
+  /// where the object is seen.
+  pub picture: Vec<Arc<Flat>>,
 }
 
 impl Scene {

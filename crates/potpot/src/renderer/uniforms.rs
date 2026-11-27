@@ -128,15 +128,21 @@ pub(super) struct Placed {
   /// tile covers, one when the set wraps around the object's own z axis, and the pitch of the
   /// cells of a display.
   textures: [f32; 4],
+  /// The way a point of the view's clip space is found in the object's picture.
+  ///
+  /// The texel of the picture at a point is its x and y times the first two, plus the last two.
+  /// It is all zeros for an object with no picture.
+  pub(super) picture: [f32; 4],
 }
 
 impl Placed {
-  /// The four columns of the model and then the five parts of the material.
+  /// The four columns of the model, the five parts of the material and the picture's place.
   ///
   /// They come after the two locations a vertex takes.
-  const ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
+  const ATTRIBUTES: [wgpu::VertexAttribute; 10] = wgpu::vertex_attr_array![
     2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4,
-    6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x2, 10 => Float32x4
+    6 => Float32x4, 7 => Float32x4, 8 => Float32x4, 9 => Float32x2, 10 => Float32x4,
+    11 => Float32x4
   ];
 
   pub(super) fn of(object: &Object) -> Self {
@@ -179,6 +185,7 @@ impl Placed {
             material.pitch,
           ]
         }),
+      picture: [0.0; 4],
     }
   }
 

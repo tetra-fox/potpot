@@ -79,6 +79,7 @@ impl Drawn {
       mesh: Arc::clone(mesh),
       transform,
       material,
+      picture: Vec::new(),
     });
     self.targets.push(target);
   }
@@ -296,40 +297,34 @@ pub fn dot_at(dots: &[[f32; 2]], at: [f32; 2], reach: f32) -> Option<usize> {
     .rposition(|dot| (at[0] - dot[0]).hypot(at[1] - dot[1]) <= reach)
 }
 
-/// A picture on a screen, with the objects that show it.
+/// A layer of a screen's picture, kept with the source it was drawn from.
 ///
-/// It keeps the source it was drawn from, and is drawn and its objects made again when it is
-/// shown from a source that differs. So a frame with the same pictures costs the renderer no
-/// drawing, and one where a single picture is new makes that picture's objects alone.
+/// It is drawn again only when it is shown from a source that differs. So a frame with the same
+/// pictures hands the renderer the same layers, which it draws nothing of.
 pub struct Picture<Source> {
   source: Option<Source>,
-  pub objects: Vec<Object>,
+  layer: Arc<Flat>,
 }
 
 impl<Source: PartialEq> Picture<Source> {
   pub fn new() -> Self {
     Self {
       source: None,
-      objects: Vec::new(),
+      layer: Arc::default(),
     }
   }
 
-  /// Shows the picture that `flat` draws from `source`.
-  ///
-  /// The picture is on the screen at `middle`, whose face is of `glass`, over `under` objects
-  /// already on that screen.
-  pub fn show(
-    &mut self,
-    source: Source,
-    flat: impl FnOnce(&Source) -> Flat,
-    middle: Vec2,
-    glass: Material,
-    under: usize,
-  ) {
+  /// Shows the layer that `flat` draws from `source`.
+  pub fn show(&mut self, source: Source, flat: impl FnOnce(&Source) -> Flat) {
     if self.source.as_ref() != Some(&source) {
-      self.objects = parts::picture(&flat(&source), middle.x, middle.y, glass, under);
+      self.layer = Arc::new(flat(&source));
       self.source = Some(source);
     }
+  }
+
+  /// Returns the layer last shown.
+  pub fn layer(&self) -> Arc<Flat> {
+    Arc::clone(&self.layer)
   }
 }
 

@@ -1,16 +1,17 @@
 //! Screens that show an equalizer, a scope and an envelope.
 
 use std::f32::consts::TAU;
+use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec3};
-use potpot::parts::{self, Screen};
+use potpot::parts::Screen;
 use potpot::{Look, Material, Scene};
 use potpot_controls::axis::Axis;
 use potpot_controls::flat::{Dashes, Flat};
 use potpot_controls::response::{self, Band, Kind};
 
 use super::shared::{self, GRID, Plot};
-use super::{BLACK, Catalog, dim};
+use super::{BLACK, Catalog, dim, on_panel_point};
 
 /// The sample rate the curve is drawn for, in hertz.
 const RATE: f32 = 48000.0;
@@ -174,16 +175,14 @@ pub(super) fn screens(look: Look) -> Scene {
   ];
   for ((name, color, picture), cell) in shown.into_iter().zip(&cells) {
     let middle = cell.middle;
-    let glass = shared::glass();
     let on_panel = Mat4::from_translation(middle.extend(0.0));
     let build = &mut catalog.build;
-    build.put(screen.face(), on_panel, glass);
+    let face = build.objects.len();
+    build.put(screen.face(), on_panel, shared::glass());
     build.put(screen.bezel(), on_panel, Material::glossy(BLACK));
     let mut flat = Flat::default();
-    picture(&mut flat, Plot::of(&screen, middle, 10.0));
-    build
-      .objects
-      .extend(parts::picture(&flat, middle.x, middle.y, glass, 0));
+    picture(&mut flat, Plot::of(&screen, on_panel_point(middle), 10.0));
+    build.objects[face].picture = vec![Arc::new(flat)];
     build
       .lamps
       .extend(screen.lamps(middle.x, middle.y, color, 1.0));

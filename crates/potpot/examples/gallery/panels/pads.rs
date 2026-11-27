@@ -30,16 +30,19 @@ pub(super) fn pads(look: Look) -> Scene {
         mesh: Arc::new(pad.surface()),
         transform: on_panel,
         material: Material::glossy(Vec3::splat(0.02)),
+        picture: Vec::new(),
       },
       Object {
         mesh: Arc::new(pad.rim()),
         transform: on_panel,
         material: Material::chrome(Vec3::splat(0.7)),
+        picture: Vec::new(),
       },
       Object {
         mesh: Arc::new(pad.puck()),
         transform: on_pad,
         material: button_rubber().lit(blue, level, pad.puck.emission_radius()),
+        picture: Vec::new(),
       },
     ]);
     if level > 0.0 {

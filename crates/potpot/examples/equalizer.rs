@@ -32,7 +32,7 @@ use std::time::Duration;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Button, Fader, Knob, Meter, Screen};
-use potpot::{Light, Look, Material, Mesh, Object, Renderer, Scene};
+use potpot::{Light, Look, Material, Mesh, Renderer, Scene};
 use potpot_window::controls::axis::Axis;
 use potpot_window::controls::flat::{Color, Flat};
 use potpot_window::controls::interaction::{Control, Dial, Drag, Push, Readout, Target, Touch};
@@ -166,10 +166,6 @@ const METER_FOOT: f32 = SCREEN.y + GLASS.y / 2.0;
 /// How far from its middle a band's dot reaches.
 const DOT_REACH: f32 = 6.0;
 const SPECTRUM: Color = [0.04, 0.2, 0.24, 1.0];
-/// The count of objects that show the spectrum.
-///
-/// The spectrum is in one color.
-const SPECTRUM_OBJECTS: usize = 1;
 
 /// Returns the picture's place on the screen.
 fn plot() -> Plot {
@@ -402,9 +398,10 @@ struct Equalizer {
   /// Everything that never moves or changes.
   fixed: Drawn,
   screen: Screen,
-  glass: Material,
+  /// The place of the screen's face among the objects that never move.
+  face: usize,
   /// The lines and lettering on the screen, over the spectrum.
-  grid: Vec<Object>,
+  grid: Arc<Flat>,
   /// The spectrum, drawn from how loud each frequency is.
   spectrum: Picture<Vec<f32>>,
   /// The curve and the dots.
@@ -444,6 +441,7 @@ impl Equalizer {
 
     let screen = Screen::new(GLASS.x, GLASS.y);
     let glass = shared::glass();
+    let face = fixed.objects.len();
     fixed.put(screen.face(), SCREEN, glass);
     fixed.put(screen.bezel(), SCREEN, Material::glossy(BLACK));
 
@@ -503,8 +501,8 @@ impl Equalizer {
       targets: Vec::new(),
       fixed,
       screen,
-      glass,
-      grid: parts::picture(&grid(), SCREEN.x, SCREEN.y, glass, SPECTRUM_OBJECTS),
+      face,
+      grid: Arc::new(grid()),
       spectrum: Picture::new(),
       curve: Picture::new(),
       dots: [[0.0; 2]; BANDS.len()],
@@ -571,17 +569,17 @@ impl Equalizer {
       lamps.extend(self.meter.lamp(x, METER_FOOT, level));
     }
 
-    // the screen's three pictures, each made again only when what it shows is new
-    let glass = self.glass;
+    // the screen's three layers, each made again only when what it shows is new
     let bins = feed[..BINS].to_vec();
-    (self.spectrum).show(bins, |bins| spectrum(bins), SCREEN, glass, 0);
-    let under = SPECTRUM_OBJECTS + self.grid.len();
+    (self.spectrum).show(bins, |bins| spectrum(bins));
     let band = held.map(|control| control / CONTROLS_EACH);
     let draw = |(values, band): &(Vec<f32>, Option<usize>)| curve(values, *band);
-    (self.curve).show((values.to_vec(), band), draw, SCREEN, glass, under);
-    for picture in [&self.spectrum.objects, &self.grid, &self.curve.objects] {
-      drawn.extend(picture.iter().cloned());
-    }
+    (self.curve).show((values.to_vec(), band), draw);
+    drawn.objects[self.face].picture = vec![
+      self.spectrum.layer(),
+      Arc::clone(&self.grid),
+      self.curve.layer(),
+    ];
 
     let scene = Scene {
       size: SIZE.into(),

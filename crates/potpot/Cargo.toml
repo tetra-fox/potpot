@@ -11,7 +11,7 @@ workspace = true
 
 [dependencies]
 bytemuck = { version = "1", features = ["derive"] }
-# the strokes of the face its lettering is in
+# the flat shapes a picture is made of, and the strokes of the face its lettering is in
 potpot-controls.workspace = true
 glam = { workspace = true, features = ["bytemuck"] }
 # the half floats of the DFG table

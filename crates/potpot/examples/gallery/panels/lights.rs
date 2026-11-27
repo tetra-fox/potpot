@@ -183,11 +183,13 @@ fn small_lamp(
       mesh: Arc::new(parts::led_seat(size)),
       transform: at(middle),
       material: Material::matte(SEAT),
+      picture: Vec::new(),
     },
     Object {
       mesh: Arc::new(parts::led(size)),
       transform: at(middle),
       material: parts::led_material(color, level, size),
+      picture: Vec::new(),
     },
   ];
   let over = middle.extend(size);

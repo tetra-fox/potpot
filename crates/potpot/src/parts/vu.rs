@@ -142,6 +142,7 @@ impl Vu {
       mesh: Arc::clone(mesh),
       transform,
       material,
+      picture: Vec::new(),
     };
     [
       object(&self.face, at, face),

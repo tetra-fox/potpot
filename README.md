@@ -28,7 +28,7 @@ just render demo out.png 2 --page 1 # the demo's settings, at twice its size
 just render gallery out.png knobs   # one page: knobs, faders, buttons, lights, rings, meters, pads, screens, selectors, retro, industrial, materials
 ```
 
-`just example flat` runs on `potpot-controls` and `potpot-window` alone. A panel's look is a `Skin`:
+`just example flat` draws no lit scene. A panel's look is a `Skin`:
 
 ```rust,no_run
 use potpot_window::controls::flat::Flat;

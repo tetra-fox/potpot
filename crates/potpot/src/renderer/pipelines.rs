@@ -134,6 +134,8 @@ pub(super) struct Layouts {
   pub(super) accumulate: wgpu::BindGroupLayout,
   /// The count of samples in each pixel's mean, for the scene pass to number its sample by.
   pub(super) counted: wgpu::BindGroupLayout,
+  /// The picture of the object being drawn, for the scene pass and the bounce pass.
+  pub(super) picture: wgpu::BindGroupLayout,
   /// The picture alone, for the glow pass to read.
   pub(super) glow: wgpu::BindGroupLayout,
   /// What a pass that blurs the glow map along one axis reads.
@@ -215,6 +217,13 @@ impl Layouts {
       }),
       counted: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("potpot counted"),
+        entries: &[texture(
+          0,
+          wgpu::TextureSampleType::Float { filterable: false },
+        )],
+      }),
+      picture: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("potpot picture"),
         entries: &[texture(
           0,
           wgpu::TextureSampleType::Float { filterable: false },
@@ -411,7 +420,12 @@ impl Pipelines {
       };
     let scene_layout = layout(
       "potpot scene",
-      &[&layouts.globals, &layouts.maps, &layouts.counted],
+      &[
+        &layouts.globals,
+        &layouts.maps,
+        &layouts.picture,
+        &layouts.counted,
+      ],
     );
     // one for each count of samples, since a pipeline draws at only one
     let scene = [1, SAMPLES].map(|count| {
@@ -425,7 +439,10 @@ impl Pipelines {
     });
     let bounce = lit(
       "potpot bounce",
-      &layout("potpot bounce", &[&layouts.globals, &layouts.shadow]),
+      &layout(
+        "potpot bounce",
+        &[&layouts.globals, &layouts.shadow, &layouts.picture],
+      ),
       ["bounce_vertex", "bounce_fragment"],
       BOUNCE,
       SAMPLES,

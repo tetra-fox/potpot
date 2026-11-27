@@ -3,13 +3,15 @@
 // is loaded, and so is PAST, how many pixels past its edge a line or a span is drawn
 
 struct Flat {
-  // the width and height the shapes' points run over, and those of their place in pixels
-  size: vec2<f32>,
+  // xy the pixels to a point, and zw the pixel the panel's top left lands on, both in the
+  // shapes' place
+  mapping: vec4<f32>,
+  // the width and height of that place in pixels
   pixels: vec2<f32>,
   // the left and top of that place, in the target's pixels
   origin: vec2<f32>,
-  // x one when the target encodes srgb itself
-  options: vec2<f32>,
+  // x one when the target encodes srgb itself, y one when edges are left rough
+  options: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> flat: Flat;
@@ -41,19 +43,20 @@ fn vertex(
   @location(6) joins: vec4<f32>,
   @location(7) kind: f32,
 ) -> Corner {
-  let scale = flat.pixels / flat.size;
+  let scale = flat.mapping.xy;
+  let shift = flat.mapping.zw;
   var corner: Corner;
   var at: vec2<f32>;
   if kind == RECT {
     // a rectangle along the pixels: each corner goes on the nearest pixel edge, so its sides are
     // sharp at any scale. halves all go the same way, so a line one pixel wide stays that wide
-    at = floor((middle + side * half) * scale + 0.5);
+    at = floor((middle + side * half) * scale + shift + 0.5);
   } else if kind == SPAN {
     // `middle` is its left and right, `along` how far down its sloping edge is at the two and
     // `half.x` its level line. the stretches beside it have the very same sides
-    let sides = middle * scale.x;
-    let edge = along * scale.y;
-    let level = half.x * scale.y;
+    let sides = middle * scale.x + shift.x;
+    let edge = along * scale.y + shift.y;
+    let level = half.x * scale.y + shift.y;
     let top = min(min(edge.x, edge.y), level);
     let foot = max(max(edge.x, edge.y), level);
     // drawn PAST its edges, for the pixels they only partly cover
@@ -69,13 +72,13 @@ fn vertex(
     // wider all around by PAST, for the pixels its edge only partly covers
     let reach = vec2<f32>(half.x + half.y, half.y) * scale.x + PAST;
     corner.within = side * reach;
-    at = middle * scale + along * corner.within.x + vec2<f32>(-along.y, along.x) * corner.within.y;
+    at = middle * scale + shift + along * corner.within.x + vec2<f32>(-along.y, along.x) * corner.within.y;
   }
   corner.clip = vec4<f32>(at / flat.pixels * vec2<f32>(2.0, -2.0) + vec2<f32>(-1.0, 1.0), 0.0, 1.0);
   corner.color = color;
   corner.half = half * scale.x;
   corner.kind = kind;
-  corner.ends = ends * scale.xyxy;
+  corner.ends = ends * scale.xyxy + shift.xyxy;
   corner.joins = joins;
   return corner;
 }
@@ -106,24 +109,29 @@ fn fragment(corner: Corner) -> @location(0) vec4<f32> {
   if flat.options.x > 0.5 {
     color = vec4<f32>(decode(color.rgb), color.a);
   }
+  // how much of the pixel the shape covers
+  var covered = 1.0;
   if corner.kind == SPAN {
     // the stretch is what is under one of its edge and its level line and over the other
     let under_level = clamp(corner.within.y + 0.5, 0.0, 1.0);
-    color.a *= abs(under(corner.within.x, corner.past) - under_level);
+    covered = abs(under(corner.within.x, corner.past) - under_level);
   } else if corner.kind != RECT {
-    // how much of the pixel the line covers, from how far the pixel's middle is from the
-    // stretch between the line's two points
+    // from how far the pixel's middle is from the stretch between the line's two points
     let past = max(abs(corner.within.x) - corner.half.x, 0.0);
     let away = length(vec2<f32>(past, corner.within.y));
-    color.a *= clamp(corner.half.y - away + 0.5, 0.0, 1.0);
+    covered = clamp(corner.half.y - away + 0.5, 0.0, 1.0);
     // a line of a curve stops at the cut through an end where the next line takes over. a
     // pixel on the cut is drawn by the line that runs to it
     let pixel = corner.clip.xy - flat.origin;
     let before = past_cut(pixel, corner.ends.xy, corner.joins.xy);
     let after = past_cut(pixel, corner.ends.zw, corner.joins.zw);
     if after > 0.0 || (before <= 0.0 && dot(corner.joins.xy, corner.joins.xy) > 0.0) {
-      color.a = 0.0;
+      covered = 0.0;
     }
   }
+  if flat.options.y > 0.5 {
+    covered = step(0.5, covered);
+  }
+  color.a *= covered;
   return color;
 }

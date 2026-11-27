@@ -105,6 +105,7 @@ impl Meter {
       mesh: Arc::clone(seat),
       transform: self.place(x, y, index),
       material: pipe_seat(),
+      picture: Vec::new(),
     })
   }
 
@@ -156,6 +157,7 @@ impl Meter {
         mesh: Arc::clone(segment),
         transform: self.place(x, y, index),
         material: pipe_end(color, lit, self.width.min(self.length) * 0.5),
+        picture: Vec::new(),
       }
     })
   }

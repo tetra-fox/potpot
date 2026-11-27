@@ -299,6 +299,8 @@ struct Face {
   cap: [Arc<Mesh>; 2],
   vu: Vu,
   scope: Screen,
+  /// The place of the scope's face among the objects that never move.
+  scope_face: usize,
   /// What the scope shows.
   ///
   /// It is made again when the wave it is drawn from differs.
@@ -410,6 +412,7 @@ impl Face {
     fixed.put(parts::fader_slot(TRAVEL, 5.0), FADER, hole);
     fixed.put(parts::fader_ticks(11, TRAVEL, 16.0, 22.0, 5), FADER, ink());
     let scope = Screen::new(SCOPE_SIZE.x, SCOPE_SIZE.y);
+    let scope_face = fixed.objects.len();
     fixed.put(scope.face(), SCOPE, shared::glass());
     fixed.put(scope.bezel(), SCOPE, Material::glossy(BLACK));
 
@@ -449,6 +452,7 @@ impl Face {
       cap: [fader.body(), fader.line()].map(Arc::new),
       vu: Vu::new(VU_FACE.x, VU_FACE.y),
       scope,
+      scope_face,
       wave: Picture::new(),
       puck: Arc::new(xy.puck()),
       xy,
@@ -460,8 +464,7 @@ impl Face {
     let wave = feed[WAVE..WAVE + SAMPLES]
       .try_into()
       .expect("the feed has every sample");
-    let face = shared::glass();
-    (self.wave).show(wave, |wave| traced(&self.scope, wave), SCOPE, face, 0);
+    (self.wave).show(wave, |wave| traced(&self.scope, wave));
   }
 
   /// Adds the face as `values`, `feed` and `held` have it.
@@ -544,7 +547,7 @@ impl Face {
     drawn.fader(&self.cap, FADER, TRAVEL, values[LEVEL], LEVEL);
     let loudest = feed[LEFT].max(feed[RIGHT]);
     drawn.extend(self.vu.objects(VU_AT.x, VU_AT.y, loudest, 1.0));
-    drawn.extend(self.wave.objects.iter().cloned());
+    drawn.objects[self.scope_face].picture = vec![self.wave.layer()];
     let green = Vec3::new(0.3, 1.0, 0.45);
     drawn
       .lamps

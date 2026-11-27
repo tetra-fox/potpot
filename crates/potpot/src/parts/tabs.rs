@@ -97,11 +97,13 @@ mod tests {
           mesh: Arc::clone(&seat),
           transform: Mat4::from_translation(at.extend(0.0)),
           material: Material::matte(Vec3::splat(0.01)),
+          picture: Vec::new(),
         },
         Object {
           mesh: Arc::clone(&body),
           transform: tabs.transform(middle.x, middle.y, tab, tab == shown),
           material: Material::silicone(Vec3::splat(0.6)),
+          picture: Vec::new(),
         },
       ]
     });

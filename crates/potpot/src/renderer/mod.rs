@@ -8,8 +8,10 @@
 mod damage;
 mod dfg;
 mod environment;
+mod flat;
 mod picture;
 mod pipelines;
+mod shown;
 mod textures;
 mod uniforms;
 
@@ -20,9 +22,12 @@ use bytemuck::Zeroable;
 use glam::{Mat4, Vec2, Vec3};
 use wgpu::util::DeviceExt;
 
+pub use self::flat::FlatRenderer;
+
 use self::damage::{Bounds, HAZE_CELL, Reach, Redrawn, Spread};
 use self::picture::Picture;
 use self::pipelines::{BOUNCE, DEPTH, DFG, Layouts, Pipelines, SAMPLES, STUDIO};
+use self::shown::{Frame, Painter, Shown};
 use self::uniforms::{Globals, Placed, Present};
 use crate::mesh::Mesh;
 use crate::scene::{Object, Scene};
@@ -187,6 +192,16 @@ pub struct Renderer {
   wipe_room: usize,
   /// The size of the target the picture was last prepared for.
   held_size: [u32; 2],
+  /// The pipeline that draws the pictures objects show.
+  flats: flat::Pipeline,
+  /// The picture each object of the drawn scene shows, if any.
+  shown: Vec<Option<Shown>>,
+  /// Where each object of the scene being prepared shows its picture, if it shows one.
+  ///
+  /// The vector is kept for its room.
+  frames: Vec<Option<Frame>>,
+  /// A texture of no color, for the objects that show no picture.
+  unshown: wgpu::BindGroup,
   /// The parts of that target where the picture is new.
   ///
   /// The picture shows otherwise there than the one before it. The vector is kept for its room.
@@ -464,6 +479,24 @@ impl Renderer {
       ],
     });
 
+    let flats = flat::Pipeline::new(device, shown::FORMAT);
+    let blank = device.create_texture(&wgpu::TextureDescriptor {
+      label: Some("potpot unshown picture"),
+      size: wgpu::Extent3d {
+        width: 1,
+        height: 1,
+        depth_or_array_layers: 1,
+      },
+      mip_level_count: 1,
+      sample_count: 1,
+      dimension: wgpu::TextureDimension::D2,
+      format: shown::FORMAT,
+      usage: wgpu::TextureUsages::TEXTURE_BINDING,
+      view_formats: &[],
+    });
+    // a new texture is all zeros, which is no color
+    let unshown = shown::bound(device, &layouts.picture, &blank);
+
     Self {
       pipelines,
       globals,
@@ -514,6 +547,10 @@ impl Renderer {
       held_size: [0; 2],
       parts: Vec::new(),
       anywhere: true,
+      flats,
+      shown: Vec::new(),
+      frames: Vec::new(),
+      unshown,
       layouts,
     }
   }
@@ -574,6 +611,21 @@ impl Renderer {
     let objects = &scene.objects;
     self.next_placed.clear();
     self.next_placed.extend(objects.iter().map(Placed::of));
+    // where each object's picture lies on the picture of the scene, which its place tells the
+    // shaders
+    let pixels = Vec2::from(picture_size.map(|side| side as f32));
+    let onto = damage::to_pixels(&globals.view, pixels);
+    let scale = (pixels / scene.size).to_array();
+    self.frames.clear();
+    for (object, placed) in objects.iter().zip(&mut self.next_placed) {
+      let frame = (!object.picture.is_empty())
+        .then(|| Frame::of(object, onto, picture_size, scale, !look.antialias))
+        .flatten();
+      if let Some(frame) = frame {
+        placed.picture = frame.texel_of(picture_size);
+      }
+      self.frames.push(frame);
+    }
     // two scenes of as many objects are compared object by object, and any others in whole.
     // the objects that differ are listed while their bound may still be worth building
     let counted_alike = objects.len() == self.draws.len();
@@ -594,7 +646,12 @@ impl Renderer {
         // by bytes, as the places are sent to the GPU, so that a NaN is equal to itself
         let moved =
           !same_mesh || bytemuck::bytes_of(&placed.model) != bytemuck::bytes_of(&held.model);
-        if moved || placed != held {
+        let repictured = match (&self.frames[index], &self.shown[index]) {
+          (None, None) => false,
+          (Some(_), Some(shown)) => !shown::same(&object.picture, shown.layers()),
+          _ => true,
+        };
+        if moved || placed != held || repictured {
           alike = false;
           let change = match (moved, placed.shadowless(), held.shadowless()) {
             (true, true, true) => Change::Repainted,
@@ -710,7 +767,7 @@ impl Renderer {
         was.into_iter().chain(differing.now)
       });
       // what shows otherwise and throws the shadows it threw, or none. boxes over one another
-      // are taken as one, so that the pictures of one screen are one box
+      // are taken as one
       let shown = (changed(Change::Repainted).flat_map(|differing| [differing.was, differing.now]))
         .chain(changed(Change::Recolored).map(|differing| differing.now));
       for bounds in shown.flatten() {
@@ -790,6 +847,24 @@ impl Renderer {
         fill_sets(queue, map, format, texels);
       }
       self.unfilled = false;
+    }
+    // the pictures objects show that are new are drawn before the scene they are shown in
+    let painter = Painter {
+      device,
+      queue,
+      pipeline: &self.flats,
+      layout: &self.layouts.picture,
+    };
+    let mut encoder = None;
+    let mut held = std::mem::take(&mut self.shown);
+    held.resize_with(objects.len(), || None);
+    self.shown = (objects.iter().zip(&self.frames).zip(held))
+      .map(|((object, frame), held)| {
+        Some(painter.show(&mut encoder, held, &object.picture, (*frame)?))
+      })
+      .collect();
+    if let Some(encoder) = encoder {
+      queue.submit([encoder.finish()]);
     }
     let mut picture = picture;
     let refining = refining.then_some(self.unsettled);
@@ -948,7 +1023,7 @@ impl Renderer {
       }
       pass.set_pipeline(pipeline);
       pass.set_bind_group(0, &self.globals_group, &[]);
-      self.draw_objects(&mut pass, within, Objects::Shadowing);
+      self.draw_objects(&mut pass, within, Objects::Shadowing, false);
     }
     if light != Redrawn::Nothing {
       let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -984,7 +1059,7 @@ impl Renderer {
       pass.draw(0..3, 0..1);
       pass.set_pipeline(&self.pipelines.bounce);
       pass.set_bind_group(1, &self.shadow_group, &[]);
-      self.draw_objects(&mut pass, within, Objects::All);
+      self.draw_objects(&mut pass, within, Objects::All, true);
     }
     // the cells of the glow map drawn again, as left, top, right and foot
     let mut glowing = None;
@@ -1033,8 +1108,8 @@ impl Renderer {
       pass.set_pipeline(&self.pipelines.scene[smooth]);
       pass.set_bind_group(0, &self.globals_group, &[]);
       pass.set_bind_group(1, &self.maps_group, &[]);
-      pass.set_bind_group(2, &picture.counted[picture.side], &[]);
-      self.draw_objects(&mut pass, within, Objects::All);
+      pass.set_bind_group(3, &picture.counted[picture.side], &[]);
+      self.draw_objects(&mut pass, within, Objects::All, true);
       drop(pass);
 
       // the samples resolved into the picture where they were drawn
@@ -1236,14 +1311,21 @@ impl Renderer {
   ///
   /// Each is drawn with its place and material. `within` is a rectangle of what is drawn on, as
   /// x, y, width and height in its pixels, and what that is. With it, only the objects drawn in
-  /// the rectangle are drawn, and of those the ones `objects` names.
+  /// the rectangle are drawn, and of those the ones `objects` names. With `pictures`, each is
+  /// drawn with the picture it shows bound in the third group.
   fn draw_objects(
     &self,
     pass: &mut wgpu::RenderPass<'_>,
     within: Option<([f32; 4], Map)>,
     objects: Objects,
+    pictures: bool,
   ) {
     pass.set_vertex_buffer(1, self.placed.slice(..));
+    // whether the group holds an object's picture, in place of no picture
+    let mut showing = false;
+    if pictures {
+      pass.set_bind_group(2, &self.unshown, &[]);
+    }
     for ((object, &mesh), placed) in (0..).zip(&self.draws).zip(&self.held_placed) {
       let mesh = &self.meshes[mesh];
       // wgpu has no slice of an empty buffer, and such a mesh has nothing to draw
@@ -1260,6 +1342,12 @@ impl Renderer {
         right < x || left > x + width || foot < y || top > y + height
       }) {
         continue;
+      }
+      let shown = self.shown[object as usize].as_ref();
+      if pictures && (shown.is_some() || showing) {
+        let group = shown.map_or(&self.unshown, |shown| &shown.group);
+        pass.set_bind_group(2, group, &[]);
+        showing = shown.is_some();
       }
       pass.set_vertex_buffer(0, mesh.vertices.slice(..));
       pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);

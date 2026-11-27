@@ -276,6 +276,7 @@ fn panel(number: &mut impl FnMut() -> f32, shapes: &[Arc<Mesh>]) -> Scene {
       mesh: Arc::new(crate::parts::plate(PANEL.x, PANEL.y, 6.0)),
       transform: Mat4::IDENTITY,
       material: Material::powder_coat(Vec3::splat(0.3)),
+      picture: Vec::new(),
     }],
     lamps: vec![lamp(number), lamp(number)],
   };
@@ -284,6 +285,7 @@ fn panel(number: &mut impl FnMut() -> f32, shapes: &[Arc<Mesh>]) -> Scene {
       mesh: Arc::clone(&shapes[index % shapes.len()]),
       transform: place(number),
       material: material(number),
+      picture: Vec::new(),
     });
   }
   scene
@@ -717,11 +719,13 @@ fn what_lights_itself_on_an_edge_spills_as_it_does_with_the_dark_beside_it() {
           mesh: Arc::new(crate::parts::plate(wide, high, 6.0)),
           transform: Mat4::IDENTITY,
           material: Material::matte(Vec3::ZERO),
+          picture: Vec::new(),
         },
         Object {
           mesh: Arc::new(bar),
           transform: Mat4::IDENTITY,
           material: Material::matte(Vec3::splat(0.5)).lit(Vec3::ONE, 1.0, 0.0),
+          picture: Vec::new(),
         },
       ],
       lamps: Vec::new(),
@@ -877,7 +881,7 @@ fn a_screen_whose_picture_is_made_again_is_drawn_again_alone() {
     ];
     flat.area(&points, 150.0, [1.0, 0.6, 0.1, 0.5]);
     flat.curve(&points, 2.0, [0.2, 0.9, 1.0, 1.0]);
-    crate::parts::picture(&flat, middle.x, middle.y, face, 0)
+    vec![Arc::new(flat)]
   };
   for bounce in [0.0, 3.0] {
     let mut scene = panel(&mut numbers(5), &[Arc::new(knob.clone())]);
@@ -885,6 +889,7 @@ fn a_screen_whose_picture_is_made_again_is_drawn_again_alone() {
     scene.light.bounce = bounce;
     scene.lamps = (screen.lamps(middle.x, middle.y, Vec3::new(0.2, 0.9, 1.0), 1.0)).collect();
     let on_panel = Mat4::from_translation(middle.extend(0.0));
+    let shown_on = scene.objects.len();
     for (mesh, material) in [
       (screen.face(), face),
       (screen.bezel(), Material::glossy(Vec3::splat(0.04))),
@@ -893,28 +898,29 @@ fn a_screen_whose_picture_is_made_again_is_drawn_again_alone() {
         mesh: Arc::new(mesh),
         transform: on_panel,
         material,
+        picture: Vec::new(),
       });
     }
     // a knob in the screen's rows, well to the left of it
     let turned =
       |turn: f32| Mat4::from_translation(Vec3::new(60.0, 120.0, 0.0)) * Mat4::from_rotation_z(turn);
+    let knob_at = scene.objects.len();
     scene.objects.push(Object {
       mesh: Arc::new(knob.clone()),
       transform: turned(0.0),
       material: Material::spun(Vec3::splat(0.7)),
+      picture: Vec::new(),
     });
-    let fixed = scene.objects.len();
-    scene.objects.extend(picture(0.0));
+    scene.objects[shown_on].picture = picture(0.0);
     let [mut kept, mut whole] = [(); 2].map(|()| Renderer::new(&target.device, FORMAT));
     let mut shown = Vec::new();
     target.assert_same(&mut kept, &mut whole, &mut shown, &scene, "at first");
     for frame in 1..12 {
       let level = (frame as f32 * 0.9).sin();
-      scene.objects.truncate(fixed);
-      scene.objects.extend(picture(level));
+      scene.objects[shown_on].picture = picture(level);
       // on every third frame the knob is turned too
       if frame % 3 == 0 {
-        scene.objects[fixed - 1].transform = turned(frame as f32 * 0.3);
+        scene.objects[knob_at].transform = turned(frame as f32 * 0.3);
       }
       let step = format!("with picture {frame} and light bouncing {bounce}");
       target.assert_same(&mut kept, &mut whole, &mut shown, &scene, &step);
@@ -932,9 +938,9 @@ fn a_screen_whose_picture_is_made_again_is_drawn_again_alone() {
           "{parts:?} {step}"
         );
       } else {
-        // the picture alone and the bands its glow reaches: the screen, and with light bouncing
-        // what its light is thrown on
-        let most = if bounce > 0.0 { 0.4 } else { 0.25 };
+        // the screen's face, which shows the picture, and the bands its glow reaches, and with
+        // light bouncing what its light is thrown on
+        let most = if bounce > 0.0 { 0.45 } else { 0.25 };
         assert!(share(parts) < most, "{parts:?} {step}");
       }
     }
@@ -1019,6 +1025,7 @@ fn light_off_what_changes_color_shows_on_a_sliver_where_the_sliver_is() {
     mesh: Arc::new(slivers),
     transform: Mat4::IDENTITY,
     material: Material::matte(Vec3::splat(0.8)),
+    picture: Vec::new(),
   };
   let [mut kept, mut whole] = [(); 2].map(|()| Renderer::new(&target.device, FORMAT));
   let mut shown = Vec::new();
@@ -1186,6 +1193,171 @@ fn the_tone_map_meets_the_khronos_reference_points() {
       assert!(
         (wanted - got).abs() < 1e-5,
         "{input:?} maps to {got:?}, not {wanted:?}"
+      );
+    }
+  }
+}
+
+/// Returns the pixels of a texture of four bytes a pixel, in rows with no gaps.
+fn texels(target: &Target, texture: &wgpu::Texture) -> Vec<u8> {
+  let size = texture.size();
+  // a row as it is copied is a multiple of 256 bytes long
+  let row = (size.width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+  let read = target.device.create_buffer(&wgpu::BufferDescriptor {
+    label: None,
+    size: u64::from(row * size.height),
+    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+    mapped_at_creation: false,
+  });
+  let mut encoder =
+    (target.device).create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+  encoder.copy_texture_to_buffer(
+    texture.as_image_copy(),
+    wgpu::TexelCopyBufferInfo {
+      buffer: &read,
+      layout: wgpu::TexelCopyBufferLayout {
+        offset: 0,
+        bytes_per_row: Some(row),
+        rows_per_image: None,
+      },
+    },
+    size,
+  );
+  target.queue.submit([encoder.finish()]);
+  (read.slice(..)).map_async(wgpu::MapMode::Read, |mapped| {
+    mapped.expect("the texels map")
+  });
+  finish(&target.device, "the texels of a texture");
+  let mapped = read.slice(..).get_mapped_range();
+  (mapped.chunks(row as usize))
+    .flat_map(|texels| &texels[..size.width as usize * 4])
+    .copied()
+    .collect()
+}
+
+/// Clears the target and draws a list of shapes on it, one pixel to a point.
+fn flat_drawn(target: &Target, shapes: &potpot_controls::flat::Flat) -> Vec<u8> {
+  let mut renderer = FlatRenderer::new(&target.device, FORMAT);
+  let size = SIZE.map(|side| side as f32);
+  renderer.prepare(
+    &target.device,
+    &target.queue,
+    shapes,
+    size,
+    [0, 0, SIZE[0], SIZE[1]],
+  );
+  let view = (target.texture).create_view(&wgpu::TextureViewDescriptor::default());
+  let mut encoder =
+    (target.device).create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+  encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+    label: None,
+    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+      view: &view,
+      depth_slice: None,
+      resolve_target: None,
+      ops: wgpu::Operations {
+        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+        store: wgpu::StoreOp::Store,
+      },
+    })],
+    depth_stencil_attachment: None,
+    timestamp_writes: None,
+    occlusion_query_set: None,
+  });
+  renderer.render(&mut encoder, &view);
+  target.queue.submit([encoder.finish()]);
+  texels(target, &target.texture)
+}
+
+#[test]
+#[ignore = "needs a graphics device"]
+fn a_color_that_covers_in_part_is_blended_over_what_was_drawn_before_it() {
+  use potpot_controls::flat::Flat;
+
+  let target = Target::new();
+  let (red, blue) = ([1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 0.5]);
+  // half of the clear blue over the red, half over nothing
+  let mut over = Flat::default();
+  over.rect([0.0, 0.0], [10.0, 10.0], red);
+  over.rect([5.0, 0.0], [15.0, 10.0], blue);
+  let pixels = flat_drawn(&target, &over);
+  let at = |pixels: &[u8], x: usize| -> [u8; 4] {
+    let start = (5 * SIZE[0] as usize + x) * 4;
+    pixels[start..start + 4]
+      .try_into()
+      .expect("a pixel is four bytes")
+  };
+  // half of each in linear light is 0.5, which is 188 as sRGB stores it, and the texel holds
+  // the color times its cover
+  assert_eq!(at(&pixels, 2), [255, 0, 0, 255]);
+  let mixed = at(&pixels, 7);
+  assert!(mixed[0].abs_diff(188) <= 1 && mixed[1] == 0, "{mixed:?}");
+  assert!(mixed[2].abs_diff(188) <= 1 && mixed[3] == 255, "{mixed:?}");
+  let alone = at(&pixels, 12);
+  assert!(
+    alone[..2] == [0, 0] && alone[2].abs_diff(188) <= 1,
+    "{alone:?}"
+  );
+  assert!(alone[3].abs_diff(128) <= 1, "{alone:?}");
+  // the red over the blue covers it
+  let mut under = Flat::default();
+  under.rect([5.0, 0.0], [15.0, 10.0], blue);
+  under.rect([0.0, 0.0], [10.0, 10.0], red);
+  assert_eq!(at(&flat_drawn(&target, &under), 7), [255, 0, 0, 255]);
+}
+
+#[test]
+#[ignore = "needs a graphics device"]
+fn a_picture_on_an_object_is_drawn_as_the_flat_shapes_are() {
+  use potpot_controls::flat::Flat;
+
+  let target = Target::new();
+  let cube = Arc::new(Mesh::cuboid(Vec3::ZERO, Vec3::ONE));
+  let mut scene = panel(&mut numbers(5), &[cube]);
+  scene.objects.truncate(1);
+  // one point to a pixel, seen straight down
+  scene.size = Vec2::new(SIZE[0] as f32, SIZE[1] as f32);
+  scene.lean = Vec2::ZERO;
+  let screen = crate::parts::Screen::new(160.0, 100.0);
+  let middle = Vec3::new(200.0, 120.0, 0.0);
+  let mut shown = Flat::default();
+  let points = [[110.0, 150.0], [190.0, 90.0], [230.0, 140.0], [300.0, 70.0]];
+  shown.area(&points, 160.0, [1.0, 0.6, 0.1, 0.4]);
+  shown.rect([150.0, 80.0], [250.0, 120.0], [0.2, 0.9, 1.0, 0.3]);
+  shown.curve(&points, 2.5, [0.2, 0.9, 1.0, 1.0]);
+  shown.dashed(
+    &[[140.0, 75.0], [140.0, 165.0]],
+    1.0,
+    potpot_controls::flat::Dashes {
+      length: 4.0,
+      gap: 3.0,
+    },
+    [1.0, 0.66, 0.14, 1.0],
+  );
+  scene.objects.push(Object {
+    mesh: Arc::new(screen.face()),
+    transform: Mat4::from_translation(middle),
+    material: Material::display_glass(Vec3::splat(0.02), 1.5),
+    picture: vec![Arc::new(shown.clone())],
+  });
+  let mut renderer = Renderer::new(&target.device, FORMAT);
+  renderer.prepare(&target.device, &target.queue, &scene, SIZE);
+  let picture = renderer.shown[1]
+    .as_ref()
+    .expect("the face shows its picture");
+  let [left, top, width, height] = picture.frame.place.map(|side| side as usize);
+  // the face and a pixel around it
+  assert_eq!([width, height], [162, 102]);
+  let texels = texels(&target, &picture.texture);
+  let whole = flat_drawn(&target, &shown);
+  for down in 0..height {
+    for across in 0..width {
+      let texel = &texels[(down * width + across) * 4..][..4];
+      let pixel = &whole[((top + down) * SIZE[0] as usize + left + across) * 4..][..4];
+      let apart = (texel.iter().zip(pixel)).map(|(one, other)| one.abs_diff(*other));
+      assert!(
+        apart.max() <= Some(1),
+        "{texel:?} and {pixel:?} at {across}, {down}"
       );
     }
   }

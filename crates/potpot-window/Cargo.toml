@@ -16,12 +16,12 @@ default = ["nice-plug"]
 nice-plug = ["dep:nice-plug"]
 
 [dependencies]
+# draws the flat shapes over what the skin draws
+potpot.workspace = true
 potpot-controls.workspace = true
 nice-plug = { version = "0.4.2", optional = true }
 # the window, which the panel is put in and its input comes from
 baseview = "0.4.2"
-# the layout of what the flat shapes are drawn from
-bytemuck = { version = "1", features = ["derive"] }
 # the system's clipboard, which baseview only writes and only on macos. without its default
 # features it carries text alone
 arboard = { version = "3", default-features = false }
@@ -50,7 +50,5 @@ softbuffer = { version = "0.4", default-features = false, features = ["x11", "x1
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_HiDpi"] }
 
 [dev-dependencies]
-# writes the flat shapes' shader as each graphics api is given it. the version wgpu is on
-naga = { version = "27", features = ["hlsl-out", "msl-out", "spv-out", "wgsl-in"] }
 # writes the picture an example draws of itself
 png = "0.18"

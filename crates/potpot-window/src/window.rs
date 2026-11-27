@@ -14,6 +14,7 @@ use baseview::{
   EventStatus, HandlerError, MouseButton, MouseEvent, ScrollDelta, TimerHandle, WindowContext,
   WindowEvent, WindowHandler, WindowSize,
 };
+use potpot::FlatRenderer;
 use potpot_controls::Point;
 use potpot_controls::fit::{fitted, point_at};
 use potpot_controls::flat::Flat;
@@ -24,7 +25,6 @@ use potpot_controls::sent::Sent;
 use tracing::error;
 
 use crate::feed::same;
-use crate::flat::FlatRenderer;
 use crate::graphics::Graphics;
 use crate::notes::Pressed;
 use crate::open::{Param, Remembered, Settings, Shared, ToWindow};

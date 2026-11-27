@@ -59,7 +59,6 @@
 //! of another.
 
 mod feed;
-mod flat;
 mod graphics;
 #[cfg(feature = "nice-plug")]
 pub mod nice_plug;

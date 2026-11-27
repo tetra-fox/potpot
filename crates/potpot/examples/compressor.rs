@@ -118,10 +118,6 @@ const TRACE: Color = [0.5, 1.0, 0.6, 1.0];
 // the level in on the wide screen: its filled region and the line along its top
 const LOUD: Color = [0.04, 0.17, 0.2, 1.0];
 const LOUD_EDGE: Color = [0.2, 0.62, 0.7, 1.0];
-/// The count of objects that show the level in.
-///
-/// There is one for each of its two colors.
-const LOUD_OBJECTS: usize = 2;
 /// How far down the names printed under the screens are.
 const CAPTION_Y: f32 = 294.0;
 
@@ -310,9 +306,10 @@ struct Compressor {
   /// Everything that never moves or changes.
   fixed: Drawn,
   screens: [Screen; 2],
-  glasses: [Material; 2],
+  /// The place of each screen's face among the objects that never move.
+  faces: [usize; 2],
   /// The lines and lettering on each screen.
-  grids: [Vec<Object>; 2],
+  grids: [Arc<Flat>; 2],
   /// The curve and its dot.
   ///
   /// They are drawn from the parameters and whether the dot is held.
@@ -352,9 +349,10 @@ impl Compressor {
     fixed.screws(size, 16.0, 6.0);
 
     let screens = [CURVE_GLASS, PAST_GLASS].map(|glass| Screen::new(glass.x, glass.y));
-    let glasses = screens.map(|_| shared::glass());
-    for ((screen, glass), middle) in screens.iter().zip(glasses).zip([CURVE, PAST_SCREEN]) {
-      fixed.put(screen.face(), middle, glass);
+    let mut faces = [0; 2];
+    for ((screen, face), middle) in screens.iter().zip(&mut faces).zip([CURVE, PAST_SCREEN]) {
+      *face = fixed.objects.len();
+      fixed.put(screen.face(), middle, shared::glass());
       fixed.put(screen.bezel(), middle, Material::glossy(BLACK));
     }
     // what the wide screen's two lines are, each named under it in paint of its own color
@@ -401,23 +399,13 @@ impl Compressor {
       fixed.readout(Vec2::new(x, READOUT_Y), READOUT, control);
     }
 
-    let [curve_glass, past_glass] = glasses;
     Self {
       renderer: Renderer::new(gpu.device, gpu.format),
       targets: Vec::new(),
       fixed,
       screens,
-      glasses,
-      grids: [
-        parts::picture(&curve_grid(), CURVE.x, CURVE.y, curve_glass, 0),
-        parts::picture(
-          &past_grid(),
-          PAST_SCREEN.x,
-          PAST_SCREEN.y,
-          past_glass,
-          LOUD_OBJECTS,
-        ),
-      ],
+      faces,
+      grids: [Arc::new(curve_grid()), Arc::new(past_grid())],
       curve: Picture::new(),
       riding: Picture::new(),
       past_level: Picture::new(),
@@ -476,40 +464,30 @@ impl Compressor {
       }
     }
 
-    // each picture is made again only when what it shows is new
-    let [curve_glass, past_glass] = self.glasses;
+    // each layer is made again only when what it shows is new
     let on_bend = held == Some(BEND);
     let draw = |(values, held): &(Vec<f32>, bool)| curve(values, *held);
-    let under = self.grids[0].len();
-    (self.curve).show((values.to_vec(), on_bend), draw, CURVE, curve_glass, under);
-    let under = under + self.curve.objects.len();
+    (self.curve).show((values.to_vec(), on_bend), draw);
     let at = on_curve(feed[IN], values);
-    (self.riding).show(at, |at| riding(*at), CURVE, curve_glass, under);
+    (self.riding).show(at, |at| riding(*at));
 
     let (levels, reductions) = feed[PAST..].split_at(BLOCKS);
-    (self.past_level).show(
-      levels.to_vec(),
-      |levels| past_level(levels),
-      PAST_SCREEN,
-      past_glass,
-      0,
-    );
-    let under = LOUD_OBJECTS + self.grids[1].len();
+    (self.past_level).show(levels.to_vec(), |levels| past_level(levels));
     let from = (reductions.to_vec(), values[THRESHOLD]);
-    (self.past_reduction).show(from, past_reduction, PAST_SCREEN, past_glass, under);
+    (self.past_reduction).show(from, past_reduction);
 
     let [curve_grid, past_grid] = &self.grids;
-    let pictures = [
-      curve_grid,
-      &self.curve.objects,
-      &self.riding.objects,
-      &self.past_level.objects,
-      past_grid,
-      &self.past_reduction.objects,
+    let [curve_face, past_face] = self.faces;
+    drawn.objects[curve_face].picture = vec![
+      Arc::clone(curve_grid),
+      self.curve.layer(),
+      self.riding.layer(),
     ];
-    for picture in pictures {
-      drawn.extend(picture.iter().cloned());
-    }
+    drawn.objects[past_face].picture = vec![
+      self.past_level.layer(),
+      Arc::clone(past_grid),
+      self.past_reduction.layer(),
+    ];
 
     let scene = Scene {
       size: SIZE.into(),

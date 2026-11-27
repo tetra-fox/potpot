@@ -1054,6 +1054,7 @@ mod tests {
       mesh: std::sync::Arc::new(crate::mesh::Mesh::default()),
       transform,
       material: Material::matte(Vec3::ONE),
+      picture: Vec::new(),
     };
     let boxed = Some([Vec3::ZERO, Vec3::ONE]);
     let holds = |scene: &Scene, bounds: Option<Bounds>| {

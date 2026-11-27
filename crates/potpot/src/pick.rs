@@ -154,6 +154,7 @@ mod tests {
         mesh: Arc::new(Mesh::cuboid(min, max)),
         transform: Mat4::IDENTITY,
         material: Material::matte(Vec3::ONE),
+        picture: Vec::new(),
       })
       .collect();
     Scene {
@@ -251,6 +252,7 @@ mod tests {
       transform: Mat4::from_translation(Vec3::new(200.0, 100.0, 0.0))
         * Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2),
       material: Material::matte(Vec3::ONE),
+      picture: Vec::new(),
     });
     assert_eq!(scene.pick(Vec2::new(200.0, 75.0)), Some(1));
     assert_eq!(scene.pick(Vec2::new(200.0, 128.0)), Some(1));
@@ -267,11 +269,13 @@ mod tests {
       mesh: Arc::new(crate::parts::slab(92.0, 38.0, 3.5, 3.0)),
       transform: Mat4::from_translation(at),
       material: Material::matte(Vec3::ONE),
+      picture: Vec::new(),
     });
     scene.objects.push(Object {
       mesh: Arc::new(Mesh::lathe(&[[10.0, 0.0], [0.0, 5.0]], 24, true)),
       transform: Mat4::from_translation(Vec3::new(96.3, 94.7, 0.0)),
       material: Material::matte(Vec3::ONE),
+      picture: Vec::new(),
     });
     for tenth in -170..=170 {
       let down = tenth as f32 / 10.0;
@@ -327,6 +331,7 @@ mod tests {
         mesh: Arc::new(mesh),
         transform,
         material: Material::matte(Vec3::ONE),
+        picture: Vec::new(),
       });
     }
     // a box as large as can be is missed by no line of sight, so every triangle is looked at

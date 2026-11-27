@@ -66,11 +66,13 @@ mod tests {
         mesh: Arc::clone(&body),
         transform: row.transform(middle.x, middle.y, choice, choice == chosen),
         material: Material::silicone(Vec3::splat(0.6)),
+        picture: Vec::new(),
       });
       let frame = Object {
         mesh: Arc::clone(&frame),
         transform: Mat4::from_translation(middle.extend(0.0)),
         material: Material::chrome(Vec3::splat(0.7)),
+        picture: Vec::new(),
       };
       let scene = Scene {
         size: Vec2::new(400.0, 100.0),

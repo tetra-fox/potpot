@@ -93,6 +93,7 @@ impl LedRing {
       mesh: Arc::clone(seat),
       transform: self.place(x, y, index),
       material: pipe_seat(),
+      picture: Vec::new(),
     })
   }
 
@@ -129,6 +130,7 @@ impl LedRing {
       mesh: Arc::clone(segment),
       transform: self.place(x, y, index),
       material: pipe_end(color, levels.next().unwrap_or(0.0), self.width * 0.6),
+      picture: Vec::new(),
     })
   }
 
@@ -226,6 +228,7 @@ impl LedStops {
       mesh: Arc::clone(seat),
       transform: self.place(x, y, stop),
       material: pipe_seat(),
+      picture: Vec::new(),
     })
   }
 
@@ -249,6 +252,7 @@ impl LedStops {
         mesh: Arc::clone(light),
         transform: self.place(x, y, stop),
         material: led_material(color, level, self.diameter),
+        picture: Vec::new(),
       }
     })
   }
@@ -337,17 +341,20 @@ impl LedArc {
       mesh: Arc::clone(seat),
       transform: on_panel,
       material: pipe_seat(),
+      picture: Vec::new(),
     };
     let lens = Object {
       mesh: Arc::clone(lens),
       transform: on_panel,
       material: pipe_end(color, 0.0, 0.0),
+      picture: Vec::new(),
     };
     // just over the lens, so that the lit run covers it
     let lit = (high > low).then(|| Object {
       mesh: Arc::new(self.strip([low, high], 0.0, PAINT * 2.0)),
       transform: on_panel,
       material: pipe_end(color, 1.0, 0.0),
+      picture: Vec::new(),
     });
     [seat, lens].into_iter().chain(lit)
   }

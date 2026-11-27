@@ -1284,12 +1284,11 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "baseview",
- "bytemuck",
  "keyboard-types",
- "naga",
  "nice-plug",
  "png",
  "pollster",
+ "potpot",
  "potpot-controls",
  "softbuffer",
  "tracing",

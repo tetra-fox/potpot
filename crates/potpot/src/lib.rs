@@ -4,7 +4,9 @@
 //! and a [`Look`] that can make the picture as blocky and banded as an old render. A
 //! [`Renderer`] draws it onto a `wgpu` texture, and of a scene that has changed draws again
 //! only what the change shows in. [`Scene::pick`] returns the object seen at a point of the
-//! picture, and [`Renderer::pick`] the same of the scene it drew last, with less work.
+//! picture, and [`Renderer::pick`] the same of the scene it drew last, with less work. An
+//! object can show a picture of flat shapes, which a [`FlatRenderer`] also draws straight onto
+//! a target.
 //!
 //! # Examples
 //!
@@ -19,6 +21,7 @@
 //!   mesh: Arc::new(Mesh::lathe(&[[12.0, 0.0], [12.0, 10.0], [0.0, 10.0]], 32, true)),
 //!   transform: Mat4::from_translation(Vec3::new(100.0, 60.0, 0.0)),
 //!   material: Material::glossy(Vec3::splat(0.1)),
+//!   picture: Vec::new(),
 //! };
 //! let scene = Scene {
 //!   size: Vec2::new(200.0, 120.0),
@@ -43,6 +46,6 @@ mod scene;
 pub use glam;
 pub use material::{Anisotropy, Material, Textures};
 pub use mesh::{Mesh, Vertex};
-pub use renderer::{Place, Renderer};
+pub use renderer::{FlatRenderer, Place, Renderer};
 pub use scene::{LAMPS, Lamp, Light, Look, Object, Scene};
 pub use wgpu;

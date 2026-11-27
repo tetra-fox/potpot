@@ -45,7 +45,7 @@ pub use panel::{
 };
 pub use ring::{LedArc, LedRing, LedStops};
 pub use scale::{dashes, fader_ticks, ticks};
-pub use screen::{Screen, picture};
+pub use screen::Screen;
 pub use selector::Selector;
 pub use stepper::{Arrow, Stepper};
 pub use switch::PushSwitch;
