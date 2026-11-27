@@ -51,8 +51,9 @@ impl fmt::Debug for Picture {
 /// written to it, and the notes shown with [`Notes::show`](crate::Notes::show) are down.
 /// Nothing is typed, held or chosen from a menu.
 ///
-/// No display server is asked anything. The frame is drawn with a graphics device of its own,
-/// which is let go of before this returns.
+/// No display server is asked anything. The frame is drawn with the graphics device the
+/// plugin's windows draw with, which is made if none is open and let go of once nothing holds
+/// it. A fault of the device while the frame is drawn stops the drawing of any window on it.
 ///
 /// # Errors
 ///
@@ -80,8 +81,9 @@ pub fn picture<S: Skin>(
   skin: impl FnOnce(&Gpu) -> S,
 ) -> Result<Picture, baseview::Error> {
   check_size(settings.size)?;
-  // a device of its own, so that nothing of this frame reaches an open window's
-  let graphics = Graphics::new()?;
+  // the windows' own device, so that no device of this plugin is let go of while another one
+  // draws, which can deadlock the nvidia 595 vulkan driver
+  let graphics = Graphics::shared()?;
   // a scale that is no number, or under zero, comes out as no pixels, which is refused
   let size = settings.size.map(|side| (side * scale).round() as u32);
   let values = params.iter().map(|param| (param.value)()).collect();
