@@ -53,7 +53,7 @@ const SOURCE_SIDE: usize = 1024;
 /// A set's color and roughness are divided by their mean over this many texels around each.
 const EVEN_REACH: usize = 24;
 /// The steps across one tile of the grid hammered paint's dishes are scattered over.
-const GRID: usize = 70;
+const GRID: usize = 200;
 /// The most of the grid's points a place leaves out, where its dishes run largest.
 const LEFT_OUT: f32 = 0.75;
 /// The steps across one tile of the field that says where dishes run larger.
@@ -64,8 +64,10 @@ const RADIUS: f32 = 0.75;
 const SEARCH: i64 = 3;
 /// How far below a ridge between two dishes its rim reaches, in grid steps.
 const RIM: f32 = 0.03;
+/// How many times the heights of hammered paint are blurred, for the paint film's rounding.
+const FILM: usize = 2;
 /// How deep a dish of hammered paint is, as a share of its radius.
-const DISH_DEPTH: f32 = 0.1;
+const DISH_DEPTH: f32 = 0.03;
 /// The folder the sources are in, each `<ID>_1K-JPG_<map>.jpg` as ambientCG names them.
 const SOURCES: &str = "crates/potpot/assets/source";
 /// The color maps of every set, as one array.
@@ -278,7 +280,12 @@ fn hammered() -> (Map, Map, Map) {
       (near.height, rim, near.cell)
     })
     .collect();
-  let height = |x: usize, y: usize| texels[(y % side) * side + x % side].0;
+  // the paint film rounds the rims, which a light blur of the heights stands for
+  let mut heights: Vec<f32> = texels.iter().map(|texel| texel.0).collect();
+  for _ in 0..FILM {
+    heights = smoothed(&heights, side);
+  }
+  let height = |x: usize, y: usize| heights[(y % side) * side + x % side];
   let texels_per_step = side as f32 / GRID as f32;
   let mut bent = Vec::with_capacity(side * side);
   let mut rough = Vec::with_capacity(side * side);
@@ -290,8 +297,8 @@ fn hammered() -> (Map, Map, Map) {
     let up = (height(x, y + side - 1) - height(x, y + 1)) * texels_per_step / 2.0;
     bent.push(Vec3::new(-across, -up, 1.0).normalize());
     rough.push(Vec3::splat(0.45 - 0.15 * rim));
-    let tone = 0.98 + 0.04 * scattered(cell as u32, 0, 5);
-    color.push(Vec3::splat(tone * (1.0 - 0.12 * rim)));
+    let tone = 0.99 + 0.02 * scattered(cell as u32, 0, 5);
+    color.push(Vec3::splat(tone * (1.0 - 0.04 * rim)));
   }
   let map = |texels| Map { side, texels };
   (map(color), map(bent), map(rough))
@@ -380,6 +387,22 @@ impl Dishes {
       cell,
     }
   }
+}
+
+/// Returns a square of values each the mean of the three by three around it, wrapped.
+fn smoothed(values: &[f32], side: usize) -> Vec<f32> {
+  (0..side * side)
+    .map(|index| {
+      let (x, y) = (index % side, index / side);
+      let mut sum = 0.0;
+      for dy in [side - 1, 0, 1] {
+        for dx in [side - 1, 0, 1] {
+          sum += values[(y + dy) % side * side + (x + dx) % side];
+        }
+      }
+      sum / 9.0
+    })
+    .collect()
 }
 
 /// Returns a smooth field from zero to one over the unit square, which tiles.
