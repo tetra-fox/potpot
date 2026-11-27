@@ -7,7 +7,7 @@ use potpot::parts::{self, Handle, Knob, LedArc, LedRing, LedStops, PushSwitch, V
 use potpot::{Light, Look, Material, Scene};
 use potpot_controls::interaction::Push;
 
-use super::{BLACK, Build, SEAT, SIZE, framed};
+use super::{BLACK, Build, PAGE, SEAT, framed};
 
 /// The color of the light built into the hardware.
 const CYAN: Vec3 = Vec3::new(0.2, 0.85, 1.0);
@@ -56,11 +56,10 @@ impl Build {
 /// - backlit push switches out, latched in and held
 /// - lines of light inlaid in the panel
 /// - slotted vents with light coming through the sheet behind them
-/// - a few lit shapes alone, which show the glow on its own
 ///
 /// The light is dimmed so that what glows shows.
 pub(super) fn industrial(look: Look) -> Scene {
-  let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
+  let (width, height) = (PAGE.x, PAGE.y);
   let mut build = Build::default();
   let metal = Material::brushed(GUNMETAL);
   build.put(parts::plate(width, height, 6.0), Mat4::IDENTITY, metal);
@@ -89,9 +88,9 @@ pub(super) fn industrial(look: Look) -> Scene {
 
   // three fields set into the panel, each named and underlined in light
   let fields = [
-    (200.0, 220.0, 240.0, 300.0, "SHIFT"),
-    (440.0, 220.0, 200.0, 300.0, "LEVEL"),
-    (660.0, 220.0, 200.0, 300.0, "MODE"),
+    (223.0, 220.0, 240.0, 300.0, "SHIFT"),
+    (463.0, 220.0, 200.0, 300.0, "LEVEL"),
+    (683.0, 220.0, 200.0, 300.0, "MODE"),
   ];
   for (x, y, wide, tall, name) in fields {
     build.put(
@@ -110,7 +109,7 @@ pub(super) fn industrial(look: Look) -> Scene {
 
   // a big knob in a ring of lights lit from the middle, a small one in an arc lit from its
   // start, and one with a light at each of its stops
-  let (x, y) = (200.0, 240.0);
+  let (x, y) = (223.0, 240.0);
   let big = Knob {
     skirt: 0.0,
     ..Knob::round(46.0, 30.0)
@@ -123,7 +122,7 @@ pub(super) fn industrial(look: Look) -> Scene {
     .extend(ring.lights(&segment, x, y, [0.5, 0.79], CYAN));
   build.knob(big, x, y, 0.79);
 
-  let (x, y) = (440.0, 240.0);
+  let (x, y) = (463.0, 240.0);
   let small = Knob {
     skirt: 0.0,
     ..Knob::round(32.0, 24.0)
@@ -135,7 +134,7 @@ pub(super) fn industrial(look: Look) -> Scene {
     .extend(arc.lights(&meshes, x, y, [0.0, 0.62], CYAN));
   build.knob(small, x, y, 0.62);
 
-  let (x, y) = (660.0, 240.0);
+  let (x, y) = (683.0, 240.0);
   let stops = LedStops::new(5, 54.0, 7.0);
   let (light, seat) = (Arc::new(stops.light()), Arc::new(stops.seat()));
   build.objects.extend(stops.seats(&seat, x, y));
@@ -153,7 +152,7 @@ pub(super) fn industrial(look: Look) -> Scene {
     (Push::Momentary, true, true, "HELD"),
   ];
   for (index, (push, on, held, name)) in switches.into_iter().enumerate() {
-    let (x, y) = (870.0, 110.0 + 80.0 * index as f32);
+    let (x, y) = (893.0, 140.0 + 80.0 * index as f32);
     let at = Mat4::from_translation(Vec3::new(x, y, 0.0));
     build.place(&collar, at, Material::satin(Vec3::splat(0.04)));
     let level = if on { 1.0 } else { 0.0 };
@@ -178,7 +177,7 @@ pub(super) fn industrial(look: Look) -> Scene {
     0.5,
   );
   let vent = Vent::new(8, 8.0, 52.0);
-  for x in [240.0, 620.0] {
+  for x in [322.0, 702.0] {
     build.put(
       vent.slots(),
       on_panel(x, strip + 30.0),
@@ -193,27 +192,11 @@ pub(super) fn industrial(look: Look) -> Scene {
   let plate = parts::chamfered_slab(160.0, 44.0, 3.0, 1.5, 3.0);
   build.put(
     plate,
-    on_panel(430.0, strip + 30.0),
+    on_panel(512.0, strip + 30.0),
     Material::brushed(Vec3::splat(0.5)),
   );
   // on the plate's top
-  build.lit_letters("POTPOT", Vec3::new(430.0, strip + 30.0, 3.0), 12.0);
-
-  // lit shapes alone on the bare panel, where nothing else catches their glow
-  let alone = 790.0;
-  build.put(
-    parts::led(10.0),
-    on_panel(alone, strip + 30.0),
-    Material::lamp(CYAN),
-  );
-  build.light_line(
-    &[
-      Vec2::new(alone + 30.0, strip + 30.0),
-      Vec2::new(alone + 110.0, strip + 30.0),
-    ],
-    1.0,
-  );
-  build.lit_letters("GLOW", Vec3::new(alone + 70.0, strip + 52.0, 0.0), 7.0);
+  build.lit_letters("POTPOT", Vec3::new(512.0, strip + 30.0, 3.0), 12.0);
 
   Scene {
     light: Light {

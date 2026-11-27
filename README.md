@@ -18,12 +18,13 @@ under one light, so shadows, shine and the spill of a lamp come from the scene.
 
 ```sh
 just example demo                 # a window with every kind of part on it
+just example gallery              # a page for each kind of part, switched by tabs
 just example equalizer            # dots, knobs and faders on the same four bands
 just example compressor           # a curve to drag, and meters from an audio thread
 just example synth                # a wave, a filter and an envelope on screens, and keys
 just example flat                 # a panel drawn with flat shapes alone
 just render demo out.png          # any of those, drawn to a file with no window
-just render gallery out.png knobs # a panel of parts, or faders, lights, lamp, rings, screens, retro, industrial, materials
+just render gallery out.png knobs # one page: knobs, faders, buttons, lights, rings, meters, pads, screens, retro, industrial, materials
 ```
 
 `just example flat` runs on `potpot-controls` and `potpot-window` alone. A panel's look is a `Skin`:

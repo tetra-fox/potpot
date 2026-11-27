@@ -6,14 +6,14 @@ use potpot::glam::{Mat4, Vec3};
 use potpot::parts::{self, Knob};
 use potpot::{Lamp, Light, Look, Material, Scene};
 
-use super::{Build, SIZE, framed};
+use super::{Build, PAGE, framed};
 
 /// Returns a grid of every material constructor, each named under its samples.
 ///
 /// Each cell holds a round knob of the material, a strip of it lying on the panel, and a second
 /// strip under a small white lamp. The panel is plain grey paint.
 pub(super) fn materials(look: Look) -> Scene {
-  let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
+  let (width, height) = (PAGE.x, PAGE.y);
   let red = Vec3::new(0.55, 0.06, 0.05);
   let samples = [
     ("matte", Material::matte(red)),

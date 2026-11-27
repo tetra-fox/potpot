@@ -1,18 +1,18 @@
 default:
     @just --list
 
-# open an example window: demo, equalizer, compressor, synth or flat
+# open an example window: demo, gallery, equalizer, compressor, synth or flat
 example name:
     cargo run --example {{ name }}
 
 # draw an example to a png at a scale, refined until it settles: `just render demo out.png 1.5`.
-# `gallery` takes the name of a panel of parts first, then a whole-number scale:
-# `just render gallery out.png knobs 2`. `--first` draws the first sample alone
+# `gallery` takes the name of a page first: `just render gallery out.png knobs 2`. `--first`
+# draws the first sample alone
 render name file *args:
     cargo run --example {{ name }} -- {{ file }} {{ args }}
 
-# the gpu time of each frame of a knob turned on the knobs panel, median and 95th percentile,
-# and of each sample the picture is refined by after
+# the gpu time of each frame of a knob turned on the gallery's knobs page, median and 95th
+# percentile, and of each sample the picture is refined by after
 timing:
     cargo run --release --example timing
 

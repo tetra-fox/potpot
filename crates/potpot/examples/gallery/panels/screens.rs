@@ -1,17 +1,16 @@
 //! Screens that show an equalizer, a scope and an envelope.
 
 use std::f32::consts::TAU;
-use std::sync::Arc;
 
-use potpot::glam::{Mat4, Vec2, Vec3};
-use potpot::parts::{self, Knob, Screen};
-use potpot::{Light, Look, Material, Object, Scene};
+use potpot::glam::{Mat4, Vec3};
+use potpot::parts::{self, Screen};
+use potpot::{Light, Look, Material, Scene};
 use potpot_controls::axis::Axis;
 use potpot_controls::flat::Flat;
 use potpot_controls::response::{self, Band, Kind};
 
 use super::shared::{self, GRID, Plot};
-use super::{BLACK, SIZE, framed, lettering, screws};
+use super::{BLACK, Catalog};
 
 /// The sample rate the curve is drawn for, in hertz.
 const RATE: f32 = 48000.0;
@@ -129,93 +128,41 @@ fn envelope(flat: &mut Flat, plot: Plot) {
 
 /// Returns three screens on a dark panel.
 ///
-/// Under them is a row of knobs that their light falls on. The large one shows an equalizer's
-/// curve, and the two beside it a scope's trace and an envelope. The light is dimmed so that what
-/// the screens show stands out.
+/// The first shows an equalizer's curve, the second a scope's trace and the third an envelope.
+/// The light is dimmed so that what the screens show stands out.
 pub(super) fn screens(look: Look) -> Scene {
-  let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let ink = Material::ink(Vec3::splat(0.8));
-  let put = |mesh: potpot::Mesh, at: Vec2, material: Material| Object {
-    mesh: Arc::new(mesh),
-    transform: Mat4::from_translation(at.extend(0.0)),
-    material,
-  };
-  let mut objects = vec![put(
-    parts::plate(width, height, 6.0),
-    Vec2::ZERO,
-    Material::powder_coat(Vec3::new(0.075, 0.08, 0.09)),
-  )];
-  let mut lamps = Vec::new();
-
-  let small = Screen::new(300.0, 130.0);
+  let plate = Material::powder_coat(Vec3::new(0.075, 0.08, 0.09));
+  let mut catalog = Catalog::new("SCREENS", plate, ink, [3, 1], 240.0);
+  let cells = catalog.cells.clone();
+  let screen = Screen::new(280.0, 200.0);
   type Picture = fn(&mut Flat, Plot);
-  let shown: [(&str, Screen, Vec2, Vec3, Picture); 3] = [
-    (
-      "EQUALIZER",
-      Screen::new(600.0, 300.0),
-      Vec2::new(340.0, 215.0),
-      Vec3::new(0.3, 0.9, 1.0),
-      equalizer,
-    ),
-    (
-      "SCOPE",
-      small,
-      Vec2::new(830.0, 130.0),
-      Vec3::new(0.3, 1.0, 0.45),
-      scope,
-    ),
-    (
-      "ENVELOPE",
-      small,
-      Vec2::new(830.0, 300.0),
-      Vec3::new(1.0, 0.65, 0.15),
-      envelope,
-    ),
+  let shown: [(&str, Vec3, Picture); 3] = [
+    ("EQUALIZER", Vec3::new(0.3, 0.9, 1.0), equalizer),
+    ("SCOPE", Vec3::new(0.3, 1.0, 0.45), scope),
+    ("ENVELOPE", Vec3::new(1.0, 0.65, 0.15), envelope),
   ];
-  for (name, screen, middle, color, picture) in shown {
+  for ((name, color, picture), cell) in shown.into_iter().zip(&cells) {
+    let middle = cell.middle;
     let glass = shared::glass();
-    objects.push(put(screen.face(), middle, glass));
-    objects.push(put(screen.bezel(), middle, Material::glossy(BLACK)));
-    let over = Vec2::new(0.0, -screen.length / 2.0 - screen.border - 12.0);
-    objects.push(put(lettering(name, 7.0), middle + over, ink));
+    let on_panel = Mat4::from_translation(middle.extend(0.0));
+    let build = &mut catalog.build;
+    build.put(screen.face(), on_panel, glass);
+    build.put(screen.bezel(), on_panel, Material::glossy(BLACK));
     let mut flat = Flat::default();
     picture(&mut flat, Plot::of(&screen, middle, 10.0));
-    objects.extend(parts::picture(&flat, middle.x, middle.y, glass, 0));
-    lamps.extend(screen.lamps(middle.x, middle.y, color, 1.0));
+    build
+      .objects
+      .extend(parts::picture(&flat, middle.x, middle.y, glass, 0));
+    build
+      .lamps
+      .extend(screen.lamps(middle.x, middle.y, color, 1.0));
+    catalog.label(*cell, name);
   }
 
-  // knobs that show the screens' light on their sides and in their shine
-  let knob = Knob::round(34.0, 30.0);
-  let body = Arc::new(knob.body());
-  let materials = [
-    Material::chrome(Vec3::splat(0.8)),
-    Material::glossy(BLACK),
-    Material::satin(Vec3::new(0.74, 0.72, 0.66)),
-  ];
-  for index in 0..7 {
-    let at = Vec2::new(100.0 + 137.0 * index as f32, 500.0);
-    objects.push(Object {
-      mesh: Arc::clone(&body),
-      transform: Mat4::from_translation(at.extend(0.0)),
-      material: materials[index % materials.len()],
-    });
-    let marks = parts::ticks(
-      11,
-      parts::KNOB_SWEEP,
-      knob.radius + 6.0,
-      knob.radius + 12.0,
-      5,
-    );
-    objects.push(put(marks, at, ink));
-  }
-
-  objects.extend(screws());
-  Scene {
-    light: Light {
-      color: Vec3::splat(0.6),
-      ..Light::default()
-    },
-    lamps,
-    ..framed(look, objects)
-  }
+  let light = Light {
+    color: Vec3::splat(0.6),
+    ..Light::default()
+  };
+  catalog.finish(look, light)
 }

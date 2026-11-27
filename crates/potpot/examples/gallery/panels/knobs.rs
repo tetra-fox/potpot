@@ -1,12 +1,12 @@
-//! The gallery of knob styles.
+//! Every knob style.
 
 use std::sync::Arc;
 
-use potpot::glam::{Mat4, Vec3};
+use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Knob, Top};
-use potpot::{Anisotropy, Look, Material, Object, Scene, Textures};
+use potpot::{Anisotropy, Light, Look, Material, Scene, Textures};
 
-use super::{ALUMINUM, BLACK, SIZE, framed, lettering, screws};
+use super::{ALUMINUM, BLACK, Catalog, cells};
 
 /// The way a knob of the gallery is marked.
 #[derive(Clone, Copy)]
@@ -29,9 +29,15 @@ struct Shown {
   cap: Option<Material>,
 }
 
+/// The knobs' grid, in columns and rows.
+const GRID: [usize; 2] = [5, 3];
+/// The height of each knob's cell over its label.
+///
+/// Three rows of it fill the page.
+const ROOM: f32 = 156.0;
+
 /// Returns every knob style in rows of five, each over a scale.
 pub fn knobs(look: Look) -> Scene {
-  let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
   let (radius, tall) = (58.0, 42.0);
   let white = Vec3::splat(0.86);
   let aluminum = Material::spun(ALUMINUM);
@@ -171,58 +177,48 @@ pub fn knobs(look: Look) -> Scene {
     radius + 13.0,
     5,
   ));
-  let mut objects = vec![Object {
-    mesh: Arc::new(parts::plate(width, height, 6.0)),
-    transform: Mat4::IDENTITY,
-    material: Material::brushed(Vec3::new(0.55, 0.57, 0.6)),
-  }];
-  for (index, shown) in knobs.into_iter().enumerate() {
-    let (x, y) = middle(index);
+  let engraved = Material::ink(Vec3::splat(0.08));
+  let plate = Material::brushed(Vec3::new(0.55, 0.57, 0.6));
+  let mut catalog = Catalog::new("KNOBS", plate, engraved, GRID, ROOM);
+  for (index, (shown, cell)) in knobs.into_iter().zip(catalog.cells.clone()).enumerate() {
+    let (x, y) = (cell.middle.x, cell.middle.y);
     let transform = turned(index, turn(index));
-    objects.push(Object {
-      mesh: Arc::clone(&scale),
-      transform: Mat4::from_translation(Vec3::new(x, y, 0.0)),
-      material: Material::ink(Vec3::splat(0.85)),
-    });
-    let mut part = |mesh: potpot::Mesh, material: Material| {
-      objects.push(Object {
-        mesh: Arc::new(mesh),
-        transform,
-        material,
-      });
-    };
-    part(shown.knob.body(), shown.material);
+    let build = &mut catalog.build;
+    build.place(
+      &scale,
+      Mat4::from_translation(Vec3::new(x, y, 0.0)),
+      Material::ink(Vec3::splat(0.85)),
+    );
+    build.put(shown.knob.body(), transform, shown.material);
     if let Some(cap) = shown.cap {
-      part(shown.knob.cap(0.86), cap);
+      build.put(shown.knob.cap(0.86), transform, cap);
     }
     match shown.marker {
-      Marker::Line => part(shown.knob.line(), Material::matte(shown.mark)),
-      Marker::Dot => part(shown.knob.dot(), Material::matte(shown.mark)),
+      Marker::Line => build.put(shown.knob.line(), transform, Material::matte(shown.mark)),
+      Marker::Dot => build.put(shown.knob.dot(), transform, Material::matte(shown.mark)),
       Marker::None => {}
     }
-    // its name engraved under it, and the ends of its scale numbered
-    let engraved = Material::ink(Vec3::splat(0.08));
-    let mut letters = |text: &str, x: f32, y: f32, tall: f32| {
-      objects.push(Object {
-        mesh: Arc::new(lettering(text, tall)),
-        transform: Mat4::from_translation(Vec3::new(x, y, 0.0)),
-        material: engraved,
-      });
-    };
-    letters(shown.name, x, y + radius + 34.0, 9.0);
-    letters("0", x - radius - 4.0, y + radius + 14.0, 7.0);
-    letters("10", x + radius + 6.0, y + radius + 14.0, 7.0);
+    // the ends of its scale numbered, and its name under it
+    build.letters(
+      "0",
+      Vec3::new(x - radius - 4.0, y + radius + 14.0, 0.0),
+      7.0,
+      engraved,
+    );
+    build.letters(
+      "10",
+      Vec3::new(x + radius + 6.0, y + radius + 14.0, 0.0),
+      7.0,
+      engraved,
+    );
+    catalog.label(cell, shown.name);
   }
-  objects.extend(screws());
-  framed(look, objects)
+  catalog.finish(look, Light::default())
 }
 
 /// Returns the middle of a knob of the rows.
-fn middle(index: usize) -> (f32, f32) {
-  (
-    112.0 + 200.0 * (index % 5) as f32,
-    112.0 + 208.0 * (index / 5) as f32,
-  )
+fn middle(index: usize) -> Vec2 {
+  cells(GRID, ROOM)[index].middle
 }
 
 /// Returns the turn a knob of the rows is drawn at.
@@ -237,6 +233,6 @@ pub fn turn(index: usize) -> f32 {
 /// The turn runs from zero to one. The parts that turn with the knob have it, and nothing else
 /// on the panel does.
 pub fn turned(index: usize, turn: f32) -> Mat4 {
-  let (x, y) = middle(index);
-  parts::knob_transform(x, y, turn, parts::KNOB_SWEEP)
+  let at = middle(index);
+  parts::knob_transform(at.x, at.y, turn, parts::KNOB_SWEEP)
 }

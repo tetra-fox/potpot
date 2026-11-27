@@ -1,238 +1,200 @@
-//! Lit buttons, push switches, level meters and an XY pad.
+//! Small lights, lines of light and lamps.
 
-use std::f32::consts::FRAC_PI_2;
 use std::sync::Arc;
 
-use potpot::glam::{Mat4, Vec3};
-use potpot::parts::{self, Button, Meter, Pad, PushSwitch, Vu};
-use potpot::{Light, Look, Material, Object, Scene};
-use potpot_controls::interaction::Push;
+use potpot::glam::{Mat4, Vec2, Vec3};
+use potpot::parts::{self, Button, Knob};
+use potpot::{Lamp, Light, Look, Material, Object, Scene};
 
-use super::{SEAT, SIZE, framed, screws};
+use super::{BLACK, Build, Catalog, SEAT};
 
-/// Returns rubber buttons and level meters on a dark panel.
+/// The colors the lights are lit in.
+const COLORS: [Vec3; 5] = [
+  Vec3::new(1.0, 0.12, 0.06),
+  Vec3::new(1.0, 0.75, 0.1),
+  Vec3::new(0.1, 0.9, 0.3),
+  Vec3::new(0.1, 0.4, 1.0),
+  Vec3::new(0.95, 0.95, 0.9),
+];
+
+/// Returns small lights, lines of light and lamps on a pale plate.
 ///
-/// Some of the buttons are lit, the meters stand at a few levels and the pad's puck is off its
-/// middle. The light is dimmed so that what glows shows.
+/// The top row is small lights of two sizes, the last of each row dark, and lines of light. The
+/// bottom row is a lamp's light on chrome and gloss, on paint, and from a lit button. The light
+/// is dimmed so that what glows shows.
 pub(super) fn lights(look: Look) -> Scene {
-  let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
-  let rubber = Material::silicone(Vec3::new(0.62, 0.62, 0.60));
-  let colors = [
-    Vec3::new(1.0, 0.25, 0.05),
-    Vec3::new(0.1, 0.9, 0.3),
-    Vec3::new(0.1, 0.5, 1.0),
-    Vec3::new(1.0, 0.75, 0.1),
-    Vec3::new(0.9, 0.1, 0.7),
-    Vec3::new(0.95, 0.95, 0.9),
-  ];
+  let ink = Material::ink(Vec3::splat(0.08));
+  let plate = Material::satin(Vec3::new(0.55, 0.56, 0.58));
+  let mut catalog = Catalog::new("LIGHTS", plate, ink, [3, 2], 180.0);
+  let cells = catalog.cells.clone();
 
-  let pad = Button::pad(70.0, 12.0);
-  let round = Button::round(46.0, 10.0);
-  let key = Button::key(70.0, 28.0, 7.0);
-  let pill = Button::pill(26.0, 60.0, 8.0);
-  let wide = Meter::ladder(16, 18.0, 420.0);
-  let thin = Meter::ladder(24, 9.0, 420.0);
-  let lying = Meter::ladder(14, 20.0, 250.0);
-  // a shape's body and then its seat, or for a switch its plunger and then its collar
-  let pair = |body: potpot::Mesh, seat: potpot::Mesh| [Arc::new(body), Arc::new(seat)];
-  let pads = pair(pad.body(), pad.seat(3.0));
-  let rounds = pair(round.body(), round.seat(2.5));
-  let keys = pair(key.body(), key.seat(2.5));
-  let pills = pair(pill.body(), pill.seat(2.5));
-  let wides = pair(wide.segment(), wide.seat());
-  let thins = pair(thin.segment(), thin.seat());
-  let lyings = pair(lying.segment(), lying.seat());
-  let square = PushSwitch::square(30.0, 18.0);
-  let squares = pair(square.plunger(), square.collar());
-  let circle = PushSwitch::round(30.0, 18.0);
-  let circles = pair(circle.plunger(), circle.collar());
-  let mut objects = vec![Object {
-    mesh: Arc::new(parts::plate(width, height, 6.0)),
-    transform: Mat4::IDENTITY,
-    material: Material::powder_coat(Vec3::new(0.075, 0.08, 0.09)),
-  }];
-  let mut lamps = Vec::new();
-  let seat = Material::matte(SEAT);
-
-  let mut button = |shape: Button,
-                    [body, gap]: &[Arc<potpot::Mesh>; 2],
-                    x: f32,
-                    y: f32,
-                    level: f32,
-                    color: Vec3,
-                    held: f32| {
-    objects.push(Object {
-      mesh: Arc::clone(gap),
-      transform: Mat4::from_translation(Vec3::new(x, y, 0.0)),
-      material: seat,
-    });
-    objects.push(Object {
-      mesh: Arc::clone(body),
-      transform: shape.transform(x, y, held),
-      material: rubber.lit(color, level, shape.emission_radius()),
-    });
-    if level > 0.0 {
-      lamps.push(shape.lamp(x, y, color, level));
-    }
-  };
-  // a grid of pads, lit here and there, one of them dimly and one held down
-  for index in 0..16 {
-    let (x, y) = (
-      72.0 + 86.0 * (index % 4) as f32,
-      82.0 + 86.0 * (index / 4) as f32,
-    );
-    let level = match index {
-      0 | 5 | 6 | 11 | 13 => 1.0,
-      9 => 0.35,
-      _ => 0.0,
-    };
-    let held = if index == 6 { 1.0 } else { 0.0 };
-    button(pad, &pads, x, y, level, colors[index % colors.len()], held);
-  }
-  for index in 0..5 {
-    let level = if index == 1 || index == 4 { 1.0 } else { 0.0 };
-    button(
-      round,
-      &rounds,
-      72.0 + 64.5 * index as f32,
-      470.0,
-      level,
-      colors[index + 1],
-      0.0,
-    );
-  }
-  for index in 0..4 {
-    let level = if index == 2 { 1.0 } else { 0.0 };
-    button(
-      key,
-      &keys,
-      72.0 + 86.0 * index as f32,
-      560.0,
-      level,
-      colors[3],
-      0.0,
-    );
-  }
-  for index in 0..12 {
-    let (x, y) = (
-      440.0 + 44.0 * (index % 6) as f32,
-      110.0 + 84.0 * (index / 6) as f32,
-    );
-    let level = if index % 6 == index / 6 * 3 + 1 {
-      1.0
-    } else {
-      0.0
-    };
-    button(
-      pill,
-      &pills,
-      x,
-      y,
-      level,
-      colors[(index + 2) % colors.len()],
-      0.0,
-    );
-  }
-
-  // push switches out, latched in and held all the way in: square ones that light when
-  // on, then round black ones
-  let black = Material::glossy(Vec3::new(0.05, 0.05, 0.055));
-  let collar = Material::chrome(Vec3::splat(0.7));
-  let switches = [
-    (square, Push::Latching, false, false),
-    (square, Push::Latching, true, false),
-    (square, Push::Momentary, true, true),
-    (circle, Push::Latching, false, false),
-    (circle, Push::Latching, true, false),
-    (circle, Push::Momentary, true, true),
-  ];
-  for (index, (switch, push, on, held)) in switches.into_iter().enumerate() {
-    let (x, y) = (452.0 + 48.0 * index as f32, 300.0);
-    let round = index >= 3;
-    let [plunger, ring] = if round { &circles } else { &squares };
-    objects.push(Object {
-      mesh: Arc::clone(ring),
-      transform: Mat4::from_translation(Vec3::new(x, y, 0.0)),
-      material: collar,
-    });
-    let amber = Vec3::new(1.0, 0.55, 0.05);
-    let level = if on { 1.0 } else { 0.0 };
-    objects.push(Object {
-      mesh: Arc::clone(plunger),
-      transform: switch.transform(x, y, push.depth(on, held)),
-      material: if round {
-        black
-      } else {
-        rubber.lit(amber, level, switch.plunger.emission_radius())
-      },
-    });
-    if on && !round {
-      lamps.push(switch.plunger.lamp(x, y, amber, 0.6));
+  // small lights of two sizes, each row ending in a dark one
+  for (cell, size, count) in [(cells[0], 10.0, 6), (cells[1], 20.0, 4)] {
+    let apart = size * 2.8;
+    let first = cell.middle.x - apart * (count - 1) as f32 / 2.0;
+    for index in 0..count {
+      let at = Vec2::new(first + apart * index as f32, cell.middle.y);
+      let level = if index + 1 < count { 1.0 } else { 0.0 };
+      let color = COLORS[index % COLORS.len()];
+      let (light, lamp) = small_lamp(at, color, level, size, size * 4.0);
+      catalog.build.objects.extend(light);
+      catalog.build.lamps.extend(lamp);
     }
   }
+  catalog.label(cells[0], "LED");
+  catalog.label(cells[1], "LARGE LED");
 
-  // three pairs of meters, each at its own level, the first pair holding a peak
-  let foot = 540.0;
-  let meters = [
-    (wide, &wides, 760.0, 0.78, Some(0.92)),
-    (wide, &wides, 792.0, 0.64, Some(0.80)),
-    (thin, &thins, 870.0, 0.42, None),
-    (thin, &thins, 888.0, 1.0, None),
-    (thin, &thins, 940.0, 0.0, None),
-    (thin, &thins, 958.0, 0.18, None),
+  // a straight line of light, and one that turns down at both ends at half its level
+  let cyan = Vec3::new(0.2, 0.85, 1.0);
+  let middle = cells[2].middle;
+  let lines = [
+    (vec![Vec2::new(-110.0, -30.0), Vec2::new(110.0, -30.0)], 1.0),
+    (
+      vec![
+        Vec2::new(-110.0, 20.0),
+        Vec2::new(-100.0, 30.0),
+        Vec2::new(100.0, 30.0),
+        Vec2::new(110.0, 20.0),
+      ],
+      0.5,
+    ),
   ];
-  for (meter, [segment, gap], x, level, peak) in meters {
-    objects.extend(meter.seats(gap, x, foot));
-    objects.extend(meter.lights(segment, x, foot, level, peak));
-    lamps.extend(meter.lamp(x, foot, level));
+  for (path, level) in lines {
+    let path: Vec<Vec2> = path.into_iter().map(|at| middle + at).collect();
+    let build = &mut catalog.build;
+    build.put(
+      parts::light_line_seat(&path, 1.4, 0.7),
+      Mat4::IDENTITY,
+      Material::matte(SEAT),
+    );
+    build.put(
+      parts::light_line(&path, 1.4),
+      Mat4::IDENTITY,
+      Material::lamp(cyan * level),
+    );
   }
-  // and a row of lights lying on its side, which is a meter turned a quarter
-  let across =
-    Mat4::from_translation(Vec3::new(440.0, 420.0, 0.0)) * Mat4::from_rotation_z(FRAC_PI_2);
-  let turned = |object: Object| Object {
-    transform: across * object.transform,
-    ..object
+  catalog.label(cells[2], "LIGHT LINE");
+
+  // a red lamp between a chrome knob and a glossy one, with posts below it
+  let knob = Arc::new(Knob::round(40.0, 32.0).body());
+  let chrome = Material::chrome(Vec3::splat(0.8));
+  let middle = cells[3].middle;
+  lamp_between(
+    &mut catalog.build,
+    middle,
+    COLORS[0],
+    &knob,
+    [chrome, Material::glossy(BLACK)],
+  );
+  let posts = [
+    (-50.0, chrome),
+    (0.0, Material::matte(Vec3::splat(0.8))),
+    (50.0, Material::glossy(BLACK)),
+  ];
+  for (x, material) in posts {
+    let post = parts::slab(12.0, 12.0, 26.0, 6.0);
+    catalog
+      .build
+      .put(post, at(middle + Vec2::new(x, 64.0)), material);
+  }
+  catalog.label(cells[3], "LAMP ON METAL");
+
+  // a blue lamp between a spun knob and a cream one, over painted blocks
+  let middle = cells[4].middle;
+  let cream = Material::glossy(Vec3::new(0.74, 0.72, 0.66));
+  let spun = Material::spun(super::ALUMINUM);
+  lamp_between(&mut catalog.build, middle, COLORS[3], &knob, [spun, cream]);
+  let blocks = [
+    (-50.0, Vec3::splat(0.85)),
+    (0.0, Vec3::new(0.9, 0.35, 0.05)),
+    (50.0, Vec3::new(0.08, 0.3, 0.85)),
+  ];
+  for (x, color) in blocks {
+    let block = parts::slab(36.0, 28.0, 20.0, 4.0);
+    catalog.build.put(
+      block,
+      at(middle + Vec2::new(x, 70.0)),
+      Material::matte(color),
+    );
+  }
+  catalog.label(cells[4], "LAMP ON PAINT");
+
+  // a lit pad beside painted blocks, which its light falls on
+  let middle = cells[5].middle;
+  let pad = Button::pad(64.0, 12.0);
+  let green = COLORS[2];
+  let build = &mut catalog.build;
+  build.put(pad.seat(3.0), at(middle), Material::matte(SEAT));
+  let lit = Material::silicone(Vec3::splat(0.62)).lit(green, 1.0, pad.emission_radius());
+  build.put(pad.body(), pad.transform(middle.x, middle.y, 0.0), lit);
+  build.lamps.push(pad.lamp(middle.x, middle.y, green, 1.0));
+  for (x, color) in [
+    (-80.0, Vec3::splat(0.85)),
+    (80.0, Vec3::new(0.9, 0.35, 0.05)),
+  ] {
+    let block = parts::slab(40.0, 90.0, 26.0, 6.0);
+    build.put(
+      block,
+      at(middle + Vec2::new(x, 0.0)),
+      Material::matte(color),
+    );
+  }
+  catalog.label(cells[5], "BUTTON LAMP");
+
+  let light = Light {
+    color: Vec3::splat(0.6),
+    bounce: 3.0,
+    ..Light::default()
   };
-  let [segment, gap] = &lyings;
-  objects.extend(lying.seats(gap, 0.0, 0.0).map(turned));
-  objects.extend(lying.lights(segment, 0.0, 0.0, 0.7, None).map(turned));
+  catalog.finish(look, light)
+}
 
-  // a pad whose lit puck is most of the way to its top right corner
-  let xy = Pad::new(190.0, 130.0);
-  let (x, y) = (565.0, 525.0);
-  let on_panel = Mat4::from_translation(Vec3::new(x, y, 0.0));
-  let on_pad = xy.transform(x, y, 0.8, 0.7);
-  let blue = colors[2];
-  objects.extend([
-    Object {
-      mesh: Arc::new(xy.surface()),
-      transform: on_panel,
-      material: Material::glossy(Vec3::splat(0.02)),
-    },
-    Object {
-      mesh: Arc::new(xy.rim()),
-      transform: on_panel,
-      material: collar,
-    },
-    Object {
-      mesh: Arc::new(xy.puck()),
-      transform: on_pad,
-      material: rubber.lit(blue, 1.0, xy.puck.emission_radius()),
-    },
-  ]);
-  let puck = on_pad.transform_point3(Vec3::ZERO);
-  lamps.push(xy.puck.lamp(puck.x, puck.y, blue, 1.0));
+/// Returns the transform of a place on the page.
+fn at(place: Vec2) -> Mat4 {
+  Mat4::from_translation(place.extend(0.0))
+}
 
-  // a needle meter under the ladders, its lamp on
-  objects.extend(Vu::new(112.0, 60.0).objects(868.0, 588.0, 0.62, 1.0));
-
-  objects.extend(screws());
-  Scene {
-    light: Light {
-      color: Vec3::splat(0.6),
-      ..Light::default()
-    },
-    lamps,
-    ..framed(look, objects)
+/// Adds a lamp at `middle` with a knob to each side.
+///
+/// The knobs are of `materials`, the left one first, and the lamp is lit in `color`.
+fn lamp_between(
+  build: &mut Build,
+  middle: Vec2,
+  color: Vec3,
+  knob: &Arc<potpot::Mesh>,
+  materials: [Material; 2],
+) {
+  let (light, lamp) = small_lamp(middle, color, 1.0, 20.0, 150.0);
+  build.objects.extend(light);
+  build.lamps.extend(lamp);
+  for (x, material) in [-90.0, 90.0].into_iter().zip(materials) {
+    build.place(knob, at(middle + Vec2::new(x, 0.0)), material);
   }
+}
+
+/// Returns a small round light in its seat, and its lamp if it is lit.
+///
+/// The light is `size` across, lit in `color` at `level`, and its lamp reaches `reach`.
+fn small_lamp(
+  middle: Vec2,
+  color: Vec3,
+  level: f32,
+  size: f32,
+  reach: f32,
+) -> ([Object; 2], Option<Lamp>) {
+  let objects = [
+    Object {
+      mesh: Arc::new(parts::led_seat(size)),
+      transform: at(middle),
+      material: Material::matte(SEAT),
+    },
+    Object {
+      mesh: Arc::new(parts::led(size)),
+      transform: at(middle),
+      material: parts::led_material(color, level, size),
+    },
+  ];
+  let over = middle.extend(size);
+  let lamp = (level > 0.0).then(|| parts::led_lamp(over, color, level, size, reach));
+  (objects, lamp)
 }

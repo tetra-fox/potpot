@@ -6,7 +6,7 @@ use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Button, Edge, Grip, Knob, Meter, Top};
 use potpot::{Light, Look, Material, Object, Scene};
 
-use super::{Build, SEAT, SIZE, framed};
+use super::{Build, PAGE, SEAT, framed};
 
 /// Returns a soft synth's front in the manner of the mid 2000s.
 ///
@@ -17,7 +17,7 @@ use super::{Build, SEAT, SIZE, framed};
 /// - lettering everywhere
 /// - a wide soft light on it all
 pub(super) fn retro(look: Look) -> Scene {
-  let (width, height) = (SIZE[0] as f32, SIZE[1] as f32);
+  let (width, height) = (PAGE.x, PAGE.y);
   let blue = Vec3::new(0.13, 0.4, 0.74);
   let mut build = Build::default();
   let at = |x: f32, y: f32, z: f32| Mat4::from_translation(Vec3::new(x, y, z));

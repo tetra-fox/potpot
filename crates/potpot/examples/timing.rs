@@ -1,6 +1,6 @@
 //! The GPU time of each frame of a knob's drag.
 //!
-//! `just timing` turns the first knob of the gallery's knobs panel through 120 frames at scale
+//! `just timing` turns the first knob of the gallery's knobs page through 120 frames at scale
 //! 2, and prints the median and the 95th percentile of the time each frame takes on the GPU, in
 //! milliseconds. It also prints the median time of each of 60 samples the first picture is
 //! refined by, all of which is unsettled, and of 60 samples after the drag, which refine the
@@ -41,7 +41,7 @@ fn main() {
   }))
   .expect("the adapter opens a device with timestamp queries");
 
-  let size = SIZE.map(|side| side * SCALE);
+  let size = SIZE.map(|side| side as u32 * SCALE);
   let format = wgpu::TextureFormat::Rgba8UnormSrgb;
   let target = device
     .create_texture(&wgpu::TextureDescriptor {
@@ -105,9 +105,11 @@ fn main() {
     });
   };
 
-  let mut scene = knobs::knobs(Look::default());
+  let knobs_page = panels::page("knobs").expect("the gallery has a knobs page");
+  let (mut scene, _) = panels::panel(knobs_page, Look::default());
   // the parts of the first knob, which turn with it
-  let first = knobs::turned(0, knobs::turn(0));
+  let turned = |turn: f32| panels::on_panel(knobs::turned(0, turn));
+  let first = turned(knobs::turn(0));
   let turning: Vec<usize> = (scene.objects.iter().enumerate())
     .filter(|(_, object)| object.transform == first)
     .map(|(index, _)| index)
@@ -170,9 +172,9 @@ fn main() {
 
   let mut frames = Vec::with_capacity(FRAMES);
   for frame in 1..=FRAMES {
-    let turned = knobs::turned(0, knobs::turn(0) + frame as f32 * 0.005);
+    let now = turned(knobs::turn(0) + frame as f32 * 0.005);
     for &index in &turning {
-      scene.objects[index].transform = turned;
+      scene.objects[index].transform = now;
     }
     frames.push(timed(&mut renderer, &scene));
   }
