@@ -33,6 +33,8 @@ const SHADOW_SIZE: u32 = 2048;
 ///
 /// The map holds how high everything on the panel is.
 const HEIGHT_SIZE: u32 = 1024;
+/// The samples of a pixel its mean is refined to while the scene stands still.
+const SETTLED: u32 = 64;
 /// The bounce map's width and height in texels.
 ///
 /// The map holds the light that comes off everything on the panel. It is small, since a point
@@ -87,6 +89,8 @@ pub struct Place {
 pub struct Renderer {
   pipelines: Pipelines,
   globals: wgpu::Buffer,
+  /// Whether what is drawn next is each pixel's first sample, for the scene pass.
+  refine: wgpu::Buffer,
   globals_group: wgpu::BindGroup,
   shadow_map: wgpu::TextureView,
   /// The height of everything on the panel, seen from straight above.
@@ -116,6 +120,8 @@ pub struct Renderer {
   unfilled: bool,
   layouts: Layouts,
   present_options: wgpu::Buffer,
+  /// The fewest samples any pixel's mean of the picture holds.
+  least: u32,
   /// Whether the target encodes sRGB itself.
   target_encodes: bool,
   /// The greatest width and height of a texture of the device.
@@ -287,13 +293,20 @@ impl Renderer {
       })
     };
     let globals = uniform("potpot globals", size_of::<Globals>());
+    let refine = uniform("potpot refine", size_of::<[u32; 4]>());
     let globals_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
       label: Some("potpot globals"),
       layout: &layouts.globals,
-      entries: &[wgpu::BindGroupEntry {
-        binding: 0,
-        resource: globals.as_entire_binding(),
-      }],
+      entries: &[
+        wgpu::BindGroupEntry {
+          binding: 0,
+          resource: globals.as_entire_binding(),
+        },
+        wgpu::BindGroupEntry {
+          binding: 1,
+          resource: refine.as_entire_binding(),
+        },
+      ],
     });
 
     let read = wgpu::TextureUsages::TEXTURE_BINDING;
@@ -450,6 +463,7 @@ impl Renderer {
     Self {
       pipelines,
       globals,
+      refine,
       globals_group,
       shadow_map,
       height_map,
@@ -465,6 +479,7 @@ impl Renderer {
       texture_maps,
       unfilled: true,
       present_options: uniform("potpot present", size_of::<Present>()),
+      least: SETTLED,
       target_encodes: target.is_srgb(),
       max_side: device.limits().max_texture_dimension_2d,
       picture: None,
@@ -702,6 +717,12 @@ impl Renderer {
       (Redrawn::Whole, Redrawn::Whole)
     };
     let redrawn = if fresh { Redrawn::Whole } else { redrawn };
+    // a scene that stands still is drawn one more sample, until every pixel is settled
+    let refining = redrawn == Redrawn::Nothing && self.least < SETTLED;
+    self.least = match redrawn {
+      Redrawn::Nothing => (self.least + u32::from(refining)).min(SETTLED),
+      _ => 1,
+    };
     (self.wiped, self.bands, self.painted) = (wiped, bands, painted);
     if let Redrawn::Within(_) = redrawn {
       if self.wiped.len() > self.wipe_room {
@@ -710,7 +731,7 @@ impl Renderer {
       }
       queue.write_buffer(&self.wipe, 0, bytemuck::cast_slice(&self.wiped));
     }
-    self.anywhere = !presented_alike || redrawn == Redrawn::Whole;
+    self.anywhere = !presented_alike || redrawn == Redrawn::Whole || refining;
     self.parts.clear();
     if let Redrawn::Within(_) = redrawn {
       // the haze shows only with a bloom, and the soften reaches a pixel
@@ -748,8 +769,28 @@ impl Renderer {
       }
       self.unfilled = false;
     }
-    self.draw_picture(device, queue, &picture, shapes, light, redrawn, reblur);
+    let mut picture = picture;
+    self.draw_picture(
+      device,
+      queue,
+      &mut picture,
+      shapes,
+      light,
+      redrawn,
+      refining,
+      reblur,
+    );
     self.picture = Some(picture);
+  }
+
+  /// Returns whether the picture is settled.
+  ///
+  /// A picture is refined one more sample at each [`Renderer::prepare`] of the scene it was
+  /// last drawn of, which smooths its soft shadows and shading. It is settled when every pixel
+  /// has 64 samples, and from then on such a prepare draws nothing. Any change of the scene
+  /// starts the part it changes over, and the picture is not settled until that part is.
+  pub fn settled(&self) -> bool {
+    self.least >= SETTLED
   }
 
   /// Returns the parts of the target where the picture is new.
@@ -806,22 +847,32 @@ impl Renderer {
     }
   }
 
-  /// Draws what is stale of the maps and then of the picture.
+  /// Draws what is stale of the maps and then of the picture, and the picture's mean.
   ///
   /// `shapes` is the parts of the shadow map and of the height map to draw again, and `light`
-  /// the part of the bounce map, which is left alone unless light bounces. `reblur` blurs all
-  /// of the glow map again, as a new blur takes.
+  /// the part of the bounce map, which is left alone unless light bounces. `redrawn` is the
+  /// part of the picture to draw again, where its mean starts over. `refining` draws one more
+  /// sample of the whole picture into each pixel's mean instead. `reblur` blurs all of the
+  /// glow map again, as a new blur takes.
   #[expect(clippy::too_many_arguments, reason = "each is a part of what is stale")]
   fn draw_picture(
     &self,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    picture: &Picture,
+    picture: &mut Picture,
     shapes: [Redrawn; 2],
     light: Redrawn,
     redrawn: Redrawn,
+    refining: bool,
     reblur: bool,
   ) {
+    // the scene pass draws all of a sample that refines, and the mean takes it in
+    let (drawn, first) = if refining {
+      (Redrawn::Whole, 0)
+    } else {
+      (redrawn, 1)
+    };
+    let redrawn = drawn;
     let light = if self.held_globals.bounces() {
       light
     } else {
@@ -830,6 +881,7 @@ impl Renderer {
     if [shapes[0], shapes[1], light, redrawn] == [Redrawn::Nothing; 4] && !reblur {
       return;
     }
+    queue.write_buffer(&self.refine, 0, bytemuck::bytes_of(&[first, 0, 0, 0]));
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
       label: Some("potpot picture"),
     });
@@ -953,6 +1005,7 @@ impl Renderer {
       pass.set_pipeline(&self.pipelines.scene[smooth]);
       pass.set_bind_group(0, &self.globals_group, &[]);
       pass.set_bind_group(1, &self.maps_group, &[]);
+      pass.set_bind_group(2, &picture.counted[picture.side], &[]);
       self.draw_objects(&mut pass, within, Objects::All);
       drop(pass);
 
@@ -980,6 +1033,50 @@ impl Renderer {
         pass.set_bind_group(0, samples, &[]);
         pass.draw(0..3, 0..1);
       }
+
+      // the next mean: the one standing with the sample added, or with the sample in place of
+      // it where the sample starts it over
+      let next = 1 - picture.side;
+      let (mean, count) = &picture.means[next];
+      let target = |view| {
+        Some(wgpu::RenderPassColorAttachment {
+          view,
+          depth_slice: None,
+          resolve_target: None,
+          ops: wgpu::Operations {
+            load: wgpu::LoadOp::Load,
+            store: wgpu::StoreOp::Store,
+          },
+        })
+      };
+      let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("potpot accumulate"),
+        color_attachments: &[target(mean), target(count)],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+      });
+      pass.set_bind_group(0, &picture.accumulate[picture.side], &[]);
+      match (refining, redrawn) {
+        (true, _) => {
+          pass.set_pipeline(&self.pipelines.add);
+          pass.draw(0..3, 0..1);
+        }
+        (false, Redrawn::Within([x, y, width, height])) => {
+          pass.set_pipeline(&self.pipelines.keep);
+          pass.draw(0..3, 0..1);
+          pass.set_scissor_rect(x, y, width, height);
+          pass.set_pipeline(&self.pipelines.first[1]);
+          pass.set_vertex_buffer(0, self.wipe.slice(..));
+          pass.draw(0..self.wiped.len() as u32, 0..1);
+        }
+        (false, _) => {
+          pass.set_pipeline(&self.pipelines.first[0]);
+          pass.draw(0..3, 0..1);
+        }
+      }
+      drop(pass);
+      picture.side = next;
 
       // the glow map follows the picture, in the cells that what was drawn again lies in. the
       // dark cells around them are cleared with the whole map and never drawn
@@ -1013,7 +1110,7 @@ impl Renderer {
       );
       pass.set_scissor_rect(left + 1, top + 1, right - left, foot - top);
       pass.set_pipeline(&self.pipelines.glow);
-      pass.set_bind_group(0, &picture.lit, &[]);
+      pass.set_bind_group(0, &picture.lit[picture.side], &[]);
       pass.draw(0..3, 0..1);
       glowing = Some([left + 1, top + 1, right + 1, foot + 1]);
     }
@@ -1098,7 +1195,7 @@ impl Renderer {
       occlusion_query_set: None,
     });
     pass.set_pipeline(&self.pipelines.present);
-    pass.set_bind_group(0, &picture.group, &[]);
+    pass.set_bind_group(0, &picture.group[picture.side], &[]);
     pass.set_viewport(place.x, place.y, place.width, place.height, 0.0, 1.0);
     pass.set_scissor_rect(clip[0], clip[1], clip[2], clip[3]);
     pass.draw(0..3, 0..1);

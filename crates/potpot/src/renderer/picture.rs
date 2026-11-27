@@ -1,7 +1,7 @@
 //! The textures the scene is drawn into before it is stretched onto the target.
 
 use super::damage::HAZE_CELL;
-use super::pipelines::{DEPTH, GLOW, Layouts, PICTURE, SAMPLES};
+use super::pipelines::{COUNT, DEPTH, GLOW, Layouts, PICTURE, SAMPLES};
 
 /// The picture's textures at one size.
 #[derive(Debug)]
@@ -11,8 +11,20 @@ pub(super) struct Picture {
   ///
   /// It is resolved into `color` by the resolve pass, which reads it through `resolve`.
   pub(super) smoothed: Option<(wgpu::TextureView, wgpu::BindGroup)>,
+  /// The sample drawn last.
   pub(super) color: wgpu::TextureView,
   pub(super) depth: wgpu::TextureView,
+  /// Two running means of the samples drawn, each pixel's with the count of samples in it.
+  ///
+  /// One holds the mean as it stands and the other is drawn the next mean into, which then
+  /// stands in its place. [`Picture::side`] says which stands.
+  pub(super) means: [(wgpu::TextureView, wgpu::TextureView); 2],
+  /// Which of [`Picture::means`] holds the mean as it stands.
+  pub(super) side: usize,
+  /// The sample with each mean and its count, for the pass that draws the next mean from it.
+  pub(super) accumulate: [wgpu::BindGroup; 2],
+  /// Each mean's count alone, for the scene pass.
+  pub(super) counted: [wgpu::BindGroup; 2],
   /// The glow map, of what lights itself in the picture.
   ///
   /// It has a texel for each cell of [`HAZE_CELL`] pixels by as many, with the mean over the
@@ -24,17 +36,17 @@ pub(super) struct Picture {
   /// The haze is read from the last. Each is the glow map's size, and its cells around the
   /// picture hold the glow spread past the edge.
   pub(super) spread: [wgpu::TextureView; 2],
-  /// The color alone, for the glow pass to read.
-  pub(super) lit: wgpu::BindGroup,
+  /// Each mean alone, for the glow pass to read.
+  pub(super) lit: [wgpu::BindGroup; 2],
   /// What the passes that blur across and then down read.
   ///
   /// That is the present options and the map each blurs.
   pub(super) unspread: [wgpu::BindGroup; 2],
-  /// What the present pass reads.
+  /// What the present pass reads, with each mean.
   ///
-  /// That is the color with its sampler, the present options, and the blurred glow map with
-  /// its sampler.
-  pub(super) group: wgpu::BindGroup,
+  /// That is the mean with its sampler, the present options, and the blurred glow map with its
+  /// sampler.
+  pub(super) group: [wgpu::BindGroup; 2],
 }
 
 impl Picture {
@@ -127,13 +139,39 @@ impl Picture {
       min_filter: wgpu::FilterMode::Linear,
       ..Default::default()
     });
-    let lit = device.create_bind_group(&wgpu::BindGroupDescriptor {
-      label: Some("potpot glow"),
-      layout: &layouts.glow,
-      entries: &[wgpu::BindGroupEntry {
-        binding: 0,
-        resource: wgpu::BindingResource::TextureView(&color),
-      }],
+    let means = ["potpot mean", "potpot next mean"].map(|label| {
+      let drawn_into = wgpu::TextureUsages::RENDER_ATTACHMENT
+        | wgpu::TextureUsages::TEXTURE_BINDING
+        | wgpu::TextureUsages::COPY_SRC;
+      (
+        texture(label, PICTURE, drawn_into, 1, size),
+        texture(label, COUNT, drawn_into, 1, size),
+      )
+    });
+    let view = |binding, view| wgpu::BindGroupEntry {
+      binding,
+      resource: wgpu::BindingResource::TextureView(view),
+    };
+    let accumulate = means.each_ref().map(|(mean, count)| {
+      device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("potpot accumulate"),
+        layout: &layouts.accumulate,
+        entries: &[view(0, &color), view(1, mean), view(2, count)],
+      })
+    });
+    let counted = means.each_ref().map(|(_, count)| {
+      device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("potpot counted"),
+        layout: &layouts.counted,
+        entries: &[view(0, count)],
+      })
+    });
+    let lit = means.each_ref().map(|(mean, _)| {
+      device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("potpot glow"),
+        layout: &layouts.glow,
+        entries: &[view(0, mean)],
+      })
     });
     let unspread = [&glow, &spread[0]].map(|unspread| {
       device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -151,37 +189,43 @@ impl Picture {
         ],
       })
     });
-    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-      label: Some("potpot picture"),
-      layout: &layouts.present,
-      entries: &[
-        wgpu::BindGroupEntry {
-          binding: 0,
-          resource: wgpu::BindingResource::TextureView(&color),
-        },
-        wgpu::BindGroupEntry {
-          binding: 1,
-          resource: wgpu::BindingResource::Sampler(&sampler),
-        },
-        wgpu::BindGroupEntry {
-          binding: 2,
-          resource: options.as_entire_binding(),
-        },
-        wgpu::BindGroupEntry {
-          binding: 3,
-          resource: wgpu::BindingResource::TextureView(&spread[1]),
-        },
-        wgpu::BindGroupEntry {
-          binding: 4,
-          resource: wgpu::BindingResource::Sampler(&haze_sampler),
-        },
-      ],
+    let group = means.each_ref().map(|(mean, _)| {
+      device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("potpot picture"),
+        layout: &layouts.present,
+        entries: &[
+          wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(mean),
+          },
+          wgpu::BindGroupEntry {
+            binding: 1,
+            resource: wgpu::BindingResource::Sampler(&sampler),
+          },
+          wgpu::BindGroupEntry {
+            binding: 2,
+            resource: options.as_entire_binding(),
+          },
+          wgpu::BindGroupEntry {
+            binding: 3,
+            resource: wgpu::BindingResource::TextureView(&spread[1]),
+          },
+          wgpu::BindGroupEntry {
+            binding: 4,
+            resource: wgpu::BindingResource::Sampler(&haze_sampler),
+          },
+        ],
+      })
     });
     Self {
       size,
       smoothed,
       color,
       depth,
+      means,
+      side: 0,
+      accumulate,
+      counted,
       glow,
       spread,
       lit,

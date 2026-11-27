@@ -2,6 +2,7 @@
 
 use std::mem::size_of;
 
+use super::SETTLED;
 use super::damage::{
   BOUNCE_REACHES, HAZE_CELL, OPEN_CLEAR, OPEN_REACHES, SHADOW_BIAS, SHADOW_SPREAD,
 };
@@ -16,6 +17,8 @@ pub(super) const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// The picture holds linear light in rgb, which is often more than one, and in a the share of
 /// it that the surface gives off itself.
 pub(super) const PICTURE: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// The format of the count of samples in each pixel's mean.
+pub(super) const COUNT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 /// The format of the DFG table.
 pub(super) const DFG: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 /// The format of the studio's specular map, as `cargo xtask env` bakes it.
@@ -43,6 +46,14 @@ pub(super) const CELLS_SOURCE: &str = include_str!("cells.wgsl");
 pub(super) const TONEMAP_SOURCE: &str = include_str!("tonemap.wgsl");
 /// The shader that resolves the picture's samples.
 pub(super) const RESOLVE_SOURCE: &str = include_str!("resolve.wgsl");
+
+/// Returns `accumulate.wgsl` with [`SETTLED`] ahead of it.
+pub(super) fn accumulate_source() -> String {
+  format!(
+    "const SETTLED: u32 = {SETTLED};\n{}",
+    include_str!("accumulate.wgsl")
+  )
+}
 
 /// Returns `scene.wgsl` with what it is given ahead of it.
 ///
@@ -117,6 +128,12 @@ pub(super) struct Layouts {
   pub(super) maps: wgpu::BindGroupLayout,
   /// The picture's samples, for the pass that resolves them.
   pub(super) resolve: wgpu::BindGroupLayout,
+  /// What the pass that draws the next mean reads.
+  ///
+  /// That is the sample just drawn, and the mean and the count it goes into.
+  pub(super) accumulate: wgpu::BindGroupLayout,
+  /// The count of samples in each pixel's mean, for the scene pass to number its sample by.
+  pub(super) counted: wgpu::BindGroupLayout,
   /// The picture alone, for the glow pass to read.
   pub(super) glow: wgpu::BindGroupLayout,
   /// What a pass that blurs the glow map along one axis reads.
@@ -182,7 +199,26 @@ impl Layouts {
     Self {
       globals: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("potpot globals"),
-        entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT)],
+        entries: &[
+          uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
+          uniform(1, wgpu::ShaderStages::FRAGMENT),
+        ],
+      }),
+      accumulate: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("potpot accumulate"),
+        entries: &[0, 1, 2].map(|binding| {
+          texture(
+            binding,
+            wgpu::TextureSampleType::Float { filterable: false },
+          )
+        }),
+      }),
+      counted: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("potpot counted"),
+        entries: &[texture(
+          0,
+          wgpu::TextureSampleType::Float { filterable: false },
+        )],
       }),
       shadow: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("potpot shadow map"),
@@ -270,6 +306,15 @@ pub(super) struct Pipelines {
   pub(super) wipe_bounce: wgpu::RenderPipeline,
   /// The pipeline that resolves the picture's samples.
   pub(super) resolve: wgpu::RenderPipeline,
+  /// The pipeline that adds the sample just drawn to every pixel's mean not yet settled.
+  pub(super) add: wgpu::RenderPipeline,
+  /// The pipeline that keeps every pixel's mean as it was.
+  pub(super) keep: wgpu::RenderPipeline,
+  /// The pipelines that start the mean afresh from the sample just drawn.
+  ///
+  /// The first does so over the whole picture, and the second under the triangles of the
+  /// wipe.
+  pub(super) first: [wgpu::RenderPipeline; 2],
   /// The pipeline that draws the glow map from the picture.
   pub(super) glow: wgpu::RenderPipeline,
   /// The pipelines that blur the glow map across and then down.
@@ -364,7 +409,10 @@ impl Pipelines {
           cache: None,
         })
       };
-    let scene_layout = layout("potpot scene", &[&layouts.globals, &layouts.maps]);
+    let scene_layout = layout(
+      "potpot scene",
+      &[&layouts.globals, &layouts.maps, &layouts.counted],
+    );
     // one for each count of samples, since a pipeline draws at only one
     let scene = [1, SAMPLES].map(|count| {
       lit(
@@ -508,6 +556,48 @@ impl Pipelines {
       multiview: None,
       cache: None,
     });
+    let accumulate_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+      label: Some("potpot accumulate"),
+      source: wgpu::ShaderSource::Wgsl(accumulate_source().into()),
+    });
+    let accumulate_layout = layout("potpot accumulate", &[&layouts.accumulate]);
+    let wiped = [wgpu::VertexBufferLayout {
+      array_stride: size_of::<[f32; 2]>() as u64,
+      step_mode: wgpu::VertexStepMode::Vertex,
+      attributes: &wgpu::vertex_attr_array![0 => Float32x2],
+    }];
+    let accumulate = |fragment, vertex, buffers: &[wgpu::VertexBufferLayout]| {
+      device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("potpot accumulate"),
+        layout: Some(&accumulate_layout),
+        vertex: wgpu::VertexState {
+          module: &accumulate_shader,
+          entry_point: Some(vertex),
+          compilation_options: wgpu::PipelineCompilationOptions::default(),
+          buffers,
+        },
+        fragment: Some(wgpu::FragmentState {
+          module: &accumulate_shader,
+          entry_point: Some(fragment),
+          compilation_options: wgpu::PipelineCompilationOptions::default(),
+          targets: &[
+            Some(wgpu::ColorTargetState::from(PICTURE)),
+            Some(wgpu::ColorTargetState::from(COUNT)),
+          ],
+        }),
+        primitive,
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+      })
+    };
+    let add = accumulate("add", "vertex", &[]);
+    let keep = accumulate("keep", "vertex", &[]);
+    let first = [
+      accumulate("first", "vertex", &[]),
+      accumulate("first", "wiped_vertex", &wiped),
+    ];
     let glow = over_all("potpot glow", &layouts.glow, "glow_fragment", GLOW);
     let spread = ["spread_across", "spread_down"]
       .map(|fragment| over_all("potpot spread", &layouts.spread, fragment, GLOW));
@@ -522,6 +612,9 @@ impl Pipelines {
       wipe_depth,
       wipe_bounce,
       resolve,
+      add,
+      keep,
+      first,
       glow,
       spread,
       present,

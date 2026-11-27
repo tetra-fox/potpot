@@ -32,6 +32,11 @@ struct Lamp {
 }
 
 @group(0) @binding(0) var<uniform> globals: Globals;
+// x is one when what this frame draws is each pixel's first sample, and zero when it is one
+// more sample of each pixel to go into its mean
+@group(0) @binding(1) var<uniform> refine: vec4<u32>;
+// how many samples each pixel's mean holds so far, which is the index of the one drawn now
+@group(2) @binding(0) var counted: texture_2d<f32>;
 @group(1) @binding(0) var shadow_map: texture_depth_2d;
 @group(1) @binding(1) var shadow_sampler: sampler_comparison;
 @group(1) @binding(2) var height_map: texture_depth_2d;
@@ -177,7 +182,7 @@ fn bounce_vertex(corner: Corner, placed: Placed) -> Lit {
 }
 
 // how much of the light reaches a point, from none to all of it
-fn lit_share(world: vec3<f32>, facing: f32) -> f32 {
+fn lit_share(world: vec3<f32>, facing: f32, jitter: vec2<f32>) -> f32 {
   let seen = globals.light_view * vec4<f32>(world, 1.0);
   let at = vec2<f32>(seen.x * 0.5 + 0.5, 0.5 - seen.y * 0.5);
   // a surface nearly edge-on to the light covers many depths in one texel, so it is
@@ -186,12 +191,16 @@ fn lit_share(world: vec3<f32>, facing: f32) -> f32 {
   if globals.shadows.x == 0.0 {
     return textureSampleCompareLevel(shadow_map, shadow_sampler, at, depth);
   }
-  // spread wide enough that a shadow's edge is a few pixels of the picture
+  // spread wide enough that a shadow's edge is a few pixels of the picture, the grid turned
+  // and moved by the jitter, which a sample at the middle of its range leaves as it is
   var share = 0.0;
   let side = SHADOW_SPREAD * 2 + 1;
+  let angle = (jitter.x - 0.5) * TAU / 4.0;
+  let turn = mat2x2<f32>(cos(angle), sin(angle), -sin(angle), cos(angle));
   for (var x = -SHADOW_SPREAD; x <= SHADOW_SPREAD; x++) {
     for (var y = -SHADOW_SPREAD; y <= SHADOW_SPREAD; y++) {
-      let aside = vec2<f32>(f32(x), f32(y)) * globals.shadows.y * globals.toward_light.w;
+      let tap = turn * (vec2<f32>(f32(x), f32(y)) + jitter - 0.5);
+      let aside = tap * globals.shadows.y * globals.toward_light.w;
       share += textureSampleCompareLevel(shadow_map, shadow_sampler, at + aside, depth);
     }
   }
@@ -208,14 +217,14 @@ fn height_over(at: vec2<f32>) -> f32 {
 
 // how much of the light all around reaches a point: less for everything near that stands
 // higher than the point, and less the nearer and higher it stands
-fn open_share(world: vec3<f32>) -> f32 {
+fn open_share(world: vec3<f32>, jitter: f32) -> f32 {
   var closed = 0.0;
   var weight = 0.0;
   for (var ring = 0; ring < OPEN_RINGS; ring++) {
     let reach = OPEN_REACHES[ring];
     for (var step = 0; step < OPEN_STEPS; step++) {
       // each ring turned against the last, so that their points do not line up
-      let turn = (f32(step) + f32(ring) * 0.37) * OPEN_TURN;
+      let turn = (f32(step) + f32(ring) * 0.37 + jitter - 0.5) * OPEN_TURN;
       let over = height_over(world.xy + vec2<f32>(cos(turn), sin(turn)) * reach);
       let rise = over - world.z - OPEN_CLEAR;
       let near = 1.0 / (1.0 + reach * 0.12);
@@ -228,7 +237,7 @@ fn open_share(world: vec3<f32>) -> f32 {
 
 // how much of a lamp's light gets to a point past what stands between the two, going by
 // the height map along the straight line to the lamp
-fn lamp_share(world: vec3<f32>, lamp: Lamp) -> f32 {
+fn lamp_share(world: vec3<f32>, lamp: Lamp, jitter: f32) -> f32 {
   let toward = lamp.at.xyz - world;
   let away = length(toward.xy);
   // a texel of the height map can hold the point's own surface
@@ -239,8 +248,8 @@ fn lamp_share(world: vec3<f32>, lamp: Lamp) -> f32 {
   if end <= start {
     return 1.0;
   }
-  // each point starts its steps somewhere else, which turns bands into grain
-  let shift = scatter(world.xy * 7.0 + world.z);
+  // where along each step it looks
+  let shift = jitter;
   var blocked = 0.0;
   for (var step = 0; step < LAMP_STEPS; step++) {
     let along = mix(start, end, (f32(step) + shift) / f32(LAMP_STEPS));
@@ -294,7 +303,7 @@ fn bounce_fragment(lit: Lit) -> @location(0) vec4<f32> {
   let normal = normalize(lit.normal);
   let facing = max(dot(normal, globals.toward_light.xyz), 0.0);
   var lighting = all_around(normal) * globals.toward_viewer.w;
-  lighting += globals.light_color.rgb * facing * lit_share(lit.world, facing);
+  lighting += globals.light_color.rgb * facing * lit_share(lit.world, facing, vec2<f32>(0.5));
   for (var index = 0; index < i32(globals.shadows.z); index++) {
     let lamp = globals.lamps[index];
     let toward = lamp.at.xyz - lit.world;
@@ -314,7 +323,7 @@ fn no_bounce_fragment() -> @location(0) vec4<f32> {
 
 // the light that lands on a point off the surfaces around it, from rings of places in the
 // bounce map, each lighting the point by how squarely the point faces it
-fn bounced(world: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
+fn bounced(world: vec3<f32>, normal: vec3<f32>, jitter: f32) -> vec3<f32> {
   let texel = globals.panel.xy / vec2<f32>(textureDimensions(bounce_map));
   let reach = max(texel.x, texel.y);
   var caught = vec3<f32>(0.0);
@@ -325,7 +334,7 @@ fn bounced(world: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
     let share = reach / far;
     for (var step = 0; step < BOUNCE_STEPS; step++) {
       // each ring turned against the last, so that their places do not line up
-      let turn = (f32(step) + f32(ring) * 0.37) * (TAU / f32(BOUNCE_STEPS));
+      let turn = (f32(step) + f32(ring) * 0.37 + jitter - 0.5) * (TAU / f32(BOUNCE_STEPS));
       let aside = vec2<f32>(cos(turn), sin(turn)) * far;
       let tap = textureSampleLevel(bounce_map, bounce_sampler, (world.xy + aside) / globals.panel.xy, 0.0);
       let toward = normalize(vec3<f32>(aside, tap.a - world.z));
@@ -336,6 +345,29 @@ fn bounced(world: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
     }
   }
   return caught / weight;
+}
+
+// where in their ranges this pixel's sample takes its shadow and ring lookups, each from zero
+// to one. a pixel's first sample takes the middles, which is a finished picture on its own,
+// and the ones after take interleaved gradient noise across pixels, moved along the R2
+// sequence for the sample's index, so that a pixel's samples are the same whenever it is drawn
+fn jittered(pixel: vec2<f32>) -> vec2<f32> {
+  let at = vec2<i32>(pixel);
+  var index = 0u;
+  if refine.x == 0u {
+    index = u32(textureLoad(counted, at, 0).r + 0.5);
+  }
+  if index == 0u {
+    return vec2<f32>(0.5);
+  }
+  // Jimenez's interleaved gradient noise, the second axis read a pixel pattern aside
+  let ign = vec2<f32>(
+    fract(52.9829189 * fract(dot(pixel, vec2<f32>(0.06711056, 0.00583715)))),
+    fract(52.9829189 * fract(dot(pixel + vec2<f32>(5.588238, 5.588238), vec2<f32>(0.06711056, 0.00583715)))),
+  );
+  // Roberts's R2 sequence, from the plastic number
+  let r2 = fract(vec2<f32>(f32(index)) * vec2<f32>(0.7548776662, 0.5698402910));
+  return fract(ign + r2);
 }
 
 // a number from zero to one out of a place, the same every time for the same place
@@ -747,8 +779,9 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
   surface.energy = 1.0 + surface.f0 * (1.0 / (dfg.x + dfg.y) - 1.0);
 
   let facing = max(dot(surface.normal, toward_light), 0.0);
-  let share = lit_share(lit.world, facing);
-  let open = mix(1.0, open_share(lit.world), globals.shadows.w);
+  let jitter = jittered(lit.clip.xy);
+  let share = lit_share(lit.world, facing, jitter);
+  let open = mix(1.0, open_share(lit.world, jitter.y), globals.shadows.w);
 
   // how much of the light the clear coat keeps off what is under it
   var coat_kept = 0.0;
@@ -772,7 +805,7 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
       continue;
     }
     let toward = lamp.at.xyz - lit.world;
-    let reached = lamp_share(lit.world, lamp) * light * (1.0 - emission);
+    let reached = lamp_share(lit.world, lamp, jitter.x) * light * (1.0 - emission);
     let alpha = sqrt(surface.along * surface.across);
     let nearest = nearest_on_lamp(toward_viewer, surface.normal, alpha, toward, lamp.color.w);
     let coat = nearest_on_lamp(toward_viewer, flat_normal, surface.coat_alpha, toward, lamp.color.w);
@@ -787,7 +820,7 @@ fn fragment(lit: Lit) -> @location(0) vec4<f32> {
   let studio = globals.toward_viewer.w;
   var all_around_light = all_around(surface.normal) * studio * open;
   if globals.light_color.w > 0.0 {
-    all_around_light += bounced(lit.on_triangle, flat_normal) * globals.light_color.w;
+    all_around_light += bounced(lit.on_triangle, flat_normal, jitter.y) * globals.light_color.w;
   }
   diffuse_light += surface.diffuse * all_around_light * (1.0 - held) * (1.0 - coat_kept);
   // grooves bend what the surface mirrors toward the way across them, as Filament bends the

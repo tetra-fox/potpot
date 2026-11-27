@@ -2,7 +2,8 @@
 //!
 //! `just timing` turns the first knob of the gallery's knobs panel through 120 frames at scale
 //! 2, and prints the median and the 95th percentile of the time each frame takes on the GPU, in
-//! milliseconds. The device has to have `Features::TIMESTAMP_QUERY`.
+//! milliseconds. It then lets the knob go and prints the median time of each of 60 samples the
+//! picture is refined by. The device has to have `Features::TIMESTAMP_QUERY`.
 //!
 //! Each frame's work is queued behind a copy that keeps the GPU busy for longer than the frame
 //! takes to prepare on the CPU, so the time measured is the GPU's alone.
@@ -18,6 +19,8 @@ use crate::panels::{SIZE, knobs};
 
 /// The frames of the drag.
 const FRAMES: usize = 120;
+/// The samples refined after the drag, fewer than a picture takes to settle.
+const IDLE: usize = 60;
 /// The scale the panel is drawn at.
 const SCALE: u32 = 2;
 /// The size of each copy that keeps the GPU busy, in bytes.
@@ -113,8 +116,8 @@ fn main() {
   renderer.prepare(&device, &queue, &scene, size);
 
   let period = f64::from(queue.get_timestamp_period());
-  let mut frames = Vec::with_capacity(FRAMES);
-  for frame in 1..=FRAMES {
+  // the gpu time of a frame of a scene, in milliseconds
+  let mut timed = |scene: &potpot::Scene| {
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     stamp(&mut encoder, 0);
     for _ in 0..HOLDS {
@@ -123,12 +126,8 @@ fn main() {
     stamp(&mut encoder, 1);
     queue.submit([encoder.finish()]);
 
-    let turned = knobs::turned(0, knobs::turn(0) + frame as f32 * 0.005);
-    for &index in &turning {
-      scene.objects[index].transform = turned;
-    }
     let preparing = Instant::now();
-    renderer.prepare(&device, &queue, &scene, size);
+    renderer.prepare(&device, &queue, scene, size);
     let prepared = preparing.elapsed();
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
@@ -158,8 +157,19 @@ fn main() {
       hold_time > prepared,
       "the gpu was held for {hold_time:?}, less than the {prepared:?} the frame took to prepare"
     );
-    frames.push(nanoseconds(ended - started).as_secs_f64() * 1e3);
+    nanoseconds(ended - started).as_secs_f64() * 1e3
+  };
+
+  let mut frames = Vec::with_capacity(FRAMES);
+  for frame in 1..=FRAMES {
+    let turned = knobs::turned(0, knobs::turn(0) + frame as f32 * 0.005);
+    for &index in &turning {
+      scene.objects[index].transform = turned;
+    }
+    frames.push(timed(&scene));
   }
+  // and then the knob let go of, while the picture is refined a sample at a time
+  let mut refining: Vec<f64> = (0..IDLE).map(|_| timed(&scene)).collect();
 
   frames.sort_by(f64::total_cmp);
   let at = |share: f64| frames[((frames.len() - 1) as f64 * share).round() as usize];
@@ -167,5 +177,10 @@ fn main() {
     "gpu time per drag frame over {FRAMES} frames: median {:.3} ms, 95th percentile {:.3} ms",
     at(0.5),
     at(0.95)
+  );
+  refining.sort_by(f64::total_cmp);
+  println!(
+    "gpu time per refining sample over {IDLE} samples: median {:.3} ms",
+    refining[refining.len() / 2]
   );
 }

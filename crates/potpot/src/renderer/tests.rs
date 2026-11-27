@@ -104,14 +104,20 @@ impl Target {
     pixels
   }
 
-  /// Returns the picture a renderer drew last.
+  /// Draws a scene again until the renderer has settled on it.
+  fn settle(&self, renderer: &mut Renderer, scene: &Scene) {
+    self.drawn(renderer, scene);
+    while !renderer.settled() {
+      renderer.prepare(&self.device, &self.queue, scene, SIZE);
+    }
+  }
+
+  /// Returns the picture a renderer drew last, as its mean stands.
   ///
   /// It is the light and the emission of each pixel, in rows.
   fn picture(&self, renderer: &Renderer) -> Vec<f32> {
-    let texture = (renderer.picture.as_ref())
-      .expect("a picture was drawn")
-      .color
-      .texture();
+    let picture = renderer.picture.as_ref().expect("a picture was drawn");
+    let texture = picture.means[picture.side].0.texture();
     let size = texture.size();
     // a texel is four half floats
     let row = size.width * 8;
@@ -283,6 +289,75 @@ fn lamp(number: &mut impl FnMut() -> f32) -> Lamp {
 }
 
 #[test]
+#[ignore = "needs a graphics device"]
+fn a_part_started_over_refines_back_to_the_scene_settled_whole() {
+  let target = Target::new();
+  let shapes = [
+    Arc::new(Mesh::cuboid(
+      Vec3::new(-14.0, -8.0, 0.0),
+      Vec3::new(14.0, 8.0, 9.0),
+    )),
+    Arc::new(Mesh::lathe(
+      &[[11.0, 0.0], [9.0, 22.0], [0.0, 24.0]],
+      24,
+      true,
+    )),
+  ];
+  let mut number = numbers(11);
+  let mut scene = panel(&mut number, &shapes);
+  let mut kept = Renderer::new(&target.device, FORMAT);
+  target.settle(&mut kept, &scene);
+  // one thing moved a little, as a drag moves it, which starts its part of the picture over
+  scene.objects[3].transform *= Mat4::from_translation(Vec3::new(6.0, -4.0, 0.0));
+  target.drawn(&mut kept, &scene);
+  assert!(
+    kept.changed().is_some(),
+    "the change is drawn in part, which this test is about"
+  );
+  target.settle(&mut kept, &scene);
+  let mut whole = Renderer::new(&target.device, FORMAT);
+  target.settle(&mut whole, &scene);
+  assert_alike(
+    &target.picture(&kept),
+    &target.picture(&whole),
+    "with the part started over and refined again",
+  );
+}
+
+#[test]
+#[ignore = "needs a graphics device"]
+fn a_picture_settles_at_its_sixty_fourth_sample_and_any_change_unsettles_it() {
+  let target = Target::new();
+  let shapes = [Arc::new(Mesh::cuboid(
+    Vec3::new(-14.0, -8.0, 0.0),
+    Vec3::new(14.0, 8.0, 9.0),
+  ))];
+  let mut number = numbers(5);
+  let mut scene = panel(&mut number, &shapes);
+  let mut renderer = Renderer::new(&target.device, FORMAT);
+  for sample in 1..=SETTLED {
+    target.drawn(&mut renderer, &scene);
+    assert_eq!(
+      renderer.settled(),
+      sample == SETTLED,
+      "after sample {sample}"
+    );
+  }
+  // a settled picture draws nothing more
+  target.drawn(&mut renderer, &scene);
+  assert!(renderer.settled() && renderer.changed() == Some(&[][..]));
+  for change in 0..2 {
+    match change {
+      0 => scene.objects[2].material.color.x += 0.1,
+      _ => scene.lamps[0].color *= 0.5,
+    }
+    target.drawn(&mut renderer, &scene);
+    assert!(!renderer.settled(), "after change {change}");
+    target.settle(&mut renderer, &scene);
+  }
+}
+
+#[test]
 fn the_baked_studio_holds_every_mip() {
   let texels: u32 = (0..environment::MIPS)
     .map(|mip| (environment::SIDE >> mip).pow(2) * 6)
@@ -345,7 +420,15 @@ fn a_scene_drawn_in_part_is_the_scene_drawn_whole() {
         // a little way, as a drag takes something
         3..=4 => scene.objects[object].transform *= Mat4::from_rotation_z(number() * 0.2),
         5..=6 => scene.objects[object].material = material(&mut number),
-        7 => scene.objects[object].mesh = Arc::clone(&shapes[frame % shapes.len()]),
+        // another shape, since a scene that comes in unchanged is refined one more sample
+        7 => {
+          let held = &scene.objects[object].mesh;
+          let other = (frame..).map(|turn| &shapes[turn % shapes.len()]);
+          let other = other
+            .take(shapes.len())
+            .find(|shape| !Arc::ptr_eq(shape, held));
+          scene.objects[object].mesh = Arc::clone(other.expect("there is more than one shape"));
+        }
         // a mesh made again, as a picture on a screen is
         8 => {
           let wide = 4.0 + number() * 20.0;
@@ -379,12 +462,15 @@ fn a_scene_drawn_in_part_is_the_scene_drawn_whole() {
       let step = format!("at frame {frame} of round {round} after a change of kind {kind}");
       target.assert_same(&mut kept, &mut whole, &mut shown, &scene, &step);
       in_part += usize::from(kept.changed().is_some());
-      // and against a renderer that has drawn nothing before
+      // and refined until settled, against a renderer that has drawn nothing before refined
+      // as far. the next frame starts again from a renderer that has drawn nothing, since the
+      // whole one compared with draws its first sample alone
       if frame % 16 == 15 {
         let mut first = Renderer::new(&target.device, FORMAT);
-        target.drawn(&mut first, &scene);
-        target.drawn(&mut kept, &scene);
+        target.settle(&mut first, &scene);
+        target.settle(&mut kept, &scene);
         assert_alike(&target.picture(&first), &target.picture(&kept), &step);
+        (kept, shown) = (Renderer::new(&target.device, FORMAT), Vec::new());
       }
     }
   }
