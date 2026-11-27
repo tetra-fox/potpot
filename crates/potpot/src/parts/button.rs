@@ -140,7 +140,7 @@ impl Button {
     Lamp {
       at: Vec3::new(x, y, self.height * 1.5),
       // strong enough to show on a dark panel, which gives little of any light back
-      color: color * level.clamp(0.0, 1.0) * 2.4,
+      color: color * level.clamp(0.0, 1.0) * 4.0,
       reach: self.width.max(self.length) * 1.5,
       radius: self.width.hypot(self.length) / 2.0,
     }

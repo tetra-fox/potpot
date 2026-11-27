@@ -72,21 +72,24 @@ pub const LAMPS: usize = 32;
 /// A small light at a point, which shines on what is near it.
 ///
 /// What stands between it and a surface shadows that surface, going by how high things are seen
-/// from straight above.
+/// from straight above. A surface catches less of its light the more it lights itself, so a
+/// lamp that stands for a lit part does not light that part again.
 #[derive(Clone, Copy, Debug)]
 pub struct Lamp {
   /// The lamp's place, in the scene's x, y and z.
   pub at: Vec3,
   /// The lamp's light a quarter of its reach away.
   ///
-  /// The light is linear, its color and brightness together, and may be more than one. The light falls with the square of the distance, down to
-  /// `radius` from the lamp's middle, and nearer it is no brighter.
+  /// The light is linear, its color and brightness together, and may be more than one. The
+  /// light falls with the square of the distance, and levels off within `radius` of the lamp's
+  /// middle.
   pub color: Vec3,
   /// The distance at which its light has faded to nothing.
   pub reach: f32,
   /// How far from its middle the thing that shines reaches.
   ///
-  /// The lamp shows that large in a mirror. Nothing that near the lamp shadows it.
+  /// The lamp shows that large in a mirror, cut off where the mirror's plane cuts it. Nothing
+  /// that near the lamp shadows it.
   pub radius: f32,
 }
 

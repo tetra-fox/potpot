@@ -59,7 +59,7 @@ pub fn led_material(color: Vec3, level: f32, diameter: f32) -> Material {
 pub fn led_lamp(at: Vec3, color: Vec3, level: f32, diameter: f32, reach: f32) -> Lamp {
   Lamp {
     at,
-    color: color * level * 2.5,
+    color: color * level * 1.6,
     reach,
     radius: diameter / 2.0,
   }
