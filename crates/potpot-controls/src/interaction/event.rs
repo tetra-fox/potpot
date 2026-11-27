@@ -18,10 +18,32 @@ pub enum Target {
   Item(Item),
   /// The grip the window is pulled larger and smaller by.
   Grip,
-  /// The tab of the page at this place among the panel's.
+  /// A tab or key that shows the page at this place.
   ///
-  /// A press on it shows that page.
+  /// The place is among the panel's pages, and a press on the target shows that page.
   Page(usize),
+  /// One choice of a control, such as a selector's segment.
+  ///
+  /// A press on it puts the control's parameter `choice` steps from the start of its turn, as
+  /// one whole gesture. The wheel and the right button work on it as on the control.
+  Choice {
+    /// The control, by its place among the panel's.
+    control: usize,
+    /// The choice, counted from the start of the control's turn.
+    choice: usize,
+  },
+  /// An arrow that moves a control one step back.
+  ///
+  /// The control is the one at this place among the panel's. A press moves it as one line of the
+  /// wheel does, and the start of its turn holds it. The wheel and the right button work on it as
+  /// on the control.
+  Decrement(usize),
+  /// An arrow that moves a control one step on.
+  ///
+  /// The control is the one at this place among the panel's. A press moves it as one line of the
+  /// wheel does, and the end of its turn holds it. The wheel and the right button work on it as on
+  /// the control.
+  Increment(usize),
   /// A key of a keybed.
   ///
   /// A press on it plays its note, and a slide to another key while the button is down plays
@@ -50,6 +72,20 @@ pub enum Item {
   Copy,
   /// The row that sets the control to the value on the clipboard.
   Paste,
+}
+
+impl Target {
+  /// Returns the control the target is part of, if any.
+  pub(super) fn control(self) -> Option<usize> {
+    match self {
+      Self::Control(control)
+      | Self::Readout(control)
+      | Self::Choice { control, .. }
+      | Self::Decrement(control)
+      | Self::Increment(control) => Some(control),
+      Self::Menu | Self::Item(_) | Self::Grip | Self::Page(_) | Self::Key { .. } => None,
+    }
+  }
 }
 
 impl Item {

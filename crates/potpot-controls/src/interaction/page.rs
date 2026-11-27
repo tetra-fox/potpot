@@ -12,11 +12,8 @@ impl Interaction {
   ///
   /// A control takes input only while its page is shown, whoever finds the targets.
   pub(super) fn reachable(&self, over: Option<Target>) -> Option<Target> {
-    over.filter(|over| match *over {
-      Target::Control(control) | Target::Readout(control) => {
-        self.controls[control].page == self.page
-      }
-      _ => true,
+    over.filter(|over| {
+      (over.control()).is_none_or(|control| self.controls[control].page == self.page)
     })
   }
 

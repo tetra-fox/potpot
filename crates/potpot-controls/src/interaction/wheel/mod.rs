@@ -31,9 +31,7 @@ impl Interaction {
     moment: Moment,
     actions: &mut Vec<Action>,
   ) {
-    let (State::Idle, Some(Target::Control(control) | Target::Readout(control))) =
-      (&self.state, over)
-    else {
+    let (State::Idle, Some(control)) = (&self.state, over.and_then(Target::control)) else {
       return;
     };
     // a wheel turned sideways comes as no lines this way

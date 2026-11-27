@@ -167,6 +167,14 @@ impl Dial {
     turned.clamp(0.0, 1.0)
   }
 
+  /// Returns the value `choice` steps from the turn's start.
+  ///
+  /// A dial without a step takes a step to be one of its plain units.
+  pub(super) fn chosen(&self, choice: usize) -> f32 {
+    let step = self.step.unwrap_or(1.0);
+    (self.turn)((self.plain)(0.0) + choice as f32 * step)
+  }
+
   /// Returns the value one step on from another.
   ///
   /// From the end of the turn that is its start.

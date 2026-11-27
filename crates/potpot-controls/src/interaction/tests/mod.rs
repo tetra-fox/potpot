@@ -6,6 +6,7 @@ use super::bench::{
 };
 use super::*;
 
+mod choices;
 mod grip;
 mod keybed;
 mod pages;

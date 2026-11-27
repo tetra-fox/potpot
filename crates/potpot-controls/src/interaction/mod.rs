@@ -548,6 +548,23 @@ impl Interaction {
       }
       Some(Target::Readout(control)) if double => self.begin_edit(control, values, actions),
       Some(Target::Page(page)) => self.show(page, actions),
+      Some(Target::Choice { control, choice }) => {
+        let parameter = self.controls[control].parameter;
+        let value = self.dials[parameter].chosen(choice);
+        set_whole(parameter, values[parameter], value, actions);
+      }
+      Some(Target::Decrement(control) | Target::Increment(control)) => {
+        let Control {
+          parameter, feel, ..
+        } = self.controls[control];
+        let lines = if over == Some(Target::Increment(control)) {
+          1.0
+        } else {
+          -1.0
+        };
+        let value = self.dials[parameter].wheeled(values[parameter], lines, false, feel);
+        set_whole(parameter, values[parameter], value, actions);
+      }
       Some(Target::Grip) if double => actions.push(Action::Scale(1.0)),
       Some(Target::Grip) => {
         self.state = State::Resize {
@@ -563,8 +580,9 @@ impl Interaction {
   fn pressed_right(&mut self, at: Point, over: Option<Target>, actions: &mut Vec<Action>) {
     self.commit(actions);
     match over {
-      Some(Target::Control(control) | Target::Readout(control))
-        if matches!(self.state, State::Idle | State::Menu(_)) =>
+      Some(target)
+        if let Some(control) = target.control()
+          && matches!(self.state, State::Idle | State::Menu(_)) =>
       {
         self.state = State::Menu(Menu {
           control,
@@ -592,6 +610,15 @@ impl Interaction {
       self.state = State::Idle;
       actions.push(Action::Redraw);
     }
+  }
+}
+
+/// Sets a parameter as one whole gesture, if it moves.
+///
+/// It stands at `from` and is set to `to`.
+fn set_whole(parameter: usize, from: f32, to: f32, actions: &mut Vec<Action>) {
+  if to != from {
+    actions.extend(gesture(parameter, to));
   }
 }
 
