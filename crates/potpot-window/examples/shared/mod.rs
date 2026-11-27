@@ -27,12 +27,36 @@ pub struct Sound {
 
 /// The argument that asks for the picture's first sample, before it is refined.
 pub const FIRST: &str = "--first";
+/// The argument before the number of a page to show.
+///
+/// The number is the page's place among the panel's pages.
+const PAGE: &str = "--page";
 
-/// Returns the example's arguments, without [`FIRST`].
+/// Returns the example's arguments, less the options.
+///
+/// [`FIRST`], and [`PAGE`] with its number, are left out.
 fn arguments() -> impl Iterator<Item = std::ffi::OsString> {
-  std::env::args_os()
-    .skip(1)
-    .filter(|argument| argument != FIRST)
+  let mut paged = false;
+  std::env::args_os().skip(1).filter(move |argument| {
+    let number = std::mem::replace(&mut paged, argument == PAGE);
+    !number && argument != PAGE && argument != FIRST
+  })
+}
+
+/// Returns the page the example is asked to show.
+///
+/// # Errors
+///
+/// Returns what is wrong if the argument after [`PAGE`] is missing or no whole number.
+fn page() -> Result<Option<usize>, String> {
+  let mut after = std::env::args_os().skip_while(|argument| argument != PAGE);
+  if after.next().is_none() {
+    return Ok(None);
+  }
+  let given = after.next().ok_or("no page after --page")?;
+  let given = given.to_string_lossy();
+  let unread = |_| format!("the page is not a whole number: {given}");
+  given.parse().map(Some).map_err(unread)
 }
 
 /// Returns the PNG file the example is asked to draw itself to.
@@ -42,24 +66,38 @@ pub fn file() -> Option<PathBuf> {
   arguments().next().map(PathBuf::from)
 }
 
+/// Ends the process with what is wrong with the arguments.
+///
+/// It says how an example is run as well.
+fn refused(wrong: &str) -> ! {
+  eprintln!("{wrong}\nusage: just render <example> <file.png> [scale] [{FIRST}] [{PAGE} <n>]");
+  std::process::exit(2)
+}
+
 /// Opens an example's window or draws the example to a file.
 ///
-/// The file is the one [`file`] returns, and with none the window opens. In a window, `sound`
-/// runs on a thread of its own, a block at a time. Before a picture its blocks are run one after
-/// another with no time between them, so the same run gives the same picture. The picture is
-/// drawn at the scale the example's second argument gives, or at the panel's own size. It is
-/// the picture refined until the skin settles, or its first sample with [`FIRST`] anywhere
-/// among the arguments.
+/// The file is the one [`file`] returns, and with none the window opens. Either shows the page
+/// [`PAGE`] asks for, or the one `settings` opens on. In a window, `sound` runs on a thread of its
+/// own, a block at a time. Before a picture its blocks are run one after another with no time
+/// between them, so the same run gives the same picture. The picture is drawn at the scale the
+/// example's second argument gives, or at the panel's own size. It is the picture refined until the
+/// skin settles, or its first sample with [`FIRST`] anywhere among the arguments.
 ///
-/// A second argument that is no number, or a third, ends the process with what is wrong and how
-/// the example is run.
+/// A second argument that is no number, a third, or a page the panel has none of ends the
+/// process with what is wrong and how the example is run.
 pub fn run<S: Skin>(
-  settings: Settings,
+  mut settings: Settings,
   params: Vec<Param>,
   controls: Vec<Control>,
   sound: Option<Sound>,
   skin: impl FnOnce(&Gpu) -> S + Send + 'static,
 ) -> Result<(), Box<dyn Error>> {
+  if let Some(page) = page().unwrap_or_else(|wrong| refused(&wrong)) {
+    if page >= settings.pages {
+      refused(&format!("no page {page}: the panel has {}", settings.pages));
+    }
+    settings.page = page;
+  }
   let Some(file) = file() else {
     if let Some(mut sound) = sound {
       // the thread is left running, and ends with the process when the window closes
@@ -75,10 +113,7 @@ pub fn run<S: Skin>(
     opened.window.run_until_closed()?;
     return Ok(());
   };
-  let scale = scale().unwrap_or_else(|wrong| {
-    eprintln!("{wrong}\nusage: just render <example> <file.png> [scale] [{FIRST}]");
-    std::process::exit(2)
-  });
+  let scale = scale().unwrap_or_else(|wrong| refused(&wrong));
   if let Some(mut sound) = sound {
     for _ in 0..sound.pictured_after {
       (sound.block)();

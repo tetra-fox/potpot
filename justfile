@@ -7,7 +7,7 @@ example name:
 
 # draw an example to a png at a scale, refined until it settles: `just render demo out.png 1.5`.
 # `gallery` takes the name of a page first: `just render gallery out.png knobs 2`. `--first`
-# draws the first sample alone
+# draws the first sample alone, and `--page 1` the second page of a panel that has one
 render name file *args:
     cargo run --example {{ name }} -- {{ file }} {{ args }}
 

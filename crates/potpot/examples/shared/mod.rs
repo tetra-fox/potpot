@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts;
-use potpot::{Material, Mesh, Object, Place, Renderer};
+use potpot::{Lamp, Material, Mesh, Object, Place, Renderer};
 use potpot_window::controls::flat::{Color, Flat};
 use potpot_window::controls::interaction::{Dial, Target};
 use potpot_window::controls::layout::{self, Pack};
@@ -62,6 +62,8 @@ pub struct Drawn {
   pub objects: Vec<Object>,
   /// What a press on each of the objects is on.
   pub targets: Vec<Option<Target>>,
+  /// The lamps on the panel.
+  pub lamps: Vec<Lamp>,
 }
 
 impl Drawn {
