@@ -5,18 +5,16 @@ use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec3};
 use potpot::parts::{Meter, Vu};
-use potpot::{Light, Look, Material, Object, Scene};
+use potpot::{Look, Object, Scene};
 
-use super::Catalog;
+use super::{Catalog, dim};
 
 /// Returns each kind of level meter on a dark panel.
 ///
 /// The meters stand at a few levels. The ladders stand in pairs, the first holding a peak, and one
 /// more lies on its side. The light is dimmed so that what glows shows.
 pub(super) fn meters(look: Look) -> Scene {
-  let ink = Material::ink(Vec3::splat(0.8));
-  let plate = Material::powder_coat(Vec3::new(0.075, 0.08, 0.09));
-  let mut catalog = Catalog::new("METERS", plate, ink, [5, 1], 480.0);
+  let mut catalog = Catalog::dark("METERS", [5, 1], 480.0);
   let cells = catalog.cells.clone();
   let length = 420.0;
 
@@ -82,9 +80,5 @@ pub(super) fn meters(look: Look) -> Scene {
     .extend(Vu::new(140.0, 76.0).objects(middle.x, middle.y, 0.62, 1.0));
   catalog.label(cells[4], "VU");
 
-  let light = Light {
-    color: Vec3::splat(0.6),
-    ..Light::default()
-  };
-  catalog.finish(look, light)
+  catalog.finish(look, dim())
 }

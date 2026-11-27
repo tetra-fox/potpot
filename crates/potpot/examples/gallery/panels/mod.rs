@@ -104,11 +104,8 @@ pub fn panel(page: usize, look: Look) -> (Scene, Vec<Option<Target>>) {
   for (tab, (name, _)) in PAGES.into_iter().enumerate() {
     let shown = tab == page;
     let at = middle + tabs.middle(tab);
-    let material = rubber.lit(
-      amber,
-      if shown { 0.6 } else { 0.0 },
-      tabs.key.emission_radius(),
-    );
+    // lit evenly and low, so that no hot middle or page's bloom covers its name's ink
+    let material = rubber.lit(amber, if shown { 0.35 } else { 0.0 }, 0.0);
     let name = lettering(&name.to_uppercase(), 7.0);
     scene.objects.extend([
       Object {
@@ -232,6 +229,19 @@ struct Catalog {
   cells: Vec<Cell>,
 }
 
+/// Returns the light over a dark page, dimmed so that what glows shows.
+fn dim() -> Light {
+  Light {
+    color: Vec3::splat(0.6),
+    ..Light::default()
+  }
+}
+
+/// Returns the pale rubber of buttons and pucks.
+fn rubber() -> Material {
+  Material::silicone(Vec3::new(0.62, 0.62, 0.60))
+}
+
 /// Returns the cells of a grid of `columns` by `rows`.
 ///
 /// The cells go row by row from the top left. Each cell's specimen has `room` points of height
@@ -268,6 +278,14 @@ impl Catalog {
       ink,
       cells: cells(grid, room),
     }
+  }
+
+  /// Creates a catalog on a dark plate, with its lettering pale.
+  ///
+  /// The grid and the room are as [`Catalog::new`] takes them.
+  fn dark(title: &str, grid: [usize; 2], room: f32) -> Self {
+    let plate = Material::powder_coat(Vec3::new(0.075, 0.08, 0.09));
+    Self::new(title, plate, Material::ink(Vec3::splat(0.8)), grid, room)
   }
 
   /// Prints a cell's label in the band at its foot.

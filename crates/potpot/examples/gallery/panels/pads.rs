@@ -4,20 +4,17 @@ use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec3};
 use potpot::parts::Pad;
-use potpot::{Light, Look, Material, Object, Scene};
+use potpot::{Look, Material, Object, Scene};
 
-use super::Catalog;
+use super::{Catalog, dim, rubber};
 
 /// Returns a wide pad and a square one on a dark panel.
 ///
 /// The wide pad's puck is lit and the square one's dark, each off its pad's middle. The light
 /// is dimmed so that what glows shows.
 pub(super) fn pads(look: Look) -> Scene {
-  let ink = Material::ink(Vec3::splat(0.8));
-  let plate = Material::powder_coat(Vec3::new(0.075, 0.08, 0.09));
-  let mut catalog = Catalog::new("PADS", plate, ink, [2, 1], 280.0);
+  let mut catalog = Catalog::dark("PADS", [2, 1], 280.0);
   let cells = catalog.cells.clone();
-  let rubber = Material::silicone(Vec3::new(0.62, 0.62, 0.60));
   let blue = Vec3::new(0.1, 0.5, 1.0);
   // each pad's name and size, where its puck is across and up, and its puck's level
   let pads = [
@@ -42,7 +39,7 @@ pub(super) fn pads(look: Look) -> Scene {
       Object {
         mesh: Arc::new(pad.puck()),
         transform: on_pad,
-        material: rubber.lit(blue, level, pad.puck.emission_radius()),
+        material: rubber().lit(blue, level, pad.puck.emission_radius()),
       },
     ]);
     if level > 0.0 {
@@ -55,9 +52,5 @@ pub(super) fn pads(look: Look) -> Scene {
     catalog.label(*cell, name);
   }
 
-  let light = Light {
-    color: Vec3::splat(0.6),
-    ..Light::default()
-  };
-  catalog.finish(look, light)
+  catalog.finish(look, dim())
 }

@@ -6,7 +6,7 @@ use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{self, Button, Knob};
 use potpot::{Lamp, Light, Look, Material, Object, Scene};
 
-use super::{BLACK, Build, Catalog, SEAT};
+use super::{BLACK, Build, Catalog, SEAT, dim};
 
 /// The colors the lights are lit in.
 const COLORS: [Vec3; 5] = [
@@ -142,9 +142,8 @@ pub(super) fn lights(look: Look) -> Scene {
   catalog.label(cells[5], "BUTTON LAMP");
 
   let light = Light {
-    color: Vec3::splat(0.6),
     bounce: 3.0,
-    ..Light::default()
+    ..dim()
   };
   catalog.finish(look, light)
 }

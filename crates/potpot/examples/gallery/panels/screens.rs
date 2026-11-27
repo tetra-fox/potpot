@@ -4,13 +4,13 @@ use std::f32::consts::TAU;
 
 use potpot::glam::{Mat4, Vec3};
 use potpot::parts::{self, Screen};
-use potpot::{Light, Look, Material, Scene};
+use potpot::{Look, Material, Scene};
 use potpot_controls::axis::Axis;
 use potpot_controls::flat::Flat;
 use potpot_controls::response::{self, Band, Kind};
 
 use super::shared::{self, GRID, Plot};
-use super::{BLACK, Catalog};
+use super::{BLACK, Catalog, dim};
 
 /// The sample rate the curve is drawn for, in hertz.
 const RATE: f32 = 48000.0;
@@ -131,9 +131,7 @@ fn envelope(flat: &mut Flat, plot: Plot) {
 /// The first shows an equalizer's curve, the second a scope's trace and the third an envelope.
 /// The light is dimmed so that what the screens show stands out.
 pub(super) fn screens(look: Look) -> Scene {
-  let ink = Material::ink(Vec3::splat(0.8));
-  let plate = Material::powder_coat(Vec3::new(0.075, 0.08, 0.09));
-  let mut catalog = Catalog::new("SCREENS", plate, ink, [3, 1], 240.0);
+  let mut catalog = Catalog::dark("SCREENS", [3, 1], 240.0);
   let cells = catalog.cells.clone();
   let screen = Screen::new(280.0, 200.0);
   type Picture = fn(&mut Flat, Plot);
@@ -160,9 +158,5 @@ pub(super) fn screens(look: Look) -> Scene {
     catalog.label(*cell, name);
   }
 
-  let light = Light {
-    color: Vec3::splat(0.6),
-    ..Light::default()
-  };
-  catalog.finish(look, light)
+  catalog.finish(look, dim())
 }

@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use potpot::glam::{Mat4, Vec2, Vec3};
 use potpot::parts::{Button, PushSwitch};
-use potpot::{Light, Look, Material, Scene};
+use potpot::{Look, Material, Scene};
 use potpot_controls::interaction::Push;
 
-use super::{Catalog, SEAT};
+use super::{Catalog, SEAT, dim, rubber};
 
 /// The space between the middles of a cell's three specimens.
 ///
@@ -20,12 +20,9 @@ const APART: f32 = 0.3;
 /// button is on while it is lit, and a switch while it is latched in. The light is dimmed so that
 /// what glows shows.
 pub(super) fn buttons(look: Look) -> Scene {
-  let rubber = Material::silicone(Vec3::new(0.62, 0.62, 0.60));
-  let ink = Material::ink(Vec3::splat(0.8));
-  let plate = Material::powder_coat(Vec3::new(0.075, 0.08, 0.09));
-  let mut catalog = Catalog::new("BUTTONS AND SWITCHES", plate, ink, [4, 2], 110.0);
+  let mut catalog = Catalog::dark("BUTTONS AND SWITCHES", [4, 2], 110.0);
   let cells = catalog.cells.clone();
-  // each state's place in its cell, its depth, and whether it is on
+  // each state's place in its cell, whether it is on, and whether it is held
   let states = [(-1.0, false, false), (0.0, true, false), (1.0, true, true)];
 
   let buttons = [
@@ -53,7 +50,7 @@ pub(super) fn buttons(look: Look) -> Scene {
         Material::matte(SEAT),
       );
       let level = f32::from(u8::from(on));
-      let lit = rubber.lit(color, level, shape.emission_radius());
+      let lit = rubber().lit(color, level, shape.emission_radius());
       build.place(
         &body,
         shape.transform(at.x, at.y, f32::from(u8::from(held))),
@@ -102,7 +99,7 @@ pub(super) fn buttons(look: Look) -> Scene {
       let (material, color) = match plunger {
         Plunger::Rubber(color) => {
           let radius = switch.plunger.emission_radius();
-          (rubber.lit(color, level, radius), Some(color))
+          (rubber().lit(color, level, radius), Some(color))
         }
         Plunger::Backlit(color) => (switch.backlight(color, level), Some(color)),
         Plunger::Black => (Material::glossy(Vec3::new(0.05, 0.05, 0.055)), None),
@@ -121,11 +118,7 @@ pub(super) fn buttons(look: Look) -> Scene {
     catalog.label(*cell, name);
   }
 
-  let light = Light {
-    color: Vec3::splat(0.6),
-    ..Light::default()
-  };
-  catalog.finish(look, light)
+  catalog.finish(look, dim())
 }
 
 /// The plunger of a push switch, and how it is lit while on.

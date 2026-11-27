@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use potpot::glam::Vec3;
 use potpot::parts::{self, Knob, LedArc, LedRing, LedStops};
-use potpot::{Light, Look, Material, Scene};
+use potpot::{Look, Material, Scene};
 
-use super::{BLACK, Catalog};
+use super::{BLACK, Catalog, dim};
 
 /// Returns each kind of light around a knob.
 ///
@@ -23,9 +23,7 @@ pub(super) fn rings(look: Look) -> Scene {
   let (segment, seat) = (Arc::new(ring.segment()), Arc::new(ring.seat()));
   let arc_meshes = [Arc::new(arc.seat()), Arc::new(arc.lens())];
   let (stop, stop_seat) = (Arc::new(stops.light()), Arc::new(stops.seat()));
-  let ink = Material::ink(Vec3::splat(0.8));
-  let plate = Material::powder_coat(Vec3::new(0.075, 0.08, 0.09));
-  let mut catalog = Catalog::new("RINGS", plate, ink, [5, 1], 160.0);
+  let mut catalog = Catalog::dark("RINGS", [5, 1], 160.0);
   let cells = catalog.cells.clone();
 
   // each kind's name, where its knob points, and what it lights in what color
@@ -60,11 +58,7 @@ pub(super) fn rings(look: Look) -> Scene {
   knob_at(&mut catalog, [&body, &line], x, y, at);
   catalog.label(cells[4], "STOPS");
 
-  let light = Light {
-    color: Vec3::splat(0.6),
-    ..Light::default()
-  };
-  catalog.finish(look, light)
+  catalog.finish(look, dim())
 }
 
 /// Adds a glossy black knob with a white line.
