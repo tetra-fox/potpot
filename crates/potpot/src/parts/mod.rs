@@ -23,6 +23,7 @@ mod ring;
 mod scale;
 mod screen;
 mod switch;
+mod tabs;
 mod vent;
 mod vu;
 
@@ -44,6 +45,7 @@ pub use ring::{LedArc, LedRing, LedStops};
 pub use scale::{dashes, fader_ticks, ticks};
 pub use screen::{Screen, picture};
 pub use switch::PushSwitch;
+pub use tabs::Tabs;
 pub use vent::Vent;
 pub use vu::Vu;
 
