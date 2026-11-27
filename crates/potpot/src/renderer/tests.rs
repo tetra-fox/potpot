@@ -20,10 +20,9 @@ const SIZE: [u32; 2] = [448, 256];
 
 /// The lock a test holds for as long as its graphics device lives.
 ///
-/// The NVIDIA 595 Vulkan driver can deadlock when one device is destroyed while another thread
-/// builds pipelines on another: `vkDestroyDevice` holds the Vulkan loader's lock and waits for
-/// a driver thread that spins at its exit, and the other thread waits for the loader's lock.
-/// So the tests' devices live one at a time.
+/// With the NVIDIA 595 Vulkan driver, `vkDestroyDevice` can join a driver thread that never
+/// exits while another device is in use, and every other thread then stops at the Vulkan
+/// loader's lock or at one of the driver's. So the tests' devices live one at a time.
 // TODO: let the tests' devices live at once when the driver no longer deadlocks
 static ONE_DEVICE: Mutex<()> = Mutex::new(());
 
