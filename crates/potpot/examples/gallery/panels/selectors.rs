@@ -14,7 +14,7 @@ use super::{BLACK, Catalog, KEY_LETTERS, SEAT, at, dim, key, key_ink, lettering,
 /// selector is lit in no color, and the wide stepper has its right key held. The light is dimmed so
 /// that what glows shows.
 pub(super) fn selectors(look: Look) -> Scene {
-  let mut catalog = Catalog::dark("SELECTORS", [3, 2], 120.0);
+  let mut catalog = Catalog::dark("SELECTORS", [3, 2], 70.0);
   let cells = catalog.cells.clone();
   let chrome = Material::chrome(Vec3::splat(0.7));
 
