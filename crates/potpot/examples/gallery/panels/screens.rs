@@ -188,7 +188,7 @@ fn spectrum(flat: &mut Flat, plot: Plot) {
   flat.rect(
     plot.at([low, 1.0]),
     plot.at([high, 0.0]),
-    [1.0, 0.62, 0.12, 0.06],
+    [1.0, 0.62, 0.12, 0.14],
   );
   let dashes = Dashes {
     length: 4.0,
@@ -206,7 +206,7 @@ fn spectrum(flat: &mut Flat, plot: Plot) {
 /// They show an equalizer's curve, a scope's trace, an envelope, and a spectrum with a range
 /// washed amber. The light is dimmed so that what the screens show stands out.
 pub(super) fn screens(look: Look) -> Scene {
-  let mut catalog = Catalog::dark("SCREENS", [2, 2], 220.0);
+  let mut catalog = Catalog::dark("SCREENS", [2, 2], 240.0);
   let cells = catalog.cells.clone();
   let screen = Screen::new(280.0, 200.0);
   type Picture = fn(&mut Flat, Plot);
