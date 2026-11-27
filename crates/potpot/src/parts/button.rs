@@ -139,8 +139,9 @@ impl Button {
   pub fn lamp(&self, x: f32, y: f32, color: Vec3, level: f32) -> Lamp {
     Lamp {
       at: Vec3::new(x, y, self.height * 1.5),
-      // strong enough to show on a dark panel, which gives little of any light back
-      color: color * level.clamp(0.0, 1.0) * 4.0,
+      // about the light the lit top and walls give off toward a neighbour a button's width
+      // away, so that what stands next to it is lit no brighter than the button itself
+      color: color * level.clamp(0.0, 1.0) * 1.6,
       reach: self.width.max(self.length) * 1.5,
       radius: self.width.hypot(self.length) / 2.0,
     }
