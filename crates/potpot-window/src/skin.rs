@@ -58,8 +58,8 @@ pub struct View<'a> {
   pub menu: Option<&'a Menu>,
   /// The control held down by the left button, if any.
   ///
-  /// The control is a button being pressed or one being dragged, given by its place among the
-  /// panel's controls.
+  /// The control is a button being pressed, one being dragged, or one whose arrow is held,
+  /// given by its place among the panel's controls.
   pub held: Option<usize>,
   /// The arrow held down by the left button, if any.
   ///
