@@ -18,9 +18,9 @@ include!("../../../crates/potpot/src/default_light.rs");
 /// The studio, as a latitude-longitude picture.
 const SOURCE: &str = "crates/potpot/assets/source/wooden_studio_16_1k.hdr";
 /// The mips of the specular cube map of the studio without its softbox.
-const REST: &str = "crates/potpot/assets/studio.bin";
+pub(crate) const REST: &str = "crates/potpot/assets/studio.bin";
 /// The mips of the specular cube map of the softbox alone.
-const SOFTBOX: &str = "crates/potpot/assets/softbox.bin";
+pub(crate) const SOFTBOX: &str = "crates/potpot/assets/softbox.bin";
 /// The Rust source that holds the diffuse light and names the specular maps.
 const GENERATED: &str = "crates/potpot/src/renderer/environment.rs";
 /// The width of the specular cube map's first mip, in texels.
@@ -83,18 +83,7 @@ pub fn bake(root: &Path) -> Result<(), String> {
       )
     });
   let diffuse = harmonics::diffused(harmonics::projected(samples));
-  let generated = root.join(GENERATED);
-  std::fs::write(&generated, generated_source(&diffuse))
-    .map_err(|error| format!("{}: {error}", generated.display()))?;
-  let formatted = std::process::Command::new("rustfmt")
-    .args(["--edition", "2024"])
-    .arg(&generated)
-    .status()
-    .map_err(|error| format!("rustfmt could not run: {error}"))?;
-  if !formatted.success() {
-    return Err(format!("rustfmt failed on {}", generated.display()));
-  }
-  Ok(())
+  crate::write_source(&root.join(GENERATED), &generated_source(&diffuse))
 }
 
 /// The light of the key light's patch of the picture.

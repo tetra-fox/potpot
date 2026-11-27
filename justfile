@@ -15,7 +15,11 @@ render name file *args:
 timing:
     cargo run --release --example timing
 
-# bake the studio the panel is lit by into crates/potpot/assets
+# bake everything the renderer embeds into crates/potpot/assets
+assets:
+    cargo xtask assets
+
+# bake only the studio the panel is lit by
 env:
     cargo xtask env
 
