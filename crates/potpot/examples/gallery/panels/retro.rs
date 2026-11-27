@@ -113,7 +113,7 @@ pub(super) fn retro(look: Look) -> Scene {
     build.place(&body, turned, Material::soft_touch(Vec3::splat(0.12)));
     build.place(&face, turned, Material::soft_touch(Vec3::splat(0.3)));
     build.place(&line, turned, ink);
-    build.letters(name, Vec3::new(x, y + 36.0, UP), 6.5, ink);
+    build.letters(name, Vec3::new(x, y + 34.0, UP), 6.5, ink);
   };
   let names = [
     ["", "ENV", "CUTOFF", "RES", "ATK", "DEC", "SUS", "REL"],
@@ -123,7 +123,7 @@ pub(super) fn retro(look: Look) -> Scene {
     for (place, name) in names[section].into_iter().enumerate().skip(1) {
       let (x, y) = (
         left + 110.0 * (place % 2) as f32,
-        104.0 + 72.0 * (place / 2) as f32,
+        98.0 + 72.0 * (place / 2) as f32,
       );
       let turn = 0.12 + 0.11 * ((place * 3 + section * 2) % 8) as f32;
       dial(&mut build, x, y, turn, name);
@@ -134,7 +134,7 @@ pub(super) fn retro(look: Look) -> Scene {
     vec!["", "MIX", "MOD", "TIME", "", "FBACK", "LOCUT", "HICUT"],
     vec!["VOL", "WIDTH", "DRIVE", "TONE"],
   ];
-  for (section, left, count) in [(0, 146.0, 2), (1, 398.0, 4), (2, 762.0, 2)] {
+  for (section, left, count) in [(0, 171.0, 2), (1, 402.0, 4), (2, 762.0, 2)] {
     for (place, name) in low_names[section].iter().copied().enumerate() {
       if name.is_empty() {
         continue;
@@ -148,7 +148,8 @@ pub(super) fn retro(look: Look) -> Scene {
     }
   }
 
-  // the switches, each a low key in its seat with a small light over it and a name under
+  // the switches, each a low key in its seat with a small light to its left and a name under
+  // it, level with the knobs and their names
   let key = Button::key(38.0, 38.0, 5.0);
   let (key_body, key_seat) = (Arc::new(key.body()), Arc::new(key.seat(2.0)));
   let light_size = 11.0;
@@ -158,11 +159,11 @@ pub(super) fn retro(look: Look) -> Scene {
   );
   let green = Vec3::new(0.55, 1.0, 0.2);
   let switches = [
-    (117.0, 110.0, true, "ON"),
-    (797.0, 110.0, true, "ON"),
-    (82.0, 516.0, false, "LINK"),
-    (398.0, 484.0, true, "ON"),
-    (398.0, 556.0, false, "SYNC"),
+    (117.0, 98.0, true, "ON"),
+    (797.0, 98.0, true, "ON"),
+    (107.0, 516.0, false, "LINK"),
+    (402.0, 480.0, true, "ON"),
+    (402.0, 552.0, false, "SYNC"),
   ];
   for (x, y, lit, name) in switches {
     build.place(&key_seat, at(x, y, UP), hole);
@@ -171,16 +172,16 @@ pub(super) fn retro(look: Look) -> Scene {
       at(x, y, UP),
       Material::soft_touch(Vec3::splat(0.2)),
     );
-    build.letters(name, Vec3::new(x, y + 30.0, UP), 6.5, ink);
+    build.letters(name, Vec3::new(x, y + 34.0, UP), 6.5, ink);
     let level = if lit { 1.0 } else { 0.0 };
-    build.place(&light_seat, at(x, y - 31.0, UP), hole);
+    build.place(&light_seat, at(x - 31.0, y, UP), hole);
     build.place(
       &light,
-      at(x, y - 31.0, UP),
+      at(x - 31.0, y, UP),
       parts::led_material(green, level, light_size),
     );
     if lit {
-      let over = Vec3::new(x, y - 31.0, 12.0);
+      let over = Vec3::new(x - 31.0, y, 12.0);
       (build.lamps).push(parts::led_lamp(over, green, 1.0, light_size, 40.0));
     }
   }
