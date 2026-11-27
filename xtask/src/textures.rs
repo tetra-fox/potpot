@@ -69,9 +69,9 @@ const WANDER: usize = 40;
 /// How far the edges of islands are moved about, in grid steps.
 const WANDER_STEPS: f32 = 1.2;
 /// How wide the edge of an island is, in grid steps.
-const EDGE: f32 = 0.25;
+const EDGE: f32 = 1.25;
 /// How high an island stands over the base, in grid steps.
-const ISLAND_HEIGHT: f32 = 0.03;
+const ISLAND_HEIGHT: f32 = 0.038;
 /// How much greyer an island is than the base.
 const ISLAND_GREY: f32 = 0.06;
 /// The folder the sources are in, each `<ID>_1K-JPG_<map>.jpg` as ambientCG names them.
@@ -347,7 +347,9 @@ impl Islands {
     let scaled = at * GRID as f32 + wander * WANDER_STEPS;
     let (cx, cy) = (scaled.x.floor() as i64, scaled.y.floor() as i64);
     let wrap = |n: i64| n.rem_euclid(GRID as i64);
-    let mut up: f32 = 0.0;
+    // the islands join as one minus the product of what each leaves bare, which has no crease
+    // where two ramps meet, as the higher of the two would
+    let mut bare: f32 = 1.0;
     for dy in -SEARCH..=SEARCH {
       for dx in -SEARCH..=SEARCH {
         let (x, y) = (cx + dx, cy + dy);
@@ -358,10 +360,10 @@ impl Islands {
         // the middle as it lies in this copy of the grid
         let place = place + Vec2::new((x - wrap(x)) as f32, (y - wrap(y)) as f32);
         let inside = radius - place.distance(scaled);
-        up = up.max(smoothstep(-EDGE / 2.0, EDGE / 2.0, inside));
+        bare *= 1.0 - smoothstep(-EDGE / 2.0, EDGE / 2.0, inside);
       }
     }
-    up
+    1.0 - bare
   }
 }
 
