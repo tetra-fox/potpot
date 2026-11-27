@@ -45,7 +45,7 @@ pub struct Material {
   /// object's own z axis, for something lit from inside by one small light under its middle.
   /// Far past it the emission settles at about four tenths. Zero glows evenly.
   pub emission_radius: f32,
-  /// The photographed surface it is drawn with, if any.
+  /// The texture set it is drawn with, if any.
   ///
   /// The set's color is multiplied into [`Material::color`], scaled so that its mean is white,
   /// so the color still says the surface's color on the whole. Its roughness is scaled the same
@@ -94,12 +94,13 @@ pub enum Anisotropy {
   Spun(f32),
 }
 
-/// A set of photographed textures, from ambientCG.
+/// A set of textures a surface is drawn with.
 ///
-/// Each kind holds the size of one tile of the set on the panel, in points. A face turned up
-/// takes the set as seen from above, the sides of something [`Anisotropy::Spun`] take it
-/// wrapped around the object's own z axis, and everything else takes it from the three axes,
-/// mixed by how squarely it faces each.
+/// Walnut, brushed aluminium and powder coat are photographs from ambientCG, and hammertone is
+/// made when the assets are baked. Each kind holds the size of one tile of the set on the
+/// panel, in points. A face turned up takes the set as seen from above, the sides of something
+/// [`Anisotropy::Spun`] take it wrapped around the object's own z axis, and everything else
+/// takes it from the three axes, mixed by how squarely it faces each.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Textures {
   /// Walnut, as on the cheeks of a synthesizer.

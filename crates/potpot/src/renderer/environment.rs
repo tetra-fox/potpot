@@ -23,8 +23,8 @@ pub(super) const HARMONICS: [[f32; 3]; 9] = [
 ];
 /// The specular map of the studio without its softbox.
 ///
-/// Its texels are `Rgb9e5Ufloat`, mip after mip, each mip's 6 faces in turn, each
-/// face in rows from the top.
+/// Its texels are [`wgpu::TextureFormat::Rgb9e5Ufloat`], mip after mip, each mip's 6
+/// faces in turn, each face in rows from the top.
 pub(super) const STUDIO: &[u8] = include_bytes!("../../assets/studio.bin");
 /// The specular map of the softbox alone, laid out as [`STUDIO`] is.
 pub(super) const SOFTBOX: &[u8] = include_bytes!("../../assets/softbox.bin");

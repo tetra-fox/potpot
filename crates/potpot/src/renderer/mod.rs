@@ -106,7 +106,6 @@ pub struct Renderer {
   bounce_map: wgpu::TextureView,
   /// Every map, for the scene pass to read.
   maps_group: wgpu::BindGroup,
-  /// The DFG table.
   dfg_table: wgpu::Texture,
   /// The DFG table's texels, until the table holds them.
   dfg_texels: Option<wgpu::Buffer>,

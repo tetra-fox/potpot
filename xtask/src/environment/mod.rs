@@ -325,8 +325,8 @@ fn generated_source(diffuse: &[Vec3; 9]) -> String {
      pub(super) const HARMONICS: [[f32; 3]; 9] = [\n{harmonics}];\n\
      /// The specular map of the studio without its softbox.\n\
      ///\n\
-     /// Its texels are `Rgb9e5Ufloat`, mip after mip, each mip's {FACES} faces in turn, each\n\
-     /// face in rows from the top.\n\
+     /// Its texels are [`wgpu::TextureFormat::Rgb9e5Ufloat`], mip after mip, each mip's {FACES}\n\
+     /// faces in turn, each face in rows from the top.\n\
      pub(super) const STUDIO: &[u8] = include_bytes!(\"../../assets/studio.bin\");\n\
      /// The specular map of the softbox alone, laid out as [`STUDIO`] is.\n\
      pub(super) const SOFTBOX: &[u8] = include_bytes!(\"../../assets/softbox.bin\");\n"

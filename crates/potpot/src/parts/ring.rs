@@ -15,7 +15,7 @@ use crate::scene::Object;
 /// A ring of lights around a knob, each the end of a light pipe.
 ///
 /// The lights lie end to end around the origin over the sweep that
-/// [`knob_transform`](super::knob_transform) turns a knob through, so each light stands for a
+/// [`knob_transform`] turns a knob through, so each light stands for a
 /// part of the knob's turn. [`LedRing::lights`] lights the run between two places of the turn.
 /// A run from the start shows a level, a run from the middle a level either way, and a run from
 /// where the knob points how far another value is from the knob's.
@@ -256,7 +256,7 @@ impl LedStops {
 
 /// An unbroken arc of light around a knob, behind one long lens.
 ///
-/// The arc lies over the sweep that [`knob_transform`](super::knob_transform) turns a knob
+/// The arc lies over the sweep that [`knob_transform`] turns a knob
 /// through, like [`LedRing`], and [`LedArc::lights`] lights the run between two places of the
 /// turn. The lit run ends where the run does, so the arc shows a value more finely than a ring
 /// of separate lights.

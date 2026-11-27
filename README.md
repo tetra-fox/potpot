@@ -10,7 +10,7 @@ under one light, so shadows, shine and the spill of a lamp come from the scene.
 
 | Crate             | Description                                                                                                  |
 | ----------------- | ------------------------------------------------------------------------------------------------------------ |
-| `potpot`          | Draws a scene of parts with wgpu and returns the object under a point                                        |
+| `potpot`          | Draws a lit scene of parts with wgpu and returns the object under a point                                    |
 | `potpot-controls` | What a panel's controls do and its displays plot, with no look and no dependencies                           |
 | `potpot-window`   | A baseview window for a panel of controls, and an editor for [nice-plug](https://crates.io/crates/nice-plug) |
 
@@ -23,7 +23,7 @@ just example compressor           # a curve to drag, and meters from an audio th
 just example synth                # a wave, a filter and an envelope on screens, and keys
 just example flat                 # a panel drawn with flat shapes alone
 just render demo out.png          # any of those, drawn to a file with no window
-just render gallery out.png knobs # a panel of parts, or faders, lights, lamp, rings, screens, retro, industrial
+just render gallery out.png knobs # a panel of parts, or faders, lights, lamp, rings, screens, retro, industrial, materials
 ```
 
 `just example flat` runs on `potpot-controls` and `potpot-window` alone. A panel's look is a `Skin`:
@@ -61,7 +61,8 @@ one to pixels with no window.
 
 ## Platform support
 
-The window draws with Vulkan, Direct3D 12 or Metal.
+The window draws with Vulkan, Direct3D 12 or Metal, on a graphics device with BC texture
+compression, which the renderer's texture sets are stored in.
 
 ## License
 

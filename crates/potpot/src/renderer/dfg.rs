@@ -11,7 +11,7 @@ pub(super) const SIDE: u32 = 64;
 /// The samples taken for each texel.
 const SAMPLES: u32 = 512;
 
-/// Returns the table as `Rg16Float` texels, row by row.
+/// Returns the table as [`wgpu::TextureFormat::Rg16Float`] texels, row by row.
 ///
 /// A texel's column is n.v and its row the perceptual roughness, each at the texel's middle.
 pub(super) fn table() -> Vec<[half::f16; 2]> {

@@ -25,14 +25,14 @@ pub(super) const MEAN_COLOR: [[f32; 3]; 4] = [
 ];
 /// The mean of each set's roughness.
 pub(super) const ROUGHNESS_MEAN: [f32; 4] = [0.48566517, 0.5143116, 0.4297225, 0.6491278];
-/// The color maps as `Bc7RgbaUnormSrgb`.
+/// The color maps as [`wgpu::TextureFormat::Bc7RgbaUnormSrgb`].
 ///
 /// They are mip after mip, each mip's layers in turn, each layer in rows of blocks from the
 /// top. A mip narrower than a block fills one block, repeated across it.
 pub(super) const ALBEDO: &[u8] = include_bytes!("../../assets/albedo.bin");
-/// The normal maps as `Bc5RgUnorm`, laid out as [`ALBEDO`] is.
+/// The normal maps as [`wgpu::TextureFormat::Bc5RgUnorm`], laid out as [`ALBEDO`] is.
 ///
 /// They hold x and y of the way the surface faces, with y toward the top of the picture.
 pub(super) const NORMAL: &[u8] = include_bytes!("../../assets/normal.bin");
-/// The roughness maps as `Bc4RUnorm`, laid out as [`ALBEDO`] is.
+/// The roughness maps as [`wgpu::TextureFormat::Bc4RUnorm`], laid out as [`ALBEDO`] is.
 pub(super) const ROUGHNESS: &[u8] = include_bytes!("../../assets/roughness.bin");

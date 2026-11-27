@@ -5,9 +5,9 @@ default:
 example name:
     cargo run --example {{ name }}
 
-# draw an example to a png at a scale: `just render demo out.png 1.5`.
+# draw an example to a png at a scale, refined until it settles: `just render demo out.png 1.5`.
 # `gallery` takes the name of a panel of parts first, then a whole-number scale:
-# `just render gallery out.png knobs 2`
+# `just render gallery out.png knobs 2`. `--first` draws the first sample alone
 render name file *args:
     cargo run --example {{ name }} -- {{ file }} {{ args }}
 

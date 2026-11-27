@@ -415,16 +415,16 @@ fn generated_source(mips: usize, color: &[Vec3], roughness: &[f32]) -> String {
      pub(super) const MEAN_COLOR: [[f32; 3]; {count}] = [{}];\n\
      /// The mean of each set's roughness.\n\
      pub(super) const ROUGHNESS_MEAN: [f32; {count}] = [{}];\n\
-     /// The color maps as `Bc7RgbaUnormSrgb`.\n\
+     /// The color maps as [`wgpu::TextureFormat::Bc7RgbaUnormSrgb`].\n\
      ///\n\
      /// They are mip after mip, each mip's layers in turn, each layer in rows of blocks from the\n\
      /// top. A mip narrower than a block fills one block, repeated across it.\n\
      pub(super) const ALBEDO: &[u8] = include_bytes!(\"../../assets/albedo.bin\");\n\
-     /// The normal maps as `Bc5RgUnorm`, laid out as [`ALBEDO`] is.\n\
+     /// The normal maps as [`wgpu::TextureFormat::Bc5RgUnorm`], laid out as [`ALBEDO`] is.\n\
      ///\n\
      /// They hold x and y of the way the surface faces, with y toward the top of the picture.\n\
      pub(super) const NORMAL: &[u8] = include_bytes!(\"../../assets/normal.bin\");\n\
-     /// The roughness maps as `Bc4RUnorm`, laid out as [`ALBEDO`] is.\n\
+     /// The roughness maps as [`wgpu::TextureFormat::Bc4RUnorm`], laid out as [`ALBEDO`] is.\n\
      pub(super) const ROUGHNESS: &[u8] = include_bytes!(\"../../assets/roughness.bin\");\n",
     color
       .iter()
