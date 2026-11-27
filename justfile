@@ -15,6 +15,10 @@ render name file *args:
 timing:
     cargo run --release --example timing
 
+# bake the studio the panel is lit by into crates/potpot/assets
+env:
+    cargo xtask env
+
 test:
     cargo test --workspace
 

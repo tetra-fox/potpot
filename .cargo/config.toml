@@ -1,0 +1,3 @@
+[alias]
+# the workspace's build tasks, see `xtask/src/main.rs`
+xtask = "run --release --package xtask --"

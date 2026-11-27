@@ -1,0 +1,14 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2024"
+description = "The build tasks of the workspace, run as `cargo xtask`"
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# the key light the studio is turned to face the panel with, and its math types
+potpot = { path = "../crates/potpot" }

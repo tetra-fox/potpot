@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/potpot-controls", "crates/potpot-window", "crates/potpot"]
+members = ["crates/potpot-controls", "crates/potpot-window", "crates/potpot", "xtask"]
 
 [workspace.package]
 license = "MIT OR Apache-2.0"
