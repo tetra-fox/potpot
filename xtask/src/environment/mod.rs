@@ -95,6 +95,23 @@ struct Patch {
   middle: Vec3,
   /// The light the patch throws on a surface facing its middle.
   irradiance: Vec3,
+  /// The widest angle from the patch's middle to a pixel of it, in radians.
+  widest: f32,
+  /// What the patch's light is multiplied by once it is feathered.
+  ///
+  /// It keeps the light the patch throws as it was. [`feathered`] gives the share of the light
+  /// kept at each angle from the middle.
+  kept: f32,
+}
+
+/// Returns the share of a softbox's light kept at an angle from its middle, out of `widest`.
+///
+/// The patch of the picture is as bright to its edge, which a mirror shows as a flat field cut
+/// off hard. Feathered, it falls off smoothly from its middle to nothing at its edge, as the
+/// light of a softbox fitted with a grid does, and is shaped in a mirror.
+fn feathered(angle: f32, widest: f32) -> f32 {
+  let out = (angle / widest).min(1.0);
+  (1.0 - out * out).powi(2)
 }
 
 /// A part of the studio.
@@ -182,7 +199,19 @@ impl<'a> Studio<'a> {
       Part::Rest => !self.patch.inside[index],
       Part::Softbox => self.patch.inside[index],
     };
-    sampled(self.picture, self.turn.transpose() * out, kept) * self.scale
+    let toward = self.turn.transpose() * out;
+    let light = sampled(self.picture, toward, kept) * self.scale;
+    match part {
+      Part::Rest => light,
+      Part::Softbox => {
+        let angle = toward
+          .normalize()
+          .dot(self.patch.middle)
+          .clamp(-1.0, 1.0)
+          .acos();
+        light * feathered(angle, self.patch.widest) * self.patch.kept
+      }
+    }
   }
 }
 
@@ -243,14 +272,25 @@ fn key_patch(picture: &Picture) -> Patch {
     }
   }
   let middle = middle.normalize();
-  let irradiance = latitude_longitude(picture.width, picture.height)
-    .filter(|&(index, _, _)| inside[index])
+  let pixels = || latitude_longitude(picture.width, picture.height).filter(|&(i, _, _)| inside[i]);
+  let irradiance: Vec3 = pixels()
     .map(|(index, out, angle)| picture.pixels[index] * out.dot(middle).max(0.0) * angle)
+    .sum();
+  let widest = pixels()
+    .map(|(_, out, _)| out.dot(middle).clamp(-1.0, 1.0).acos())
+    .fold(0.0, f32::max);
+  let feathered_irradiance: Vec3 = pixels()
+    .map(|(index, out, angle)| {
+      let away = out.dot(middle).clamp(-1.0, 1.0).acos();
+      picture.pixels[index] * feathered(away, widest) * out.dot(middle).max(0.0) * angle
+    })
     .sum();
   Patch {
     inside,
     middle,
     irradiance,
+    widest,
+    kept: luminance(irradiance) / luminance(feathered_irradiance),
   }
 }
 
