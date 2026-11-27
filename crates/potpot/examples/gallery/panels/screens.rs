@@ -86,6 +86,8 @@ fn equalizer(flat: &mut Flat, plot: Plot) {
 /// Dashed curves above and below the trace follow its height as it falls.
 fn scope(flat: &mut Flat, plot: Plot) {
   plot.divide(flat, 8, 4);
+  // how far a wave of one reaches from the middle as the note dies away
+  let height = |time: f32| 0.34 * (-time * 2.6).exp();
   let dashes = Dashes {
     length: 5.0,
     gap: 4.0,
@@ -95,7 +97,7 @@ fn scope(flat: &mut Flat, plot: Plot) {
       .map(|step| {
         let time = step as f32 / 60.0;
         // the most the two waves of the trace add up to
-        plot.at([time, 0.5 + side * 0.34 * 1.16 * (-time * 2.6).exp()])
+        plot.at([time, 0.5 + side * height(time) * 1.16])
       })
       .collect();
     flat.dashed(&decay, 1.2, dashes, [0.2, 0.55, 0.28, 1.0]);
@@ -104,7 +106,7 @@ fn scope(flat: &mut Flat, plot: Plot) {
     .map(|step| {
       let time = step as f32 / 300.0;
       let wave = (time * TAU * 9.0).sin() + 0.35 * (time * TAU * 27.0 + 1.0).sin();
-      plot.at([time, 0.5 + 0.34 * wave * (-time * 2.6).exp()])
+      plot.at([time, 0.5 + height(time) * wave])
     })
     .collect();
   flat.curve(&trace, 1.8, [0.4, 1.0, 0.5, 1.0]);
