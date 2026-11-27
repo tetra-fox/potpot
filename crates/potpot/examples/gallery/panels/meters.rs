@@ -9,10 +9,10 @@ use potpot::{Light, Look, Material, Object, Scene};
 
 use super::Catalog;
 
-/// Returns each kind of level meter on a dark panel, at a few levels.
+/// Returns each kind of level meter on a dark panel.
 ///
-/// The ladders stand in pairs, the first holding a peak, and one more lies on its side. The light
-/// is dimmed so that what glows shows.
+/// The meters stand at a few levels. The ladders stand in pairs, the first holding a peak, and one
+/// more lies on its side. The light is dimmed so that what glows shows.
 pub(super) fn meters(look: Look) -> Scene {
   let ink = Material::ink(Vec3::splat(0.8));
   let plate = Material::powder_coat(Vec3::new(0.075, 0.08, 0.09));

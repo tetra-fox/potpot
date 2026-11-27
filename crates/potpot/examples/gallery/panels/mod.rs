@@ -32,7 +32,7 @@ use self::shared::{ALUMINUM, BLACK, SEAT, lettering};
 const PAGE: Vec2 = Vec2::new(1024.0, 640.0);
 /// The height of the strip of tabs over the pages.
 const TABS: f32 = 64.0;
-/// The width and height of the whole panel, the tabs and a page.
+/// The width and height of the tabs and a page together.
 pub const SIZE: [f32; 2] = [PAGE.x, PAGE.y + TABS];
 
 /// A function that makes a page's scene under a look.
@@ -133,7 +133,9 @@ pub fn panel(page: usize, look: Look) -> (Scene, Vec<Option<Target>>) {
   (scene, targets)
 }
 
-/// Returns a screw for each corner of a page, each turned its own way.
+/// Returns a screw for each corner of a page.
+///
+/// Each is turned its own way.
 fn screws() -> [Object; 4] {
   let screw = Arc::new(parts::screw(8.0));
   let inset = 18.0;
@@ -195,21 +197,25 @@ impl Build {
   }
 }
 
-/// The distance of a catalog's grid from the sides of its page.
+/// The room between a catalog's grid and its page's sides.
 const MARGIN: f32 = 32.0;
-/// The middle of a catalog's title, down from the top of its page.
+/// How far down its page a catalog's title is centered.
 const TITLE: f32 = 40.0;
 /// The top of a catalog's grid, down from the top of its page.
 const GRID_TOP: f32 = 64.0;
 /// The distance of a catalog's grid from the foot of its page.
 const GRID_FOOT: f32 = 24.0;
-/// The height of the band at a cell's foot that holds its label.
+/// The height of the band under a cell's specimen.
+///
+/// The band holds the cell's label.
 const LABEL_BAND: f32 = 28.0;
 
-/// One cell of a catalog's grid, which holds one specimen and its label.
+/// One cell of a catalog's grid.
+///
+/// It holds one specimen and its label.
 #[derive(Clone, Copy)]
 struct Cell {
-  /// The middle of the room over the label, where the specimen goes.
+  /// The middle of the specimen's room, over the label.
   middle: Vec2,
   /// The width and height of that room.
   room: Vec2,
@@ -249,10 +255,10 @@ fn cells([columns, rows]: [usize; 2], room: f32) -> Vec<Cell> {
 }
 
 impl Catalog {
-  /// Creates a catalog of `columns` by `rows` cells on a plate of `plate`.
+  /// Creates a catalog on a plate of `plate`.
   ///
-  /// Each cell has `room` points of height for its specimen, as [`cells`] lays them out. The
-  /// title and the labels are printed in `ink`.
+  /// Its `grid` is in columns and rows, with `room` points of height for each specimen, as
+  /// [`cells`] lays them out. The title and the labels are printed in `ink`.
   fn new(title: &str, plate: Material, ink: Material, grid: [usize; 2], room: f32) -> Self {
     let mut build = Build::default();
     build.put(parts::plate(PAGE.x, PAGE.y, 6.0), Mat4::IDENTITY, plate);
@@ -270,7 +276,9 @@ impl Catalog {
     self.build.letters(text, at.extend(0.0), 9.0, self.ink);
   }
 
-  /// Returns the scene of the finished page, with a screw in each corner.
+  /// Returns the scene of the finished page.
+  ///
+  /// A screw goes in each corner.
   fn finish(mut self, look: Look, light: Light) -> Scene {
     self.build.objects.extend(screws());
     Scene {

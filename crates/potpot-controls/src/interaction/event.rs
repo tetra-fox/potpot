@@ -18,7 +18,7 @@ pub enum Target {
   Item(Item),
   /// The grip the window is pulled larger and smaller by.
   Grip,
-  /// The tab that shows the page at this place among the panel's.
+  /// The tab of the page at this place among the panel's.
   ///
   /// A press on it shows that page.
   Page(usize),

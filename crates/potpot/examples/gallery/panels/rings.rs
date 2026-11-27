@@ -8,12 +8,12 @@ use potpot::{Light, Look, Material, Scene};
 
 use super::{BLACK, Catalog};
 
-/// Returns knobs in each kind of light around a knob, on a dark panel.
+/// Returns each kind of light around a knob.
 ///
-/// The first ring shows a level from the start of the turn, the second a level either way of the
-/// middle, and the third how far another value is from where its knob points. After them are an
-/// unbroken arc lit from its start and a light at each of a knob's stops. The light is dimmed so
-/// that what glows shows.
+/// The knobs are on a dark panel. The first ring shows a level from the start of the turn, the
+/// second a level either way of the middle, and the third how far another value is from where its
+/// knob points. After them are an unbroken arc lit from its start and a light at each of a knob's
+/// stops. The light is dimmed so that what glows shows.
 pub(super) fn rings(look: Look) -> Scene {
   let knob = Knob::round(40.0, 30.0);
   let ring = LedRing::new(21, knob.radius + 16.0, 6.0);

@@ -17,11 +17,11 @@ const COLORS: [Vec3; 5] = [
   Vec3::new(0.95, 0.95, 0.9),
 ];
 
-/// Returns small lights, lines of light and lamps on a pale plate.
+/// Returns small lights, light lines and lamps.
 ///
-/// The top row is small lights of two sizes, the last of each row dark, and lines of light. The
-/// bottom row is a lamp's light on chrome and gloss, on paint, and from a lit button. The light
-/// is dimmed so that what glows shows.
+/// They are on a pale plate. The top row is small lights of two sizes, the last of each row dark,
+/// and lines of light. The bottom row is a lamp's light on chrome and gloss, on paint, and from a
+/// lit button. The light is dimmed so that what glows shows.
 pub(super) fn lights(look: Look) -> Scene {
   let ink = Material::ink(Vec3::splat(0.08));
   let plate = Material::satin(Vec3::new(0.55, 0.56, 0.58));
@@ -172,9 +172,10 @@ fn lamp_between(
   }
 }
 
-/// Returns a small round light in its seat, and its lamp if it is lit.
+/// Returns a small light in its seat, and its lamp.
 ///
-/// The light is `size` across, lit in `color` at `level`, and its lamp reaches `reach`.
+/// The light is `size` across and lit in `color` at `level`. Its lamp reaches `reach`, and is
+/// there only while the light is lit.
 fn small_lamp(
   middle: Vec2,
   color: Vec3,
